@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import javax.inject.Inject
+import kotlin.math.roundToInt
 
 data class OnboardingUiState(
     val stepIndex: Int = 0,
@@ -57,27 +58,35 @@ class OnboardingViewModel @Inject constructor(
         recalculateGoals()
     }
 
-    fun adjustAge(delta: Int) {
-        _uiState.update { it.copy(age = (it.age + delta).coerceIn(14, 95)) }
+    fun adjustAge(delta: Int) = setAge(_uiState.value.age + delta)
+
+    fun setAge(age: Int) {
+        _uiState.update { it.copy(age = age.coerceIn(14, 95)) }
         recalculateGoals()
     }
 
-    fun adjustHeight(delta: Int) {
-        _uiState.update { it.copy(heightCm = (it.heightCm + delta).coerceIn(130, 225)) }
+    fun adjustHeight(delta: Int) = setHeight(_uiState.value.heightCm + delta)
+
+    fun setHeight(heightCm: Int) {
+        _uiState.update { it.copy(heightCm = heightCm.coerceIn(130, 225)) }
         recalculateGoals()
     }
 
-    fun adjustCurrentWeight(delta: Float) {
+    fun adjustCurrentWeight(delta: Float) = setCurrentWeight(_uiState.value.currentWeightKg + delta)
+
+    fun setCurrentWeight(weightKg: Float) {
         _uiState.update {
-            val next = ((it.currentWeightKg + delta) * 10f).toInt() / 10f
+            val next = (weightKg * 10f).roundToInt() / 10f
             it.copy(currentWeightKg = next.coerceIn(38f, 220f))
         }
         recalculateGoals()
     }
 
-    fun adjustTargetWeight(delta: Float) {
+    fun adjustTargetWeight(delta: Float) = setTargetWeight(_uiState.value.targetWeightKg + delta)
+
+    fun setTargetWeight(weightKg: Float) {
         _uiState.update {
-            val next = ((it.targetWeightKg + delta) * 10f).toInt() / 10f
+            val next = (weightKg * 10f).roundToInt() / 10f
             it.copy(targetWeightKg = next.coerceIn(38f, 220f))
         }
     }
@@ -95,48 +104,39 @@ class OnboardingViewModel @Inject constructor(
         _uiState.update { it.copy(stepIndex = (it.stepIndex - 1).coerceAtLeast(0)) }
     }
 
-    fun adjustCustomCalories(delta: Int) {
-        _uiState.update { state ->
-            val updated = state.customGoals.copy(
-                calories = (state.customGoals.calories + delta).coerceIn(1100, 5000),
-            )
-            state.copy(customGoals = updated, isCustomized = true)
-        }
+    fun adjustCustomCalories(delta: Int) = setCustomCalories(_uiState.value.customGoals.calories + delta)
+
+    fun setCustomCalories(calories: Int) = updateCustomGoals {
+        it.copy(calories = calories.coerceIn(1100, 5000))
     }
 
-    fun adjustCustomProtein(delta: Int) {
-        _uiState.update { state ->
-            val updated = state.customGoals.copy(
-                proteinGrams = (state.customGoals.proteinGrams + delta).coerceIn(40, 350),
-            )
-            state.copy(customGoals = updated, isCustomized = true)
-        }
+    fun adjustCustomProtein(delta: Int) = setCustomProtein(_uiState.value.customGoals.proteinGrams + delta)
+
+    fun setCustomProtein(grams: Int) = updateCustomGoals {
+        it.copy(proteinGrams = grams.coerceIn(40, 350))
     }
 
-    fun adjustCustomCarbs(delta: Int) {
-        _uiState.update { state ->
-            val updated = state.customGoals.copy(
-                carbsGrams = (state.customGoals.carbsGrams + delta).coerceIn(30, 550),
-            )
-            state.copy(customGoals = updated, isCustomized = true)
-        }
+    fun adjustCustomCarbs(delta: Int) = setCustomCarbs(_uiState.value.customGoals.carbsGrams + delta)
+
+    fun setCustomCarbs(grams: Int) = updateCustomGoals {
+        it.copy(carbsGrams = grams.coerceIn(30, 550))
     }
 
-    fun adjustCustomFat(delta: Int) {
-        _uiState.update { state ->
-            val updated = state.customGoals.copy(
-                fatGrams = (state.customGoals.fatGrams + delta).coerceIn(25, 220),
-            )
-            state.copy(customGoals = updated, isCustomized = true)
-        }
+    fun adjustCustomFat(delta: Int) = setCustomFat(_uiState.value.customGoals.fatGrams + delta)
+
+    fun setCustomFat(grams: Int) = updateCustomGoals {
+        it.copy(fatGrams = grams.coerceIn(25, 220))
     }
 
-    fun adjustCustomWater(delta: Int) {
+    fun adjustCustomWater(delta: Int) = setCustomWater(_uiState.value.customGoals.waterMl + delta)
+
+    fun setCustomWater(waterMl: Int) = updateCustomGoals {
+        it.copy(waterMl = waterMl.coerceIn(1200, 6000))
+    }
+
+    private inline fun updateCustomGoals(transform: (MacroGoals) -> MacroGoals) {
         _uiState.update { state ->
-            val updated = state.customGoals.copy(
-                waterMl = (state.customGoals.waterMl + delta).coerceIn(1200, 6000),
-            )
-            state.copy(customGoals = updated, isCustomized = true)
+            state.copy(customGoals = transform(state.customGoals), isCustomized = true)
         }
     }
 

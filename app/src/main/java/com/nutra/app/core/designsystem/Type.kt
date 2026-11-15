@@ -20,123 +20,88 @@ val InterFontFamily = FontFamily(
     Font(R.font.inter_semibold_italic, FontWeight.SemiBold, FontStyle.Italic),
 )
 
-private const val TABULAR_FEATURES = "tnum, cv05"
+private const val TABULAR = "tnum, cv05, ss01"
 
-@Immutable
-data class NutraCustomTypography(
-    val heroCalorieNumber: TextStyle,
-    val statLargeNumber: TextStyle,
-    val screenHeader: TextStyle,
-    val sectionTitle: TextStyle,
-    val cardTitle: TextStyle,
-    val foodItemTitle: TextStyle,
-    val bodyRegular: TextStyle,
-    val bodySmall: TextStyle,
-    val macroValue: TextStyle,
-    val macroLabel: TextStyle,
-    val badgeLabel: TextStyle,
+private fun style(
+    size: Int,
+    line: Int,
+    weight: FontWeight,
+    tracking: Double = 0.0,
+    tabular: Boolean = false,
+) = TextStyle(
+    fontFamily = InterFontFamily,
+    fontWeight = weight,
+    fontSize = size.sp,
+    lineHeight = line.sp,
+    letterSpacing = tracking.sp,
+    fontFeatureSettings = if (tabular) TABULAR else "cv05, ss01",
 )
 
-val DefaultNutraCustomTypography = NutraCustomTypography(
-    heroCalorieNumber = TextStyle(
-        fontFamily = InterFontFamily,
-        fontWeight = FontWeight.Bold,
-        fontSize = 38.sp,
-        lineHeight = 42.sp,
-        letterSpacing = (-1.2).sp,
-        fontFeatureSettings = TABULAR_FEATURES,
-    ),
-    statLargeNumber = TextStyle(
-        fontFamily = InterFontFamily,
-        fontWeight = FontWeight.Bold,
-        fontSize = 26.sp,
-        lineHeight = 30.sp,
-        letterSpacing = (-0.8).sp,
-        fontFeatureSettings = TABULAR_FEATURES,
-    ),
-    screenHeader = TextStyle(
-        fontFamily = InterFontFamily,
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 22.sp,
-        lineHeight = 28.sp,
-        letterSpacing = (-0.5).sp,
-        fontFeatureSettings = TABULAR_FEATURES,
-    ),
-    sectionTitle = TextStyle(
-        fontFamily = InterFontFamily,
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 17.sp,
-        lineHeight = 22.sp,
-        letterSpacing = (-0.3).sp,
-        fontFeatureSettings = TABULAR_FEATURES,
-    ),
-    cardTitle = TextStyle(
-        fontFamily = InterFontFamily,
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 16.sp,
-        lineHeight = 21.sp,
-        letterSpacing = (-0.2).sp,
-        fontFeatureSettings = TABULAR_FEATURES,
-    ),
-    foodItemTitle = TextStyle(
-        fontFamily = InterFontFamily,
-        fontWeight = FontWeight.Medium,
-        fontSize = 15.sp,
-        lineHeight = 20.sp,
-        letterSpacing = (-0.1).sp,
-        fontFeatureSettings = TABULAR_FEATURES,
-    ),
-    bodyRegular = TextStyle(
-        fontFamily = InterFontFamily,
-        fontWeight = FontWeight.Normal,
-        fontSize = 14.sp,
-        lineHeight = 20.sp,
-        fontFeatureSettings = TABULAR_FEATURES,
-    ),
-    bodySmall = TextStyle(
-        fontFamily = InterFontFamily,
-        fontWeight = FontWeight.Normal,
-        fontSize = 12.sp,
-        lineHeight = 16.sp,
-        fontFeatureSettings = TABULAR_FEATURES,
-    ),
-    macroValue = TextStyle(
-        fontFamily = InterFontFamily,
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 13.sp,
-        lineHeight = 17.sp,
-        letterSpacing = (-0.1).sp,
-        fontFeatureSettings = TABULAR_FEATURES,
-    ),
-    macroLabel = TextStyle(
-        fontFamily = InterFontFamily,
-        fontWeight = FontWeight.Medium,
-        fontSize = 12.sp,
-        lineHeight = 16.sp,
-        letterSpacing = 0.1.sp,
-        fontFeatureSettings = TABULAR_FEATURES,
-    ),
-    badgeLabel = TextStyle(
-        fontFamily = InterFontFamily,
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 11.sp,
-        lineHeight = 14.sp,
-        letterSpacing = 0.2.sp,
-        fontFeatureSettings = TABULAR_FEATURES,
-    ),
+/**
+ * Type scale. Few sizes, strong contrast between levels.
+ *
+ * display      — hero numbers (calories left)          48 / Bold
+ * numberLarge  — big stats in cards                    28 / Bold
+ * numberMedium — medium stats / list values            20 / SemiBold
+ * titleLarge   — screen titles                         28 / Bold
+ * titleMedium  — section titles / sheet titles         19 / SemiBold
+ * titleSmall   — card titles / list item titles        15 / SemiBold
+ * bodyLarge    — primary paragraph / inputs            16 / Regular
+ * body         — default body                          14 / Regular
+ * bodySmall    — secondary body                        13 / Regular
+ * label        — buttons, chips, tabs                  14 / SemiBold
+ * labelSmall   — small labels, captions emphasised     12 / SemiBold
+ * caption      — meta text                             12 / Regular
+ * overline     — tiny section eyebrow                  11 / SemiBold, tracked
+ */
+@Immutable
+data class NutraTypography(
+    val display: TextStyle,
+    val numberLarge: TextStyle,
+    val numberMedium: TextStyle,
+    val numberSmall: TextStyle,
+    val titleLarge: TextStyle,
+    val titleMedium: TextStyle,
+    val titleSmall: TextStyle,
+    val bodyLarge: TextStyle,
+    val body: TextStyle,
+    val bodySmall: TextStyle,
+    val label: TextStyle,
+    val labelSmall: TextStyle,
+    val caption: TextStyle,
+    val overline: TextStyle,
+)
+
+val DefaultNutraTypography = NutraTypography(
+    display = style(48, 52, FontWeight.Bold, -1.8, tabular = true),
+    numberLarge = style(28, 32, FontWeight.Bold, -0.9, tabular = true),
+    numberMedium = style(20, 24, FontWeight.SemiBold, -0.5, tabular = true),
+    numberSmall = style(15, 20, FontWeight.SemiBold, -0.2, tabular = true),
+    titleLarge = style(28, 34, FontWeight.Bold, -0.9),
+    titleMedium = style(19, 24, FontWeight.SemiBold, -0.4),
+    titleSmall = style(15, 20, FontWeight.SemiBold, -0.15),
+    bodyLarge = style(16, 23, FontWeight.Normal, -0.1),
+    body = style(14, 20, FontWeight.Normal),
+    bodySmall = style(13, 18, FontWeight.Normal),
+    label = style(14, 18, FontWeight.SemiBold, -0.1),
+    labelSmall = style(12, 16, FontWeight.SemiBold),
+    caption = style(12, 16, FontWeight.Normal, tabular = true),
+    overline = style(11, 14, FontWeight.SemiBold, 0.6),
 )
 
 val Material3Typography = Typography(
-    displayLarge = DefaultNutraCustomTypography.heroCalorieNumber,
-    headlineMedium = DefaultNutraCustomTypography.screenHeader,
-    titleLarge = DefaultNutraCustomTypography.sectionTitle,
-    titleMedium = DefaultNutraCustomTypography.cardTitle,
-    bodyLarge = DefaultNutraCustomTypography.foodItemTitle,
-    bodyMedium = DefaultNutraCustomTypography.bodyRegular,
-    bodySmall = DefaultNutraCustomTypography.bodySmall,
-    labelLarge = DefaultNutraCustomTypography.macroValue,
-    labelMedium = DefaultNutraCustomTypography.macroLabel,
-    labelSmall = DefaultNutraCustomTypography.badgeLabel,
+    displayLarge = DefaultNutraTypography.display,
+    headlineLarge = DefaultNutraTypography.titleLarge,
+    headlineMedium = DefaultNutraTypography.titleLarge,
+    titleLarge = DefaultNutraTypography.titleMedium,
+    titleMedium = DefaultNutraTypography.titleSmall,
+    titleSmall = DefaultNutraTypography.titleSmall,
+    bodyLarge = DefaultNutraTypography.bodyLarge,
+    bodyMedium = DefaultNutraTypography.body,
+    bodySmall = DefaultNutraTypography.bodySmall,
+    labelLarge = DefaultNutraTypography.label,
+    labelMedium = DefaultNutraTypography.labelSmall,
+    labelSmall = DefaultNutraTypography.overline,
 )
 
-val LocalNutraTypography = staticCompositionLocalOf { DefaultNutraCustomTypography }
+val LocalNutraTypography = staticCompositionLocalOf { DefaultNutraTypography }

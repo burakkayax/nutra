@@ -1,5 +1,6 @@
 package com.nutra.app.core.datastore
 
+import android.app.UiModeManager
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
@@ -17,10 +18,12 @@ import com.nutra.app.domain.model.MacroGoals
 import com.nutra.app.domain.model.ThemePreference
 import com.nutra.app.domain.model.UserProfile
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -139,11 +142,57 @@ class UserPreferencesDataStore @Inject constructor(
         }
     }
 
+    suspend fun updateBodyMetricsAndGoal(
+        sex: BiologicalSex,
+        age: Int,
+        heightCm: Int,
+        currentWeightKg: Float,
+        targetWeightKg: Float,
+        activityLevel: ActivityLevel,
+        goalType: GoalType,
+        updatedGoals: MacroGoals? = null,
+    ) {
+        context.nutraDataStore.edit { prefs ->
+            prefs[Keys.SEX] = sex.name
+            prefs[Keys.AGE] = age
+            prefs[Keys.HEIGHT_CM] = heightCm
+            prefs[Keys.CURRENT_WEIGHT_KG] = currentWeightKg
+            prefs[Keys.TARGET_WEIGHT_KG] = targetWeightKg
+            prefs[Keys.ACTIVITY_LEVEL] = activityLevel.name
+            prefs[Keys.GOAL_TYPE] = goalType.name
+            if (updatedGoals != null) {
+                prefs[Keys.GOAL_CALORIES] = updatedGoals.calories
+                prefs[Keys.GOAL_PROTEIN] = updatedGoals.proteinGrams
+                prefs[Keys.GOAL_CARBS] = updatedGoals.carbsGrams
+                prefs[Keys.GOAL_FAT] = updatedGoals.fatGrams
+                prefs[Keys.GOAL_WATER_ML] = updatedGoals.waterMl
+            }
+        }
+    }
+
+    @Volatile
+    private var lastAppliedNightMode: Int? = null
+
+    suspend fun applySystemNightMode(themePreference: ThemePreference) {
+        val targetMode = when (themePreference) {
+            ThemePreference.SYSTEM -> UiModeManager.MODE_NIGHT_AUTO
+            ThemePreference.LIGHT -> UiModeManager.MODE_NIGHT_NO
+            ThemePreference.DARK -> UiModeManager.MODE_NIGHT_YES
+        }
+        if (lastAppliedNightMode == targetMode) return
+        withContext(Dispatchers.Main.immediate) {
+            if (lastAppliedNightMode == targetMode) return@withContext
+            context.getSystemService(UiModeManager::class.java)?.setApplicationNightMode(targetMode)
+            lastAppliedNightMode = targetMode
+        }
+    }
+
     suspend fun updateAppearance(themePreference: ThemePreference, useDynamicColor: Boolean) {
         context.nutraDataStore.edit { prefs ->
             prefs[Keys.THEME_PREFERENCE] = themePreference.name
             prefs[Keys.USE_DYNAMIC_COLOR] = useDynamicColor
         }
+        applySystemNightMode(themePreference)
     }
 
     suspend fun updateGeminiConfig(apiKey: String, model: String) {

@@ -7,30 +7,38 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
+/** 4dp base grid. */
 @Immutable
 data class NutraSpacing(
-    val micro: Dp = 4.dp,
-    val extraSmall: Dp = 6.dp,
-    val small: Dp = 8.dp,
-    val medium: Dp = 12.dp,
-    val standard: Dp = 16.dp,
-    val screenHorizontal: Dp = 20.dp,
-    val heroCardPadding: Dp = 20.dp,
-    val sectionGap: Dp = 24.dp,
-    val extraLarge: Dp = 32.dp,
+    val xxs: Dp = 2.dp,
+    val xs: Dp = 4.dp,
+    val sm: Dp = 8.dp,
+    val md: Dp = 12.dp,
+    val lg: Dp = 16.dp,
+    val xl: Dp = 20.dp,
+    val xxl: Dp = 24.dp,
+    val xxxl: Dp = 32.dp,
+    val huge: Dp = 48.dp,
+    /** Horizontal padding of every screen. */
+    val screen: Dp = 20.dp,
+    /** Default inner padding of cards. */
+    val card: Dp = 20.dp,
+    /** Vertical gap between top-level sections of a screen. */
+    val section: Dp = 28.dp,
 )
 
 /**
- * Concentric corner radius hierarchy: R_outer = R_inner + Padding
- * Hero Card (28dp) -> Inner Container (14dp)
- * Standard Card (22dp) -> Inner Button/Chip (10dp)
+ * Corner radii. Outer containers are rounder than inner elements
+ * (outer = inner + padding) so nested shapes look concentric.
  */
 @Immutable
 data class NutraShapes(
-    val heroCard: Shape = RoundedCornerShape(28.dp),
-    val standardCard: Shape = RoundedCornerShape(22.dp),
-    val innerSubCard: Shape = RoundedCornerShape(14.dp),
-    val chip: Shape = RoundedCornerShape(10.dp),
+    val xs: Shape = RoundedCornerShape(8.dp),
+    val sm: Shape = RoundedCornerShape(12.dp),
+    val md: Shape = RoundedCornerShape(16.dp),
+    val lg: Shape = RoundedCornerShape(24.dp),
+    val xl: Shape = RoundedCornerShape(32.dp),
+    val sheet: Shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
     val pill: Shape = RoundedCornerShape(percent = 50),
 )
 

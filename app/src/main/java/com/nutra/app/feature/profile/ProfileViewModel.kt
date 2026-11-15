@@ -3,7 +3,10 @@ package com.nutra.app.feature.profile
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nutra.app.core.datastore.UserPreferencesDataStore
+import com.nutra.app.domain.model.ActivityLevel
 import com.nutra.app.domain.model.AppResult
+import com.nutra.app.domain.model.BiologicalSex
+import com.nutra.app.domain.model.GoalType
 import com.nutra.app.domain.model.MacroGoals
 import com.nutra.app.domain.model.ThemePreference
 import com.nutra.app.domain.model.UserProfile
@@ -66,6 +69,47 @@ class ProfileViewModel @Inject constructor(
             )
             preferencesDataStore.updateGoals(calculated)
             feedbackFlow.value = "Mifflin-St Jeor formülüne göre hedefler yenilendi"
+        }
+    }
+
+    fun updateBodyProfile(
+        sex: BiologicalSex,
+        age: Int,
+        heightCm: Int,
+        currentWeightKg: Float,
+        targetWeightKg: Float,
+        activityLevel: ActivityLevel,
+        goalType: GoalType,
+        recalculateGoals: Boolean,
+    ) {
+        viewModelScope.launch {
+            val updatedGoals = if (recalculateGoals) {
+                calculatorUseCase.calculateGoals(
+                    sex = sex,
+                    age = age,
+                    heightCm = heightCm,
+                    weightKg = currentWeightKg,
+                    activityLevel = activityLevel,
+                    goalType = goalType,
+                )
+            } else {
+                null
+            }
+            preferencesDataStore.updateBodyMetricsAndGoal(
+                sex = sex,
+                age = age,
+                heightCm = heightCm,
+                currentWeightKg = currentWeightKg,
+                targetWeightKg = targetWeightKg,
+                activityLevel = activityLevel,
+                goalType = goalType,
+                updatedGoals = updatedGoals,
+            )
+            feedbackFlow.value = if (recalculateGoals) {
+                "Vücut profili güncellendi ve hedefler yeniden hesaplandı"
+            } else {
+                "Vücut profili güncellendi"
+            }
         }
     }
 

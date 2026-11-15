@@ -2,58 +2,121 @@ package com.nutra.app.feature.profile
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.FileDownload
 import androidx.compose.material.icons.rounded.FileUpload
 import androidx.compose.material.icons.rounded.Refresh
-import androidx.compose.material.icons.rounded.Remove
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.nutra.app.core.designsystem.NutraBottomActionBar
+import com.nutra.app.core.designsystem.NutraButton
+import com.nutra.app.core.designsystem.NutraButtonSize
+import com.nutra.app.core.designsystem.NutraButtonStyle
 import com.nutra.app.core.designsystem.NutraCard
+import com.nutra.app.core.designsystem.NutraDialog
+import com.nutra.app.core.designsystem.NutraDivider
+import com.nutra.app.core.designsystem.NutraIconBadge
+import com.nutra.app.core.designsystem.NutraListRow
+import com.nutra.app.core.designsystem.NutraMetricStepperRow
+import com.nutra.app.core.designsystem.NutraModalSheet
+import com.nutra.app.core.designsystem.NutraNumericInputDialog
+import com.nutra.app.core.designsystem.NutraScreenHeader
+import com.nutra.app.core.designsystem.NutraSectionHeader
 import com.nutra.app.core.designsystem.NutraSegmentedControl
+import com.nutra.app.core.designsystem.NutraSnackbarHost
+import com.nutra.app.core.designsystem.NutraSwitch
+import com.nutra.app.core.designsystem.NutraTextField
 import com.nutra.app.core.designsystem.NutraTheme
+import com.nutra.app.domain.model.ActivityLevel
+import com.nutra.app.domain.model.BiologicalSex
+import com.nutra.app.domain.model.GoalType
 import com.nutra.app.domain.model.ThemePreference
+import com.nutra.app.domain.model.UserProfile
 import kotlinx.coroutines.delay
+import java.text.NumberFormat
 import java.time.LocalDate
+import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.roundToInt
+
+private val TR_LOCALE = Locale.forLanguageTag("tr-TR")
+
+private fun formatInt(value: Int): String =
+    NumberFormat.getIntegerInstance(TR_LOCALE).format(value)
+
+private fun formatKg(value: Float): String =
+    String.format(TR_LOCALE, "%.1f", value)
+
+private enum class ProfileGoalField(
+    val dialogTitle: String,
+    val unit: String,
+    val rangeHint: String,
+    val minValue: Double,
+    val maxValue: Double,
+) {
+    CALORIES("Kalori hedefi", "kcal", "1.000 – 6.000 kcal", 1000.0, 6000.0),
+    PROTEIN("Protein hedefi", "g", "30 – 400 g", 30.0, 400.0),
+    CARBS("Karbonhidrat hedefi", "g", "20 – 600 g", 20.0, 600.0),
+    FAT("Yağ hedefi", "g", "20 – 250 g", 20.0, 250.0),
+    WATER("Su hedefi", "ml", "1.000 – 7.000 ml", 1000.0, 7000.0),
+}
+
+private enum class BodyMetricField(
+    val dialogTitle: String,
+    val unit: String,
+    val rangeHint: String,
+    val minValue: Double,
+    val maxValue: Double,
+    val allowDecimal: Boolean,
+) {
+    CURRENT_WEIGHT("Mevcut kilo", "kg", "35,0 – 250,0 kg", 35.0, 250.0, true),
+    TARGET_WEIGHT("Hedef kilo", "kg", "35,0 – 250,0 kg", 35.0, 250.0, true),
+    HEIGHT("Boy", "cm", "130 – 225 cm", 130.0, 225.0, false),
+    AGE("Yaş", "yaş", "14 – 95 yaş", 14.0, 95.0, false),
+}
 
 @Composable
 fun ProfileScreen(
@@ -63,12 +126,15 @@ fun ProfileScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val profile = state.profile
     val goals = profile.goals
+    val colors = NutraTheme.colors
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
+    val layoutDirection = LocalLayoutDirection.current
 
-    var apiKeyInput by remember(profile.geminiApiKey) { mutableStateOf(profile.geminiApiKey) }
-    var modelInput by remember(profile.geminiModel) { mutableStateOf(profile.geminiModel) }
     var pendingExportJson by remember { mutableStateOf<String?>(null) }
+    var showEditBodySheet by remember { mutableStateOf(false) }
+    var showGeminiDialog by remember { mutableStateOf(false) }
+    var activeGoalField by remember { mutableStateOf<ProfileGoalField?>(null) }
 
     val exportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json"),
@@ -99,401 +165,838 @@ fun ProfileScreen(
 
     LaunchedEffect(state.feedbackMessage) {
         if (state.feedbackMessage != null) {
-            delay(3500)
+            delay(3200)
             viewModel.clearFeedback()
         }
     }
 
-    LazyColumn(
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(NutraTheme.colors.background)
-            .padding(contentPadding),
-        contentPadding = PaddingValues(
-            start = NutraTheme.spacing.screenHorizontal,
-            end = NutraTheme.spacing.screenHorizontal,
-            top = 14.dp,
-            bottom = 96.dp,
-        ),
-        verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.medium),
+            .background(colors.background),
     ) {
-        item(key = "header") {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    text = "Profil & Hedefler",
-                    style = NutraTheme.typography.screenHeader,
-                    color = NutraTheme.colors.textPrimary,
-                )
-                Text(
-                    text = "${profile.goalType.title} · ${profile.currentWeightKg} kg → Hedef ${profile.targetWeightKg} kg",
-                    style = NutraTheme.typography.bodyRegular,
-                    color = NutraTheme.colors.textSecondary,
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = contentPadding.calculateStartPadding(layoutDirection) + NutraTheme.spacing.screen,
+                end = contentPadding.calculateEndPadding(layoutDirection) + NutraTheme.spacing.screen,
+                top = contentPadding.calculateTopPadding() + 12.dp,
+                bottom = contentPadding.calculateBottomPadding() + 16.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(24.dp),
+        ) {
+            item(key = "header") {
+                NutraScreenHeader(
+                    title = "Profil",
+                    eyebrow = "Vücut profili ve hedefler",
                 )
             }
-        }
 
-        if (state.feedbackMessage != null) {
-            item(key = "feedback_banner") {
-                NutraCard(
-                    backgroundColor = NutraTheme.colors.calorieAccent.copy(alpha = 0.14f),
-                    borderColor = NutraTheme.colors.calorieAccent,
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(
-                        text = state.feedbackMessage.orEmpty(),
-                        style = NutraTheme.typography.macroValue,
-                        color = NutraTheme.colors.calorieAccent,
-                    )
+            // 1. Personal body & goal overview card
+            item(key = "body_profile_card") {
+                val weightDiff = abs(profile.currentWeightKg - profile.targetWeightKg)
+                val targetSubtitle = when {
+                    weightDiff < 0.2f -> "Hedef kilonla eşitsin"
+                    profile.currentWeightKg > profile.targetWeightKg ->
+                        "Hedefe ${formatKg(weightDiff)} kg kaldı"
+                    else ->
+                        "Hedef için +${formatKg(weightDiff)} kg"
                 }
-            }
-        }
 
-        // 1. Daily Goals Editor Card
-        item(key = "goals_editor") {
-            NutraCard(
-                shape = NutraTheme.shapes.heroCard,
-                contentPadding = PaddingValues(20.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                NutraCard {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(
-                            text = "Günlük Beslenme Hedefleri",
-                            style = NutraTheme.typography.cardTitle,
-                            color = NutraTheme.colors.textPrimary,
-                        )
-                        TextButton(
-                            onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.Confirm)
-                                viewModel.recalculateWithMifflinStJeor()
-                            },
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
                         ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Refresh,
-                                contentDescription = null,
-                                tint = NutraTheme.colors.calorieAccent,
-                                modifier = Modifier.size(16.dp),
-                            )
-                            Spacer(modifier = Modifier.size(4.dp))
                             Text(
-                                text = "Formülle Hesapla",
-                                style = NutraTheme.typography.macroLabel,
-                                color = NutraTheme.colors.calorieAccent,
+                                text = profile.goalType.title,
+                                style = NutraTheme.typography.titleMedium,
+                                color = colors.textPrimary,
+                            )
+                            Text(
+                                text = "${profile.sex.title} · ${profile.activityLevel.title}",
+                                style = NutraTheme.typography.caption,
+                                color = colors.textSecondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
                         }
+
+                        NutraButton(
+                            text = "Düzenle",
+                            onClick = { showEditBodySheet = true },
+                            style = NutraButtonStyle.Secondary,
+                            size = NutraButtonSize.Small,
+                            leadingIcon = Icons.Rounded.Edit,
+                        )
                     }
 
-                    GoalStepperRow(
-                        label = "Kalori",
-                        valueText = "${goals.calories} kcal",
-                        color = NutraTheme.colors.calorieAccent,
-                        onDecrement = {
-                            viewModel.updateGoals(goals.copy(calories = (goals.calories - 50).coerceIn(1100, 5000)))
-                        },
-                        onIncrement = {
-                            viewModel.updateGoals(goals.copy(calories = (goals.calories + 50).coerceIn(1100, 5000)))
-                        },
-                    )
-                    GoalStepperRow(
-                        label = "Protein",
-                        valueText = "${goals.proteinGrams} g",
-                        color = NutraTheme.colors.proteinAccent,
-                        onDecrement = {
-                            viewModel.updateGoals(goals.copy(proteinGrams = (goals.proteinGrams - 5).coerceIn(40, 350)))
-                        },
-                        onIncrement = {
-                            viewModel.updateGoals(goals.copy(proteinGrams = (goals.proteinGrams + 5).coerceIn(40, 350)))
-                        },
-                    )
-                    GoalStepperRow(
-                        label = "Karbonhidrat",
-                        valueText = "${goals.carbsGrams} g",
-                        color = NutraTheme.colors.carbsAccent,
-                        onDecrement = {
-                            viewModel.updateGoals(goals.copy(carbsGrams = (goals.carbsGrams - 5).coerceIn(30, 550)))
-                        },
-                        onIncrement = {
-                            viewModel.updateGoals(goals.copy(carbsGrams = (goals.carbsGrams + 5).coerceIn(30, 550)))
-                        },
-                    )
-                    GoalStepperRow(
-                        label = "Yağ",
-                        valueText = "${goals.fatGrams} g",
-                        color = NutraTheme.colors.fatAccent,
-                        onDecrement = {
-                            viewModel.updateGoals(goals.copy(fatGrams = (goals.fatGrams - 5).coerceIn(25, 220)))
-                        },
-                        onIncrement = {
-                            viewModel.updateGoals(goals.copy(fatGrams = (goals.fatGrams + 5).coerceIn(25, 220)))
-                        },
-                    )
-                    GoalStepperRow(
-                        label = "Günlük Su",
-                        valueText = "${goals.waterMl} ml",
-                        color = NutraTheme.colors.waterAccent,
-                        onDecrement = {
-                            viewModel.updateGoals(goals.copy(waterMl = (goals.waterMl - 100).coerceIn(1200, 6000)))
-                        },
-                        onIncrement = {
-                            viewModel.updateGoals(goals.copy(waterMl = (goals.waterMl + 100).coerceIn(1200, 6000)))
-                        },
-                    )
-                }
-            }
-        }
-
-        // 2. Theme & Appearance Card
-        item(key = "appearance_card") {
-            NutraCard(
-                contentPadding = PaddingValues(16.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(
-                        text = "Görünüm & Tasarım Sistemi",
-                        style = NutraTheme.typography.cardTitle,
-                        color = NutraTheme.colors.textPrimary,
+                        text = targetSubtitle,
+                        style = NutraTheme.typography.labelSmall,
+                        color = colors.accent,
+                        modifier = Modifier.padding(top = 14.dp),
                     )
 
-                    NutraSegmentedControl(
-                        items = ThemePreference.entries,
-                        selectedItem = profile.themePreference,
-                        onItemSelected = { newTheme ->
-                            viewModel.updateAppearance(newTheme, profile.useDynamicColor)
-                        },
-                        labelProvider = { it.title },
-                    )
+                    NutraDivider(modifier = Modifier.padding(vertical = 16.dp))
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Material You Dinamik Renkler",
-                                style = NutraTheme.typography.foodItemTitle,
-                                color = NutraTheme.colors.textPrimary,
+                        BodyStatColumn(
+                            label = "Mevcut",
+                            value = "${formatKg(profile.currentWeightKg)} kg",
+                            modifier = Modifier.weight(1f),
+                        )
+                        BodyStatColumn(
+                            label = "Hedef",
+                            value = "${formatKg(profile.targetWeightKg)} kg",
+                            modifier = Modifier.weight(1f),
+                        )
+                        BodyStatColumn(
+                            label = "Boy",
+                            value = "${profile.heightCm} cm",
+                            modifier = Modifier.weight(1f),
+                        )
+                        BodyStatColumn(
+                            label = "Yaş",
+                            value = "${profile.age}",
+                            modifier = Modifier.weight(0.75f),
+                        )
+                    }
+                }
+            }
+
+            // 2. Daily macro & water goals
+            item(key = "daily_goals") {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    NutraSectionHeader(
+                        title = "Günlük hedefler",
+                        supportingText = "Değere dokunarak da yazabilirsin",
+                        actionLabel = "Oto hesapla",
+                        actionIcon = Icons.Rounded.Refresh,
+                        actionContainerColor = colors.surfaceElevated,
+                        onAction = {
+                            haptic.performHapticFeedback(HapticFeedbackType.Confirm)
+                            viewModel.recalculateWithMifflinStJeor()
+                        },
+                    )
+
+                    NutraCard(contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp)) {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            NutraMetricStepperRow(
+                                label = "Kalori",
+                                valueText = "${formatInt(goals.calories)} kcal",
+                                accentColor = colors.accent,
+                                onDecrement = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    viewModel.updateGoals(
+                                        goals.copy(calories = (goals.calories - 50).coerceIn(1000, 6000))
+                                    )
+                                },
+                                onIncrement = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    viewModel.updateGoals(
+                                        goals.copy(calories = (goals.calories + 50).coerceIn(1000, 6000))
+                                    )
+                                },
+                                onValueClick = { activeGoalField = ProfileGoalField.CALORIES },
                             )
-                            Text(
-                                text = "Kapalıyken Nutra küratörlü semantik renk paleti kullanılır",
-                                style = NutraTheme.typography.bodySmall,
-                                color = NutraTheme.colors.textSecondary,
+                            NutraDivider()
+                            NutraMetricStepperRow(
+                                label = "Protein",
+                                valueText = "${goals.proteinGrams} g",
+                                accentColor = colors.protein,
+                                onDecrement = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    viewModel.updateGoals(
+                                        goals.copy(proteinGrams = (goals.proteinGrams - 5).coerceIn(30, 400))
+                                    )
+                                },
+                                onIncrement = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    viewModel.updateGoals(
+                                        goals.copy(proteinGrams = (goals.proteinGrams + 5).coerceIn(30, 400))
+                                    )
+                                },
+                                onValueClick = { activeGoalField = ProfileGoalField.PROTEIN },
+                            )
+                            NutraDivider()
+                            NutraMetricStepperRow(
+                                label = "Karbonhidrat",
+                                valueText = "${goals.carbsGrams} g",
+                                accentColor = colors.carbs,
+                                onDecrement = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    viewModel.updateGoals(
+                                        goals.copy(carbsGrams = (goals.carbsGrams - 5).coerceIn(20, 600))
+                                    )
+                                },
+                                onIncrement = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    viewModel.updateGoals(
+                                        goals.copy(carbsGrams = (goals.carbsGrams + 5).coerceIn(20, 600))
+                                    )
+                                },
+                                onValueClick = { activeGoalField = ProfileGoalField.CARBS },
+                            )
+                            NutraDivider()
+                            NutraMetricStepperRow(
+                                label = "Yağ",
+                                valueText = "${goals.fatGrams} g",
+                                accentColor = colors.fat,
+                                onDecrement = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    viewModel.updateGoals(
+                                        goals.copy(fatGrams = (goals.fatGrams - 5).coerceIn(20, 250))
+                                    )
+                                },
+                                onIncrement = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    viewModel.updateGoals(
+                                        goals.copy(fatGrams = (goals.fatGrams + 5).coerceIn(20, 250))
+                                    )
+                                },
+                                onValueClick = { activeGoalField = ProfileGoalField.FAT },
+                            )
+                            NutraDivider()
+                            NutraMetricStepperRow(
+                                label = "Su",
+                                valueText = "${formatInt(goals.waterMl)} ml",
+                                accentColor = colors.water,
+                                onDecrement = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    viewModel.updateGoals(
+                                        goals.copy(waterMl = (goals.waterMl - 250).coerceIn(1000, 7000))
+                                    )
+                                },
+                                onIncrement = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    viewModel.updateGoals(
+                                        goals.copy(waterMl = (goals.waterMl + 250).coerceIn(1000, 7000))
+                                    )
+                                },
+                                onValueClick = { activeGoalField = ProfileGoalField.WATER },
                             )
                         }
-                        Switch(
-                            checked = profile.useDynamicColor,
-                            onCheckedChange = { enabled ->
-                                viewModel.updateAppearance(profile.themePreference, enabled)
-                            },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = Color.White,
-                                checkedTrackColor = NutraTheme.colors.calorieAccent,
-                            ),
-                        )
                     }
                 }
             }
-        }
 
-        // 3. Gemini AI Configuration Card
-        item(key = "gemini_config") {
-            NutraCard(
-                contentPadding = PaddingValues(16.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.AutoAwesome,
-                            contentDescription = null,
-                            tint = NutraTheme.colors.calorieAccent,
-                            modifier = Modifier.size(18.dp),
-                        )
+            // 3. Appearance preferences
+            item(key = "appearance") {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    NutraSectionHeader(title = "Görünüm")
+
+                    NutraCard {
                         Text(
-                            text = "Gemini AI Besin Analizi Yapılandırması",
-                            style = NutraTheme.typography.cardTitle,
-                            color = NutraTheme.colors.textPrimary,
+                            text = "Tema",
+                            style = NutraTheme.typography.label,
+                            color = colors.textPrimary,
+                            modifier = Modifier.padding(bottom = 10.dp),
                         )
-                    }
-                    Text(
-                        text = "Fotoğraf ve doğal dil analizi için Google Gemini API anahtarınızı girebilirsiniz. Anahtar girilmediğinde cihaz içi akıllı Türkçe ayrıştırıcı (On-Device NLU) otomatik devreye girer.",
-                        style = NutraTheme.typography.bodySmall,
-                        color = NutraTheme.colors.textSecondary,
-                    )
 
-                    OutlinedTextField(
-                        value = apiKeyInput,
-                        onValueChange = { apiKeyInput = it },
-                        label = { Text("Gemini API Anahtarı (İsteğe Bağlı)") },
-                        visualTransformation = PasswordVisualTransformation(),
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = NutraTheme.shapes.innerSubCard,
-                    )
+                        NutraSegmentedControl(
+                            items = ThemePreference.entries,
+                            selectedItem = profile.themePreference,
+                            onItemSelected = { theme ->
+                                viewModel.updateAppearance(theme, profile.useDynamicColor)
+                            },
+                            labelProvider = { it.title },
+                        )
 
-                    OutlinedTextField(
-                        value = modelInput,
-                        onValueChange = { modelInput = it },
-                        label = { Text("Model (Varsayılan: gemini-2.5-flash)") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = NutraTheme.shapes.innerSubCard,
-                    )
+                        NutraDivider(modifier = Modifier.padding(vertical = 16.dp))
 
-                    Button(
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.Confirm)
-                            viewModel.saveGeminiConfig(apiKeyInput, modelInput)
-                        },
-                        modifier = Modifier.fillMaxWidth().height(46.dp),
-                        shape = NutraTheme.shapes.chip,
-                        colors = ButtonDefaults.buttonColors(containerColor = NutraTheme.colors.calorieAccent),
-                    ) {
-                        Text("AI Ayarlarını Kaydet", color = Color.White, style = NutraTheme.typography.macroValue)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 12.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                            ) {
+                                Text(
+                                    text = "Dinamik renk",
+                                    style = NutraTheme.typography.label,
+                                    color = colors.textPrimary,
+                                )
+                                Text(
+                                    text = "Duvar kağıdı vurgu rengini uygula",
+                                    style = NutraTheme.typography.bodySmall,
+                                    color = colors.textSecondary,
+                                )
+                            }
+                            NutraSwitch(
+                                checked = profile.useDynamicColor,
+                                onCheckedChange = { enabled ->
+                                    viewModel.updateAppearance(profile.themePreference, enabled)
+                                },
+                            )
+                        }
                     }
                 }
             }
-        }
 
-        // 4. Offline-First Backup & Restore Card
-        item(key = "backup_card") {
-            NutraCard(
-                contentPadding = PaddingValues(16.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(
-                        text = "Veri Güvenliği & Çevrimdışı Yedekleme",
-                        style = NutraTheme.typography.cardTitle,
-                        color = NutraTheme.colors.textPrimary,
-                    )
-                    Text(
-                        text = "Tüm besin kayıtlarınız, özel yemekleriniz ve kilo geçmişiniz cihazınızda saklanır. İstediğiniz zaman JSON olarak dışa/içe aktarabilirsiniz.",
-                        style = NutraTheme.typography.bodySmall,
-                        color = NutraTheme.colors.textSecondary,
-                    )
+            // 4. AI & Backup management
+            item(key = "ai_and_data") {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    NutraSectionHeader(title = "Yapay zeka ve veri")
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        Button(
+                    NutraCard(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)) {
+                        NutraListRow(
+                            title = "Gemini AI bağlantısı",
+                            subtitle = if (profile.geminiApiKey.isNotBlank()) {
+                                "Özel anahtar aktif · ${profile.geminiModel}"
+                            } else {
+                                "Cihaz içi akıllı ayrıştırıcı aktif"
+                            },
+                            leading = {
+                                NutraIconBadge(
+                                    icon = Icons.Rounded.AutoAwesome,
+                                    tint = colors.textPrimary,
+                                    container = colors.surfaceMuted,
+                                )
+                            },
+                            trailing = {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                                    contentDescription = null,
+                                    tint = colors.textTertiary,
+                                )
+                            },
+                            onClick = { showGeminiDialog = true },
+                        )
+
+                        NutraDivider(startIndent = 52.dp)
+
+                        NutraListRow(
+                            title = "Verileri dışa aktar",
+                            subtitle = "Kayıtları JSON yedeği olarak indir",
+                            leading = {
+                                NutraIconBadge(
+                                    icon = Icons.Rounded.FileDownload,
+                                    tint = colors.textPrimary,
+                                    container = colors.surfaceMuted,
+                                )
+                            },
+                            trailing = {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                                    contentDescription = null,
+                                    tint = colors.textTertiary,
+                                )
+                            },
                             onClick = {
                                 viewModel.exportBackupToCallback { json ->
                                     pendingExportJson = json
                                     exportLauncher.launch("nutra_yedek_${LocalDate.now()}.json")
                                 }
                             },
-                            modifier = Modifier.weight(1f).height(46.dp),
-                            shape = NutraTheme.shapes.chip,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = NutraTheme.colors.elevatedSurface,
-                                contentColor = NutraTheme.colors.textPrimary,
-                            ),
-                        ) {
-                            Icon(Icons.Rounded.FileDownload, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.size(6.dp))
-                            Text("Dışa Aktar", style = NutraTheme.typography.macroValue)
-                        }
+                        )
 
-                        Button(
+                        NutraDivider(startIndent = 52.dp)
+
+                        NutraListRow(
+                            title = "Yedekten geri yükle",
+                            subtitle = "JSON dosyasından içe aktar",
+                            leading = {
+                                NutraIconBadge(
+                                    icon = Icons.Rounded.FileUpload,
+                                    tint = colors.textPrimary,
+                                    container = colors.surfaceMuted,
+                                )
+                            },
+                            trailing = {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                                    contentDescription = null,
+                                    tint = colors.textTertiary,
+                                )
+                            },
                             onClick = {
                                 importLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
                             },
-                            modifier = Modifier.weight(1f).height(46.dp),
-                            shape = NutraTheme.shapes.chip,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = NutraTheme.colors.elevatedSurface,
-                                contentColor = NutraTheme.colors.textPrimary,
-                            ),
-                        ) {
-                            Icon(Icons.Rounded.FileUpload, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.size(6.dp))
-                            Text("Geri Yükle", style = NutraTheme.typography.macroValue)
-                        }
+                        )
                     }
                 }
             }
         }
+
+        NutraSnackbarHost(
+            visible = state.feedbackMessage != null,
+            message = state.feedbackMessage.orEmpty(),
+            icon = Icons.Rounded.Check,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(
+                    start = NutraTheme.spacing.screen,
+                    end = NutraTheme.spacing.screen,
+                    bottom = contentPadding.calculateBottomPadding() + 8.dp,
+                ),
+        )
+    }
+
+    if (showEditBodySheet) {
+        EditBodyProfileSheet(
+            profile = profile,
+            onDismiss = { showEditBodySheet = false },
+            onSave = { sex, age, heightCm, currentWeight, targetWeight, activity, goalType, recalculate ->
+                haptic.performHapticFeedback(HapticFeedbackType.Confirm)
+                viewModel.updateBodyProfile(
+                    sex = sex,
+                    age = age,
+                    heightCm = heightCm,
+                    currentWeightKg = currentWeight,
+                    targetWeightKg = targetWeight,
+                    activityLevel = activity,
+                    goalType = goalType,
+                    recalculateGoals = recalculate,
+                )
+                showEditBodySheet = false
+            },
+        )
+    }
+
+    if (showGeminiDialog) {
+        GeminiConfigDialog(
+            initialApiKey = profile.geminiApiKey,
+            initialModel = profile.geminiModel,
+            onDismiss = { showGeminiDialog = false },
+            onSave = { apiKey, model ->
+                haptic.performHapticFeedback(HapticFeedbackType.Confirm)
+                viewModel.saveGeminiConfig(apiKey, model)
+                showGeminiDialog = false
+            },
+        )
+    }
+
+    val editingGoalField = activeGoalField
+    if (editingGoalField != null) {
+        val currentValue = when (editingGoalField) {
+            ProfileGoalField.CALORIES -> goals.calories.toString()
+            ProfileGoalField.PROTEIN -> goals.proteinGrams.toString()
+            ProfileGoalField.CARBS -> goals.carbsGrams.toString()
+            ProfileGoalField.FAT -> goals.fatGrams.toString()
+            ProfileGoalField.WATER -> goals.waterMl.toString()
+        }
+        NutraNumericInputDialog(
+            title = editingGoalField.dialogTitle,
+            initialValue = currentValue,
+            unit = editingGoalField.unit,
+            rangeHint = editingGoalField.rangeHint,
+            minValue = editingGoalField.minValue,
+            maxValue = editingGoalField.maxValue,
+            allowDecimal = false,
+            onDismiss = { activeGoalField = null },
+            onConfirm = { entered ->
+                val rounded = entered.roundToInt()
+                val updated = when (editingGoalField) {
+                    ProfileGoalField.CALORIES -> goals.copy(calories = rounded.coerceIn(1000, 6000))
+                    ProfileGoalField.PROTEIN -> goals.copy(proteinGrams = rounded.coerceIn(30, 400))
+                    ProfileGoalField.CARBS -> goals.copy(carbsGrams = rounded.coerceIn(20, 600))
+                    ProfileGoalField.FAT -> goals.copy(fatGrams = rounded.coerceIn(20, 250))
+                    ProfileGoalField.WATER -> goals.copy(waterMl = rounded.coerceIn(1000, 7000))
+                }
+                viewModel.updateGoals(updated)
+                activeGoalField = null
+            },
+        )
     }
 }
 
 @Composable
-private fun GoalStepperRow(
+private fun BodyStatColumn(
     label: String,
-    valueText: String,
-    color: Color,
-    onDecrement: () -> Unit,
-    onIncrement: () -> Unit,
+    value: String,
+    modifier: Modifier = Modifier,
 ) {
-    val haptic = LocalHapticFeedback.current
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(
+            text = label,
+            style = NutraTheme.typography.caption,
+            color = NutraTheme.colors.textSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            text = value,
+            style = NutraTheme.typography.numberSmall,
+            color = NutraTheme.colors.textPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun GeminiConfigDialog(
+    initialApiKey: String,
+    initialModel: String,
+    onDismiss: () -> Unit,
+    onSave: (apiKey: String, model: String) -> Unit,
+) {
+    var apiKeyInput by remember(initialApiKey) { mutableStateOf(initialApiKey) }
+    var modelInput by remember(initialModel) { mutableStateOf(initialModel) }
+
+    NutraDialog(
+        onDismissRequest = onDismiss,
+        title = "Gemini AI bağlantısı",
+        message = "İsteğe bağlı Gemini API anahtarınla fotoğraf ve serbest metin analizi yapabilirsin. Boş bırakılırsa cihaz içi ayrıştırıcı çalışır.",
+        confirmText = "Kaydet",
+        onConfirm = { onSave(apiKeyInput, modelInput) },
+        dismissText = "Vazgeç",
+        onDismiss = onDismiss,
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            NutraTextField(
+                value = apiKeyInput,
+                onValueChange = { apiKeyInput = it },
+                label = "Gemini API anahtarı",
+                placeholder = "AIza...",
+                visualTransformation = PasswordVisualTransformation(),
+                singleLine = true,
+            )
+            NutraTextField(
+                value = modelInput,
+                onValueChange = { modelInput = it },
+                label = "Model",
+                placeholder = "gemini-2.5-flash",
+                singleLine = true,
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun EditBodyProfileSheet(
+    profile: UserProfile,
+    onDismiss: () -> Unit,
+    onSave: (
+        sex: BiologicalSex,
+        age: Int,
+        heightCm: Int,
+        currentWeightKg: Float,
+        targetWeightKg: Float,
+        activityLevel: ActivityLevel,
+        goalType: GoalType,
+        recalculateGoals: Boolean,
+    ) -> Unit,
+) {
+    val colors = NutraTheme.colors
+    var sex by remember(profile) { mutableStateOf(profile.sex) }
+    var age by remember(profile) { mutableIntStateOf(profile.age) }
+    var heightCm by remember(profile) { mutableIntStateOf(profile.heightCm) }
+    var currentWeight by remember(profile) { mutableFloatStateOf(profile.currentWeightKg) }
+    var targetWeight by remember(profile) { mutableFloatStateOf(profile.targetWeightKg) }
+    var activity by remember(profile) { mutableStateOf(profile.activityLevel) }
+    var goalType by remember(profile) { mutableStateOf(profile.goalType) }
+    var recalculateGoals by remember { mutableStateOf(true) }
+    var activeBodyField by remember { mutableStateOf<BodyMetricField?>(null) }
+
+    NutraModalSheet(onDismissRequest = onDismiss) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier
+                    .weight(1f, fill = false)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = NutraTheme.spacing.screen)
+                    .padding(bottom = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(20.dp),
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "Vücut profilini düzenle",
+                        style = NutraTheme.typography.titleLarge,
+                        color = colors.textPrimary,
+                    )
+                    Text(
+                        text = "Ölçülerini ve aktivite düzeyini güncel tut",
+                        style = NutraTheme.typography.bodySmall,
+                        color = colors.textSecondary,
+                    )
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Cinsiyet",
+                        style = NutraTheme.typography.label,
+                        color = colors.textSecondary,
+                    )
+                    NutraSegmentedControl(
+                        items = BiologicalSex.entries,
+                        selectedItem = sex,
+                        onItemSelected = { sex = it },
+                        labelProvider = { it.title },
+                    )
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Hedefin",
+                        style = NutraTheme.typography.label,
+                        color = colors.textSecondary,
+                    )
+                    GoalType.entries.forEach { option ->
+                        SheetOptionRow(
+                            title = option.title,
+                            subtitle = option.subtitle,
+                            selected = option == goalType,
+                            onClick = { goalType = option },
+                        )
+                    }
+                }
+
+                NutraCard(
+                    color = colors.background,
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        NutraMetricStepperRow(
+                            label = "Mevcut kilo",
+                            valueText = "${formatKg(currentWeight)} kg",
+                            valueContainerColor = colors.surface,
+                            onDecrement = {
+                                currentWeight = ((currentWeight - 0.5f) * 10f)
+                                    .roundToInt()
+                                    .coerceIn(350, 2500) / 10f
+                            },
+                            onIncrement = {
+                                currentWeight = ((currentWeight + 0.5f) * 10f)
+                                    .roundToInt()
+                                    .coerceIn(350, 2500) / 10f
+                            },
+                            onValueClick = { activeBodyField = BodyMetricField.CURRENT_WEIGHT },
+                        )
+                        NutraDivider()
+                        NutraMetricStepperRow(
+                            label = "Hedef kilo",
+                            valueText = "${formatKg(targetWeight)} kg",
+                            valueContainerColor = colors.surface,
+                            onDecrement = {
+                                targetWeight = ((targetWeight - 0.5f) * 10f)
+                                    .roundToInt()
+                                    .coerceIn(350, 2500) / 10f
+                            },
+                            onIncrement = {
+                                targetWeight = ((targetWeight + 0.5f) * 10f)
+                                    .roundToInt()
+                                    .coerceIn(350, 2500) / 10f
+                            },
+                            onValueClick = { activeBodyField = BodyMetricField.TARGET_WEIGHT },
+                        )
+                        NutraDivider()
+                        NutraMetricStepperRow(
+                            label = "Boy",
+                            valueText = "$heightCm cm",
+                            valueContainerColor = colors.surface,
+                            onDecrement = { heightCm = (heightCm - 1).coerceIn(130, 225) },
+                            onIncrement = { heightCm = (heightCm + 1).coerceIn(130, 225) },
+                            onValueClick = { activeBodyField = BodyMetricField.HEIGHT },
+                        )
+                        NutraDivider()
+                        NutraMetricStepperRow(
+                            label = "Yaş",
+                            valueText = "$age yaş",
+                            valueContainerColor = colors.surface,
+                            onDecrement = { age = (age - 1).coerceIn(14, 95) },
+                            onIncrement = { age = (age + 1).coerceIn(14, 95) },
+                            onValueClick = { activeBodyField = BodyMetricField.AGE },
+                        )
+                    }
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Hareket düzeyi",
+                        style = NutraTheme.typography.label,
+                        color = colors.textSecondary,
+                    )
+                    ActivityLevel.entries.forEach { level ->
+                        SheetOptionRow(
+                            title = level.title,
+                            subtitle = level.subtitle,
+                            selected = level == activity,
+                            onClick = { activity = level },
+                        )
+                    }
+                }
+
+                NutraCard(
+                    color = colors.background,
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                        ) {
+                            Text(
+                                text = "Hedefleri yeniden hesapla",
+                                style = NutraTheme.typography.label,
+                                color = colors.textPrimary,
+                            )
+                            Text(
+                                text = "Mifflin-St Jeor formülüne göre kalori ve makroları günceller",
+                                style = NutraTheme.typography.caption,
+                                color = colors.textSecondary,
+                            )
+                        }
+                        NutraSwitch(
+                            checked = recalculateGoals,
+                            onCheckedChange = { recalculateGoals = it },
+                        )
+                    }
+                }
+            }
+
+            NutraBottomActionBar {
+                NutraButton(
+                    text = "Vazgeç",
+                    onClick = onDismiss,
+                    style = NutraButtonStyle.Secondary,
+                    size = NutraButtonSize.Medium,
+                    modifier = Modifier.weight(0.35f),
+                )
+                NutraButton(
+                    text = "Kaydet",
+                    onClick = {
+                        onSave(
+                            sex,
+                            age,
+                            heightCm,
+                            currentWeight,
+                            targetWeight,
+                            activity,
+                            goalType,
+                            recalculateGoals,
+                        )
+                    },
+                    style = NutraButtonStyle.Primary,
+                    size = NutraButtonSize.Medium,
+                    modifier = Modifier.weight(0.65f),
+                )
+            }
+        }
+    }
+
+    val editingBodyField = activeBodyField
+    if (editingBodyField != null) {
+        val currentValue = when (editingBodyField) {
+            BodyMetricField.CURRENT_WEIGHT -> formatKg(currentWeight)
+            BodyMetricField.TARGET_WEIGHT -> formatKg(targetWeight)
+            BodyMetricField.HEIGHT -> heightCm.toString()
+            BodyMetricField.AGE -> age.toString()
+        }
+        NutraNumericInputDialog(
+            title = editingBodyField.dialogTitle,
+            initialValue = currentValue,
+            unit = editingBodyField.unit,
+            rangeHint = editingBodyField.rangeHint,
+            minValue = editingBodyField.minValue,
+            maxValue = editingBodyField.maxValue,
+            allowDecimal = editingBodyField.allowDecimal,
+            onDismiss = { activeBodyField = null },
+            onConfirm = { entered ->
+                when (editingBodyField) {
+                    BodyMetricField.CURRENT_WEIGHT -> {
+                        currentWeight = ((entered * 10.0).roundToInt().coerceIn(350, 2500)) / 10f
+                    }
+                    BodyMetricField.TARGET_WEIGHT -> {
+                        targetWeight = ((entered * 10.0).roundToInt().coerceIn(350, 2500)) / 10f
+                    }
+                    BodyMetricField.HEIGHT -> {
+                        heightCm = entered.roundToInt().coerceIn(130, 225)
+                    }
+                    BodyMetricField.AGE -> {
+                        age = entered.roundToInt().coerceIn(14, 95)
+                    }
+                }
+                activeBodyField = null
+            },
+        )
+    }
+}
+
+@Composable
+private fun SheetOptionRow(
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val colors = NutraTheme.colors
+    val container by animateColorAsState(
+        targetValue = if (selected) colors.ink else colors.background,
+        animationSpec = tween(160),
+        label = "sheetOptionContainer",
+    )
+    val titleColor by animateColorAsState(
+        targetValue = if (selected) colors.onInk else colors.textPrimary,
+        animationSpec = tween(160),
+        label = "sheetOptionTitle",
+    )
+    val subColor by animateColorAsState(
+        targetValue = if (selected) colors.onInk.copy(alpha = 0.72f) else colors.textSecondary,
+        animationSpec = tween(160),
+        label = "sheetOptionSub",
+    )
+
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(NutraTheme.shapes.md)
+            .background(container)
+            .clickable(role = Role.RadioButton, onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(end = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            Box(
-                modifier = Modifier
-                    .size(8.dp)
-                    .clip(NutraTheme.shapes.pill)
-                    .background(color),
+            Text(
+                text = title,
+                style = NutraTheme.typography.titleSmall,
+                color = titleColor,
             )
             Text(
-                text = label,
-                style = NutraTheme.typography.foodItemTitle,
-                color = NutraTheme.colors.textPrimary,
+                text = subtitle,
+                style = NutraTheme.typography.caption,
+                color = subColor,
             )
         }
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(34.dp)
-                    .clip(NutraTheme.shapes.chip)
-                    .background(NutraTheme.colors.elevatedSurface)
-                    .border(1.dp, NutraTheme.colors.hairlineBorder, NutraTheme.shapes.chip)
-                    .clickable {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onDecrement()
-                    },
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(Icons.Rounded.Remove, contentDescription = null, tint = NutraTheme.colors.textPrimary, modifier = Modifier.size(16.dp))
-            }
-            Text(
-                text = valueText,
-                style = NutraTheme.typography.cardTitle,
-                color = NutraTheme.colors.textPrimary,
+        if (selected) {
+            Icon(
+                imageVector = Icons.Rounded.Check,
+                contentDescription = null,
+                tint = colors.onInk,
+                modifier = Modifier.size(18.dp),
             )
-            Box(
-                modifier = Modifier
-                    .size(34.dp)
-                    .clip(NutraTheme.shapes.chip)
-                    .background(NutraTheme.colors.elevatedSurface)
-                    .border(1.dp, NutraTheme.colors.hairlineBorder, NutraTheme.shapes.chip)
-                    .clickable {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onIncrement()
-                    },
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(Icons.Rounded.Add, contentDescription = null, tint = NutraTheme.colors.textPrimary, modifier = Modifier.size(16.dp))
-            }
         }
     }
 }

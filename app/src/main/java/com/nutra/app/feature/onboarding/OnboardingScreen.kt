@@ -1,15 +1,22 @@
 package com.nutra.app.feature.onboarding
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -24,31 +31,72 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Remove
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.nutra.app.core.designsystem.NutraButton
+import com.nutra.app.core.designsystem.NutraButtonSize
+import com.nutra.app.core.designsystem.NutraButtonStyle
 import com.nutra.app.core.designsystem.NutraCard
+import com.nutra.app.core.designsystem.NutraDivider
+import com.nutra.app.core.designsystem.NutraDot
+import com.nutra.app.core.designsystem.NutraIconButton
+import com.nutra.app.core.designsystem.NutraMetricStepperRow
+import com.nutra.app.core.designsystem.NutraNumericInputDialog
+import com.nutra.app.core.designsystem.NutraSectionHeader
 import com.nutra.app.core.designsystem.NutraSegmentedControl
+import com.nutra.app.core.designsystem.NutraSelectableCard
+import com.nutra.app.core.designsystem.NutraStepperButton
 import com.nutra.app.core.designsystem.NutraTheme
 import com.nutra.app.domain.model.ActivityLevel
 import com.nutra.app.domain.model.BiologicalSex
 import com.nutra.app.domain.model.GoalType
+import java.text.NumberFormat
+import java.util.Locale
 import kotlin.math.roundToInt
+
+private val TR_LOCALE = Locale.forLanguageTag("tr-TR")
+
+private fun formatInt(value: Int): String =
+    NumberFormat.getIntegerInstance(TR_LOCALE).format(value)
+
+private fun formatKg(value: Float): String =
+    String.format(TR_LOCALE, "%.1f", value)
+
+private enum class OnboardingNumericField(
+    val dialogTitle: String,
+    val unit: String,
+    val rangeHint: String,
+    val minValue: Double,
+    val maxValue: Double,
+    val allowDecimal: Boolean,
+) {
+    AGE("Yaş", "yaş", "14 – 95 yaş", 14.0, 95.0, false),
+    HEIGHT("Boy", "cm", "130 – 225 cm", 130.0, 225.0, false),
+    CURRENT_WEIGHT("Mevcut kilo", "kg", "38,0 – 220,0 kg", 38.0, 220.0, true),
+    TARGET_WEIGHT("Hedef kilo", "kg", "38,0 – 220,0 kg", 38.0, 220.0, true),
+    CALORIES("Günlük kalori hedefi", "kcal", "1.100 – 5.000 kcal", 1100.0, 5000.0, false),
+    PROTEIN("Protein hedefi", "g", "40 – 350 g", 40.0, 350.0, false),
+    CARBS("Karbonhidrat hedefi", "g", "30 – 550 g", 30.0, 550.0, false),
+    FAT("Yağ hedefi", "g", "25 – 220 g", 25.0, 220.0, false),
+    WATER("Su hedefi", "ml", "1.200 – 6.000 ml", 1200.0, 6000.0, false),
+}
 
 @Composable
 fun OnboardingScreen(
@@ -56,341 +104,266 @@ fun OnboardingScreen(
     onOnboardingFinished: () -> Unit,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val colors = NutraTheme.colors
     val haptic = LocalHapticFeedback.current
+    var activeField by remember { mutableStateOf<OnboardingNumericField?>(null) }
+
+    BackHandler(enabled = state.stepIndex > 0) {
+        viewModel.previousStep()
+    }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(NutraTheme.colors.background)
+            .background(colors.background)
             .statusBarsPadding()
-            .navigationBarsPadding()
-            .padding(horizontal = NutraTheme.spacing.screenHorizontal),
+            .navigationBarsPadding(),
     ) {
-        // Top Header & Progress Indicator
-        Row(
+        // Minimal top navigation + 3-segment step bar
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 12.dp, bottom = 16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                if (state.stepIndex > 0) {
-                    IconButton(
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            viewModel.previousStep()
-                        },
-                        modifier = Modifier.size(36.dp),
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                            contentDescription = "Geri",
-                            tint = NutraTheme.colors.textPrimary,
-                        )
-                    }
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    repeat(3) { idx ->
-                        val active = idx <= state.stepIndex
-                        Box(
-                            modifier = Modifier
-                                .height(6.dp)
-                                .size(width = if (idx == state.stepIndex) 28.dp else 12.dp, height = 6.dp)
-                                .clip(NutraTheme.shapes.pill)
-                                .background(
-                                    if (active) NutraTheme.colors.calorieAccent else NutraTheme.colors.elevatedSurface,
-                                ),
-                        )
-                    }
-                }
-            }
-
-            TextButton(
-                onClick = {
-                    haptic.performHapticFeedback(HapticFeedbackType.Confirm)
-                    viewModel.completeOnboarding(onOnboardingFinished)
-                },
-            ) {
-                Text(
-                    text = "Hızlı Başla",
-                    style = NutraTheme.typography.macroValue,
-                    color = NutraTheme.colors.textSecondary,
-                )
-            }
-        }
-
-        AnimatedContent(
-            targetState = state.stepIndex,
-            modifier = Modifier.weight(1f),
-            label = "OnboardingStepTransition",
-        ) { step ->
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                when (step) {
-                    0 -> StepGoalSelection(
-                        selectedGoal = state.goalType,
-                        onSelectGoal = viewModel::selectGoalType,
-                    )
-                    1 -> StepBodyMetricsAndActivity(
-                        state = state,
-                        onSelectSex = viewModel::selectSex,
-                        onAdjustAge = viewModel::adjustAge,
-                        onAdjustHeight = viewModel::adjustHeight,
-                        onAdjustWeight = viewModel::adjustCurrentWeight,
-                        onAdjustTargetWeight = viewModel::adjustTargetWeight,
-                        onSelectActivity = viewModel::selectActivityLevel,
-                    )
-                    else -> StepCalculatedPlanReview(
-                        state = state,
-                        onAdjustCalories = viewModel::adjustCustomCalories,
-                        onAdjustProtein = viewModel::adjustCustomProtein,
-                        onAdjustCarbs = viewModel::adjustCustomCarbs,
-                        onAdjustFat = viewModel::adjustCustomFat,
-                        onAdjustWater = viewModel::adjustCustomWater,
-                        onResetFormula = viewModel::resetToMifflinFormula,
-                    )
-                }
-                Spacer(modifier = Modifier.height(20.dp))
-            }
-        }
-
-        // Bottom Primary CTA
-        Button(
-            onClick = {
-                if (state.stepIndex < 2) {
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    viewModel.nextStep()
-                } else {
-                    haptic.performHapticFeedback(HapticFeedbackType.Confirm)
-                    viewModel.completeOnboarding(onOnboardingFinished)
-                }
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 16.dp)
-                .height(54.dp),
-            shape = NutraTheme.shapes.innerSubCard,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = NutraTheme.colors.calorieAccent,
-                contentColor = Color.White,
-            ),
-        ) {
-            Text(
-                text = if (state.stepIndex < 2) "Devam Et" else "Planımı Onayla ve Başla",
-                style = NutraTheme.typography.cardTitle,
-                color = Color.White,
-            )
-            Spacer(modifier = Modifier.size(8.dp))
-            Icon(
-                imageVector = if (state.stepIndex < 2) {
-                    Icons.AutoMirrored.Rounded.ArrowForward
-                } else {
-                    Icons.Rounded.Check
-                },
-                contentDescription = null,
-                modifier = Modifier.size(18.dp),
-            )
-        }
-    }
-}
-
-@Composable
-private fun StepGoalSelection(
-    selectedGoal: GoalType,
-    onSelectGoal: (GoalType) -> Unit,
-) {
-    val haptic = LocalHapticFeedback.current
-    Text(
-        text = "Temel Hedefiniz Nedir?",
-        style = NutraTheme.typography.screenHeader,
-        color = NutraTheme.colors.textPrimary,
-    )
-    Text(
-        text = "Mifflin-St Jeor metabolizma denklemine göre günlük enerji ve makro dengenizi optimize edelim.",
-        style = NutraTheme.typography.bodyRegular,
-        color = NutraTheme.colors.textSecondary,
-    )
-    Spacer(modifier = Modifier.height(6.dp))
-
-    GoalType.entries.forEach { goal ->
-        val isSelected = goal == selectedGoal
-        NutraCard(
-            onClick = {
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                onSelectGoal(goal)
-            },
-            borderColor = if (isSelected) {
-                NutraTheme.colors.calorieAccent
-            } else {
-                NutraTheme.colors.hairlineBorder
-            },
-            backgroundColor = if (isSelected) {
-                NutraTheme.colors.calorieAccent.copy(alpha = if (NutraTheme.colors.isDark) 0.14f else 0.08f)
-            } else {
-                NutraTheme.colors.cardSurface
-            },
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = goal.title,
-                        style = NutraTheme.typography.cardTitle,
-                        color = NutraTheme.colors.textPrimary,
-                    )
-                    val badgeText = when {
-                        goal.calorieDelta < 0 -> "${goal.calorieDelta} kcal"
-                        goal.calorieDelta > 0 -> "+${goal.calorieDelta} kcal"
-                        else -> "Denge"
-                    }
-                    Box(
-                        modifier = Modifier
-                            .clip(NutraTheme.shapes.chip)
-                            .background(NutraTheme.colors.elevatedSurface)
-                            .padding(horizontal = 10.dp, vertical = 4.dp),
-                    ) {
-                        Text(
-                            text = badgeText,
-                            style = NutraTheme.typography.badgeLabel,
-                            color = if (isSelected) NutraTheme.colors.calorieAccent else NutraTheme.colors.textSecondary,
-                        )
-                    }
-                }
-                Text(
-                    text = goal.subtitle,
-                    style = NutraTheme.typography.bodyRegular,
-                    color = NutraTheme.colors.textSecondary,
-                )
-                Text(
-                    text = "Makro Oranı: %${(goal.proteinRatio * 100).roundToInt()} Protein · %${(goal.carbsRatio * 100).roundToInt()} Karb · %${(goal.fatRatio * 100).roundToInt()} Yağ",
-                    style = NutraTheme.typography.macroLabel,
-                    color = NutraTheme.colors.textMuted,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun StepBodyMetricsAndActivity(
-    state: OnboardingUiState,
-    onSelectSex: (BiologicalSex) -> Unit,
-    onAdjustAge: (Int) -> Unit,
-    onAdjustHeight: (Int) -> Unit,
-    onAdjustWeight: (Float) -> Unit,
-    onAdjustTargetWeight: (Float) -> Unit,
-    onSelectActivity: (ActivityLevel) -> Unit,
-) {
-    Text(
-        text = "Vücut & Aktivite Profiliniz",
-        style = NutraTheme.typography.screenHeader,
-        color = NutraTheme.colors.textPrimary,
-    )
-    Text(
-        text = "Tüm hesaplamalar tamamen cihazınızda çevrimdışı yapılır.",
-        style = NutraTheme.typography.bodyRegular,
-        color = NutraTheme.colors.textSecondary,
-    )
-
-    NutraSegmentedControl(
-        items = BiologicalSex.entries,
-        selectedItem = state.sex,
-        onItemSelected = onSelectSex,
-        labelProvider = { it.title },
-    )
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        MetricStepperCard(
-            title = "Yaş",
-            valueText = "${state.age}",
-            unit = "yıl",
-            onDecrement = { onAdjustAge(-1) },
-            onIncrement = { onAdjustAge(1) },
-            modifier = Modifier.weight(1f),
-        )
-        MetricStepperCard(
-            title = "Boy",
-            valueText = "${state.heightCm}",
-            unit = "cm",
-            onDecrement = { onAdjustHeight(-1) },
-            onIncrement = { onAdjustHeight(1) },
-            modifier = Modifier.weight(1f),
-        )
-    }
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        MetricStepperCard(
-            title = "Mevcut Kilo",
-            valueText = String.format(java.util.Locale.US, "%.1f", state.currentWeightKg),
-            unit = "kg",
-            onDecrement = { onAdjustWeight(-0.5f) },
-            onIncrement = { onAdjustWeight(0.5f) },
-            modifier = Modifier.weight(1f),
-        )
-        MetricStepperCard(
-            title = "Hedef Kilo",
-            valueText = String.format(java.util.Locale.US, "%.1f", state.targetWeightKg),
-            unit = "kg",
-            onDecrement = { onAdjustTargetWeight(-0.5f) },
-            onIncrement = { onAdjustTargetWeight(0.5f) },
-            modifier = Modifier.weight(1f),
-        )
-    }
-
-    Spacer(modifier = Modifier.height(4.dp))
-    Text(
-        text = "Günlük Hareket Düzeyi",
-        style = NutraTheme.typography.sectionTitle,
-        color = NutraTheme.colors.textPrimary,
-    )
-
-    ActivityLevel.entries.forEach { level ->
-        val isSelected = level == state.activityLevel
-        NutraCard(
-            onClick = { onSelectActivity(level) },
-            borderColor = if (isSelected) NutraTheme.colors.calorieAccent else NutraTheme.colors.hairlineBorder,
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-            modifier = Modifier.fillMaxWidth(),
+                .padding(horizontal = NutraTheme.spacing.screen)
+                .padding(top = 12.dp, bottom = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = level.title,
-                        style = NutraTheme.typography.foodItemTitle,
-                        color = NutraTheme.colors.textPrimary,
+                if (state.stepIndex > 0) {
+                    NutraIconButton(
+                        icon = Icons.AutoMirrored.Rounded.ArrowBack,
+                        contentDescription = "Geri",
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            viewModel.previousStep()
+                        },
+                        size = 40.dp,
+                        iconSize = 20.dp,
                     )
-                    Text(
-                        text = level.subtitle,
-                        style = NutraTheme.typography.bodySmall,
-                        color = NutraTheme.colors.textSecondary,
+                } else {
+                    Box(
+                        modifier = Modifier.height(40.dp),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
+                        Text(
+                            text = "Nutra",
+                            style = NutraTheme.typography.titleMedium,
+                            color = colors.textPrimary,
+                        )
+                    }
+                }
+
+                NutraButton(
+                    text = "Hızlı Başla",
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.Confirm)
+                        viewModel.completeOnboarding(onOnboardingFinished)
+                    },
+                    style = NutraButtonStyle.Ghost,
+                    size = NutraButtonSize.Small,
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                repeat(3) { idx ->
+                    val filled = idx <= state.stepIndex
+                    val barColor by animateColorAsState(
+                        targetValue = if (filled) colors.ink else colors.surfaceMuted,
+                        animationSpec = tween(220),
+                        label = "stepBar$idx",
+                    )
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(4.dp)
+                            .clip(NutraTheme.shapes.pill)
+                            .background(barColor),
                     )
                 }
-                Text(
-                    text = "x${level.multiplier}",
-                    style = NutraTheme.typography.macroValue,
-                    color = if (isSelected) NutraTheme.colors.calorieAccent else NutraTheme.colors.textMuted,
+            }
+        }
+
+        // Step content
+        AnimatedContent(
+            targetState = state.stepIndex,
+            modifier = Modifier.weight(1f),
+            transitionSpec = {
+                val forward = targetState >= initialState
+                (slideInHorizontally(tween(240)) { if (forward) it / 4 else -it / 4 } +
+                    fadeIn(tween(200))) togetherWith
+                    (slideOutHorizontally(tween(200)) { if (forward) -it / 6 else it / 6 } +
+                        fadeOut(tween(150)))
+            },
+            label = "onboardingStep",
+        ) { step ->
+            when (step) {
+                0 -> GoalSelectionStep(
+                    selectedGoal = state.goalType,
+                    onSelectGoal = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        viewModel.selectGoalType(it)
+                    },
+                )
+
+                1 -> BodyMetricsStep(
+                    state = state,
+                    onSelectSex = viewModel::selectSex,
+                    onAdjustAge = viewModel::adjustAge,
+                    onAdjustHeight = viewModel::adjustHeight,
+                    onAdjustCurrentWeight = viewModel::adjustCurrentWeight,
+                    onAdjustTargetWeight = viewModel::adjustTargetWeight,
+                    onSelectActivity = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        viewModel.selectActivityLevel(it)
+                    },
+                    onEditField = { activeField = it },
+                )
+
+                else -> DailyPlanReviewStep(
+                    state = state,
+                    onAdjustCalories = viewModel::adjustCustomCalories,
+                    onAdjustProtein = viewModel::adjustCustomProtein,
+                    onAdjustCarbs = viewModel::adjustCustomCarbs,
+                    onAdjustFat = viewModel::adjustCustomFat,
+                    onAdjustWater = viewModel::adjustCustomWater,
+                    onReset = viewModel::resetToMifflinFormula,
+                    onEditField = { activeField = it },
+                )
+            }
+        }
+
+        // Bottom CTA
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(colors.background)
+                .padding(horizontal = NutraTheme.spacing.screen, vertical = 16.dp),
+        ) {
+            val isLast = state.stepIndex == 2
+            NutraButton(
+                text = if (isLast) "Başlayalım" else "Devam",
+                onClick = {
+                    if (isLast) {
+                        haptic.performHapticFeedback(HapticFeedbackType.Confirm)
+                        viewModel.completeOnboarding(onOnboardingFinished)
+                    } else {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        viewModel.nextStep()
+                    }
+                },
+                style = NutraButtonStyle.Primary,
+                size = NutraButtonSize.Large,
+                trailingIcon = if (isLast) Icons.Rounded.Check else Icons.AutoMirrored.Rounded.ArrowForward,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
+
+    val editingField = activeField
+    if (editingField != null) {
+        val currentValue = when (editingField) {
+            OnboardingNumericField.AGE -> state.age.toString()
+            OnboardingNumericField.HEIGHT -> state.heightCm.toString()
+            OnboardingNumericField.CURRENT_WEIGHT -> formatKg(state.currentWeightKg)
+            OnboardingNumericField.TARGET_WEIGHT -> formatKg(state.targetWeightKg)
+            OnboardingNumericField.CALORIES -> state.customGoals.calories.toString()
+            OnboardingNumericField.PROTEIN -> state.customGoals.proteinGrams.toString()
+            OnboardingNumericField.CARBS -> state.customGoals.carbsGrams.toString()
+            OnboardingNumericField.FAT -> state.customGoals.fatGrams.toString()
+            OnboardingNumericField.WATER -> state.customGoals.waterMl.toString()
+        }
+        NutraNumericInputDialog(
+            title = editingField.dialogTitle,
+            initialValue = currentValue,
+            unit = editingField.unit,
+            rangeHint = editingField.rangeHint,
+            minValue = editingField.minValue,
+            maxValue = editingField.maxValue,
+            allowDecimal = editingField.allowDecimal,
+            onDismiss = { activeField = null },
+            onConfirm = { entered ->
+                when (editingField) {
+                    OnboardingNumericField.AGE -> viewModel.setAge(entered.roundToInt())
+                    OnboardingNumericField.HEIGHT -> viewModel.setHeight(entered.roundToInt())
+                    OnboardingNumericField.CURRENT_WEIGHT -> viewModel.setCurrentWeight(entered.toFloat())
+                    OnboardingNumericField.TARGET_WEIGHT -> viewModel.setTargetWeight(entered.toFloat())
+                    OnboardingNumericField.CALORIES -> viewModel.setCustomCalories(entered.roundToInt())
+                    OnboardingNumericField.PROTEIN -> viewModel.setCustomProtein(entered.roundToInt())
+                    OnboardingNumericField.CARBS -> viewModel.setCustomCarbs(entered.roundToInt())
+                    OnboardingNumericField.FAT -> viewModel.setCustomFat(entered.roundToInt())
+                    OnboardingNumericField.WATER -> viewModel.setCustomWater(entered.roundToInt())
+                }
+                activeField = null
+            },
+        )
+    }
+}
+
+@Composable
+private fun StepHeadline(
+    stepNumber: Int,
+    title: String,
+    subtitle: String,
+    trailing: (@Composable () -> Unit)? = null,
+) {
+    val colors = NutraTheme.colors
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "Adım $stepNumber / 3",
+                style = NutraTheme.typography.labelSmall,
+                color = colors.accent,
+            )
+            trailing?.invoke()
+        }
+        Text(
+            text = title,
+            style = NutraTheme.typography.titleLarge,
+            color = colors.textPrimary,
+        )
+        Text(
+            text = subtitle,
+            style = NutraTheme.typography.bodyLarge,
+            color = colors.textSecondary,
+        )
+    }
+}
+
+@Composable
+private fun GoalSelectionStep(
+    selectedGoal: GoalType,
+    onSelectGoal: (GoalType) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = NutraTheme.spacing.screen, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(24.dp),
+    ) {
+        StepHeadline(
+            stepNumber = 1,
+            title = "Nasıl bir hedefle başlıyoruz?",
+            subtitle = "Kalori ve makro hedeflerini buna göre hesaplayacağız.",
+        )
+
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            GoalType.entries.forEach { goal ->
+                NutraSelectableCard(
+                    title = goal.title,
+                    subtitle = goal.subtitle,
+                    selected = goal == selectedGoal,
+                    onClick = { onSelectGoal(goal) },
                 )
             }
         }
@@ -398,150 +371,350 @@ private fun StepBodyMetricsAndActivity(
 }
 
 @Composable
-private fun StepCalculatedPlanReview(
+private fun BodyMetricsStep(
+    state: OnboardingUiState,
+    onSelectSex: (BiologicalSex) -> Unit,
+    onAdjustAge: (Int) -> Unit,
+    onAdjustHeight: (Int) -> Unit,
+    onAdjustCurrentWeight: (Float) -> Unit,
+    onAdjustTargetWeight: (Float) -> Unit,
+    onSelectActivity: (ActivityLevel) -> Unit,
+    onEditField: (OnboardingNumericField) -> Unit,
+) {
+    val haptic = LocalHapticFeedback.current
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = NutraTheme.spacing.screen, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(24.dp),
+    ) {
+        StepHeadline(
+            stepNumber = 2,
+            title = "Seni biraz tanıyalım",
+            subtitle = "Bireysel metabolizma hesabın için ölçülerini seç veya üzerine basarak yaz.",
+        )
+
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            NutraSectionHeader(title = "Biyolojik cinsiyet")
+            NutraSegmentedControl(
+                items = BiologicalSex.entries,
+                selectedItem = state.sex,
+                onItemSelected = onSelectSex,
+                labelProvider = { it.title },
+            )
+        }
+
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            NutraSectionHeader(
+                title = "Vücut ölçüleri",
+                supportingText = "Değere dokunarak yazabilirsin",
+            )
+            NutraCard(contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    NutraMetricStepperRow(
+                        label = "Yaş",
+                        valueText = "${state.age} yaş",
+                        onDecrement = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onAdjustAge(-1)
+                        },
+                        onIncrement = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onAdjustAge(1)
+                        },
+                        onValueClick = { onEditField(OnboardingNumericField.AGE) },
+                    )
+                    NutraDivider()
+                    NutraMetricStepperRow(
+                        label = "Boy",
+                        valueText = "${state.heightCm} cm",
+                        onDecrement = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onAdjustHeight(-1)
+                        },
+                        onIncrement = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onAdjustHeight(1)
+                        },
+                        onValueClick = { onEditField(OnboardingNumericField.HEIGHT) },
+                    )
+                    NutraDivider()
+                    NutraMetricStepperRow(
+                        label = "Mevcut kilo",
+                        valueText = "${formatKg(state.currentWeightKg)} kg",
+                        onDecrement = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onAdjustCurrentWeight(-0.5f)
+                        },
+                        onIncrement = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onAdjustCurrentWeight(0.5f)
+                        },
+                        onValueClick = { onEditField(OnboardingNumericField.CURRENT_WEIGHT) },
+                    )
+                    NutraDivider()
+                    NutraMetricStepperRow(
+                        label = "Hedef kilo",
+                        valueText = "${formatKg(state.targetWeightKg)} kg",
+                        onDecrement = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onAdjustTargetWeight(-0.5f)
+                        },
+                        onIncrement = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onAdjustTargetWeight(0.5f)
+                        },
+                        onValueClick = { onEditField(OnboardingNumericField.TARGET_WEIGHT) },
+                    )
+                }
+            }
+        }
+
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            NutraSectionHeader(title = "Hareket düzeyi")
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                ActivityLevel.entries.forEach { level ->
+                    NutraSelectableCard(
+                        title = level.title,
+                        subtitle = level.subtitle,
+                        selected = level == state.activityLevel,
+                        onClick = { onSelectActivity(level) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DailyPlanReviewStep(
     state: OnboardingUiState,
     onAdjustCalories: (Int) -> Unit,
     onAdjustProtein: (Int) -> Unit,
     onAdjustCarbs: (Int) -> Unit,
     onAdjustFat: (Int) -> Unit,
     onAdjustWater: (Int) -> Unit,
-    onResetFormula: () -> Unit,
+    onReset: () -> Unit,
+    onEditField: (OnboardingNumericField) -> Unit,
 ) {
+    val colors = NutraTheme.colors
     val goals = state.customGoals
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = "Kişisel Beslenme Planınız",
-            style = NutraTheme.typography.screenHeader,
-            color = NutraTheme.colors.textPrimary,
-        )
-        if (state.isCustomized) {
-            TextButton(onClick = onResetFormula) {
-                Icon(
-                    imageVector = Icons.Rounded.Refresh,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp),
-                    tint = NutraTheme.colors.calorieAccent,
-                )
-                Spacer(modifier = Modifier.size(4.dp))
-                Text(
-                    text = "Formüle Dön",
-                    style = NutraTheme.typography.macroLabel,
-                    color = NutraTheme.colors.calorieAccent,
-                )
-            }
-        }
-    }
-    Text(
-        text = "Mifflin-St Jeor formülüyle hesaplanan günlük hedefleriniz aşağıdadır. Dilerseniz '+' ve '-' ile hemen özelleştirebilirsiniz.",
-        style = NutraTheme.typography.bodyRegular,
-        color = NutraTheme.colors.textSecondary,
-    )
-
-    NutraCard(
-        shape = NutraTheme.shapes.heroCard,
-        contentPadding = PaddingValues(NutraTheme.spacing.heroCardPadding),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            AdjustableGoalRow(
-                label = "Günlük Kalori Hedefi",
-                valueText = "${goals.calories} kcal",
-                accentColor = NutraTheme.colors.calorieAccent,
-                onDecrement = { onAdjustCalories(-50) },
-                onIncrement = { onAdjustCalories(50) },
-            )
-            AdjustableGoalRow(
-                label = "Protein",
-                valueText = "${goals.proteinGrams} g",
-                accentColor = NutraTheme.colors.proteinAccent,
-                onDecrement = { onAdjustProtein(-5) },
-                onIncrement = { onAdjustProtein(5) },
-            )
-            AdjustableGoalRow(
-                label = "Karbonhidrat",
-                valueText = "${goals.carbsGrams} g",
-                accentColor = NutraTheme.colors.carbsAccent,
-                onDecrement = { onAdjustCarbs(-5) },
-                onIncrement = { onAdjustCarbs(5) },
-            )
-            AdjustableGoalRow(
-                label = "Yağ",
-                valueText = "${goals.fatGrams} g",
-                accentColor = NutraTheme.colors.fatAccent,
-                onDecrement = { onAdjustFat(-5) },
-                onIncrement = { onAdjustFat(5) },
-            )
-            AdjustableGoalRow(
-                label = "Günlük Su Hedefi",
-                valueText = "${goals.waterMl} ml",
-                accentColor = NutraTheme.colors.waterAccent,
-                onDecrement = { onAdjustWater(-100) },
-                onIncrement = { onAdjustWater(100) },
-            )
-        }
-    }
-}
-
-@Composable
-private fun MetricStepperCard(
-    title: String,
-    valueText: String,
-    unit: String,
-    onDecrement: () -> Unit,
-    onIncrement: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
     val haptic = LocalHapticFeedback.current
-    NutraCard(
-        modifier = modifier,
-        contentPadding = PaddingValues(14.dp),
+
+    val proteinKcal = goals.proteinGrams * 4f
+    val carbsKcal = goals.carbsGrams * 4f
+    val fatKcal = goals.fatGrams * 9f
+    val totalMacroKcal = (proteinKcal + carbsKcal + fatKcal).coerceAtLeast(1f)
+
+    val pShare = ((proteinKcal / totalMacroKcal) * 100f).roundToInt()
+    val cShare = ((carbsKcal / totalMacroKcal) * 100f).roundToInt()
+    val fShare = (100 - pShare - cShare).coerceAtLeast(0)
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = NutraTheme.spacing.screen, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
+        StepHeadline(
+            stepNumber = 3,
+            title = "Günlük planın hazır",
+            subtitle = "Mifflin-St Jeor hesaplamasına göre önerilen hedeflerini istersen özelleştir.",
+            trailing = if (state.isCustomized) {
+                {
+                    NutraButton(
+                        text = "Sıfırla",
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.Confirm)
+                            onReset()
+                        },
+                        style = NutraButtonStyle.Ghost,
+                        size = NutraButtonSize.Small,
+                        leadingIcon = Icons.Rounded.Refresh,
+                    )
+                }
+            } else {
+                null
+            },
+        )
+
+        // Hero calorie summary card
+        NutraCard {
             Text(
-                text = title,
-                style = NutraTheme.typography.macroLabel,
-                color = NutraTheme.colors.textSecondary,
+                text = "Günlük kalori hedefi",
+                style = NutraTheme.typography.label,
+                color = colors.textSecondary,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
             )
+
             Row(
-                verticalAlignment = Alignment.Bottom,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    text = valueText,
-                    style = NutraTheme.typography.statLargeNumber,
-                    color = NutraTheme.colors.textPrimary,
+                NutraStepperButton(
+                    icon = Icons.Rounded.Remove,
+                    contentDescription = "50 kcal azalt",
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onAdjustCalories(-50)
+                    },
+                    size = 44.dp,
                 )
-                Text(
-                    text = unit,
-                    style = NutraTheme.typography.macroLabel,
-                    color = NutraTheme.colors.textMuted,
+
+                Column(
+                    modifier = Modifier
+                        .clip(NutraTheme.shapes.lg)
+                        .background(colors.surfaceMuted)
+                        .clickable(role = Role.Button) {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onEditField(OnboardingNumericField.CALORIES)
+                        }
+                        .padding(horizontal = 24.dp, vertical = 10.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        text = formatInt(goals.calories),
+                        style = NutraTheme.typography.display,
+                        color = colors.textPrimary,
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text(
+                            text = "kcal / gün",
+                            style = NutraTheme.typography.caption,
+                            color = colors.accent,
+                        )
+                        Icon(
+                            imageVector = Icons.Rounded.Edit,
+                            contentDescription = "Kalori hedefini düzenle",
+                            tint = colors.accent,
+                            modifier = Modifier.size(12.dp),
+                        )
+                    }
+                }
+
+                NutraStepperButton(
+                    icon = Icons.Rounded.Add,
+                    contentDescription = "50 kcal artır",
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onAdjustCalories(50)
+                    },
+                    size = 44.dp,
                 )
             }
+
+            // Macro calorie share bar
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 20.dp)
+                    .height(8.dp)
+                    .clip(NutraTheme.shapes.pill),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .weight((proteinKcal / totalMacroKcal).coerceAtLeast(0.02f))
+                        .fillMaxHeight()
+                        .background(colors.protein),
+                )
+                Box(
+                    modifier = Modifier
+                        .weight((carbsKcal / totalMacroKcal).coerceAtLeast(0.02f))
+                        .fillMaxHeight()
+                        .background(colors.carbs),
+                )
+                Box(
+                    modifier = Modifier
+                        .weight((fatKcal / totalMacroKcal).coerceAtLeast(0.02f))
+                        .fillMaxHeight()
+                        .background(colors.fat),
+                )
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly,
             ) {
-                StepperButton(
-                    icon = Icons.Rounded.Remove,
-                    onClick = {
+                MacroShareLegend(color = colors.protein, text = "Protein %$pShare")
+                MacroShareLegend(color = colors.carbs, text = "Karb. %$cShare")
+                MacroShareLegend(color = colors.fat, text = "Yağ %$fShare")
+            }
+        }
+
+        // Macro & water steppers
+        NutraCard(contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                NutraMetricStepperRow(
+                    label = "Protein",
+                    valueText = "${goals.proteinGrams} g",
+                    accentColor = colors.protein,
+                    onDecrement = {
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onDecrement()
+                        onAdjustProtein(-5)
                     },
+                    onIncrement = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onAdjustProtein(5)
+                    },
+                    onValueClick = { onEditField(OnboardingNumericField.PROTEIN) },
                 )
-                StepperButton(
-                    icon = Icons.Rounded.Add,
-                    onClick = {
+                NutraDivider()
+                NutraMetricStepperRow(
+                    label = "Karbonhidrat",
+                    valueText = "${goals.carbsGrams} g",
+                    accentColor = colors.carbs,
+                    onDecrement = {
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onIncrement()
+                        onAdjustCarbs(-5)
                     },
+                    onIncrement = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onAdjustCarbs(5)
+                    },
+                    onValueClick = { onEditField(OnboardingNumericField.CARBS) },
+                )
+                NutraDivider()
+                NutraMetricStepperRow(
+                    label = "Yağ",
+                    valueText = "${goals.fatGrams} g",
+                    accentColor = colors.fat,
+                    onDecrement = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onAdjustFat(-5)
+                    },
+                    onIncrement = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onAdjustFat(5)
+                    },
+                    onValueClick = { onEditField(OnboardingNumericField.FAT) },
+                )
+                NutraDivider()
+                NutraMetricStepperRow(
+                    label = "Su hedefi",
+                    valueText = "${formatInt(goals.waterMl)} ml",
+                    accentColor = colors.water,
+                    onDecrement = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onAdjustWater(-250)
+                    },
+                    onIncrement = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onAdjustWater(250)
+                    },
+                    onValueClick = { onEditField(OnboardingNumericField.WATER) },
                 )
             }
         }
@@ -549,81 +722,19 @@ private fun MetricStepperCard(
 }
 
 @Composable
-private fun AdjustableGoalRow(
-    label: String,
-    valueText: String,
-    accentColor: Color,
-    onDecrement: () -> Unit,
-    onIncrement: () -> Unit,
+private fun MacroShareLegend(
+    color: androidx.compose.ui.graphics.Color,
+    text: String,
 ) {
-    val haptic = LocalHapticFeedback.current
     Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(8.dp)
-                    .clip(NutraTheme.shapes.pill)
-                    .background(accentColor),
-            )
-            Text(
-                text = label,
-                style = NutraTheme.typography.foodItemTitle,
-                color = NutraTheme.colors.textPrimary,
-            )
-        }
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            StepperButton(
-                icon = Icons.Rounded.Remove,
-                onClick = {
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    onDecrement()
-                },
-            )
-            Text(
-                text = valueText,
-                style = NutraTheme.typography.cardTitle,
-                color = NutraTheme.colors.textPrimary,
-            )
-            StepperButton(
-                icon = Icons.Rounded.Add,
-                onClick = {
-                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    onIncrement()
-                },
-            )
-        }
-    }
-}
-
-@Composable
-private fun StepperButton(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    onClick: () -> Unit,
-) {
-    Box(
-        modifier = Modifier
-            .size(34.dp)
-            .clip(NutraTheme.shapes.chip)
-            .background(NutraTheme.colors.elevatedSurface)
-            .border(1.dp, NutraTheme.colors.hairlineBorder, NutraTheme.shapes.chip)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = NutraTheme.colors.textPrimary,
-            modifier = Modifier.size(16.dp),
+        NutraDot(color = color, size = 7.dp)
+        Text(
+            text = text,
+            style = NutraTheme.typography.caption,
+            color = NutraTheme.colors.textSecondary,
         )
     }
 }

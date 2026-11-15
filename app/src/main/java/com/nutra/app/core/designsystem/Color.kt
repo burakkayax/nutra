@@ -4,128 +4,130 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 
-// Light Theme — Warm Alabaster
-val LightBackground = Color(0xFFF7F6F2)
-val LightCardSurface = Color(0xFFFFFFFF)
-val LightElevatedSurface = Color(0xFFEFECE6)
-val LightHairlineBorder = Color(0xFFE2DFD7)
-val LightTextPrimary = Color(0xFF121417)
-val LightTextSecondary = Color(0xFF5C616B)
-val LightTextMuted = Color(0xFF8A909C)
-
-// Dark Theme — Deep Obsidian (OLED friendly)
-val DarkBackground = Color(0xFF0B0C0E)
-val DarkCardSurface = Color(0xFF14161B)
-val DarkElevatedSurface = Color(0xFF1D2027)
-val DarkHairlineBorder = Color(0xFF252932)
-val DarkTextPrimary = Color(0xFFF3F4F6)
-val DarkTextSecondary = Color(0xFF949BA6)
-val DarkTextMuted = Color(0xFF646B78)
-
-// Semantic Nutrition Accents — Light
-val LightCalorieAccent = Color(0xFF059669)
-val LightCalorieContainer = Color(0xFFD1FAE5)
-val LightOverBudgetAccent = Color(0xFFD97706)
-val LightOverBudgetContainer = Color(0xFFFEF3C7)
-
-val LightProteinAccent = Color(0xFFE11D48)
-val LightProteinContainer = Color(0xFFFFE4E6)
-
-val LightCarbsAccent = Color(0xFFD97706)
-val LightCarbsContainer = Color(0xFFFEF3C7)
-
-val LightFatAccent = Color(0xFF7C3AED)
-val LightFatContainer = Color(0xFFEDE9FE)
-
-val LightWaterAccent = Color(0xFF0284C7)
-val LightWaterContainer = Color(0xFFE0F2FE)
-
-// Semantic Nutrition Accents — Dark
-val DarkCalorieAccent = Color(0xFF10B981)
-val DarkCalorieContainer = Color(0xFF064E3B)
-val DarkOverBudgetAccent = Color(0xFFF59E0B)
-val DarkOverBudgetContainer = Color(0xFF451A03)
-
-val DarkProteinAccent = Color(0xFFF43F5E)
-val DarkProteinContainer = Color(0xFF4C0519)
-
-val DarkCarbsAccent = Color(0xFFF59E0B)
-val DarkCarbsContainer = Color(0xFF451A03)
-
-val DarkFatAccent = Color(0xFF8B5CF6)
-val DarkFatContainer = Color(0xFF2E1065)
-
-val DarkWaterAccent = Color(0xFF38BDF8)
-val DarkWaterContainer = Color(0xFF0C4A6E)
-
+/**
+ * Nutra color system — "Calm Neutral".
+ *
+ * Principles:
+ *  - Neutral, slightly warm greys carry 95% of the UI.
+ *  - "Ink" (near-black in light, near-white in dark) is the primary action color.
+ *  - A single brand accent (green) marks progress / positive state.
+ *  - Macro colors are harmonised and only used for data (rings, bars, dots).
+ *  - No borders on cards: hierarchy comes from surface contrast + spacing.
+ */
 @Immutable
-data class NutraSemanticColors(
+data class NutraColors(
     val isDark: Boolean,
+
+    // Surfaces
     val background: Color,
-    val cardSurface: Color,
-    val elevatedSurface: Color,
-    val hairlineBorder: Color,
+    val surface: Color,
+    val surfaceMuted: Color,
+    val surfaceElevated: Color,
+    val segmentThumb: Color,
+    val divider: Color,
+    val scrim: Color,
+
+    // Text
     val textPrimary: Color,
     val textSecondary: Color,
-    val textMuted: Color,
-    val calorieAccent: Color,
-    val calorieContainer: Color,
-    val overBudgetAccent: Color,
-    val overBudgetContainer: Color,
-    val proteinAccent: Color,
-    val proteinContainer: Color,
-    val carbsAccent: Color,
-    val carbsContainer: Color,
-    val fatAccent: Color,
-    val fatContainer: Color,
-    val waterAccent: Color,
-    val waterContainer: Color,
+    val textTertiary: Color,
+
+    // Primary action ("ink")
+    val ink: Color,
+    val onInk: Color,
+
+    // Brand accent
+    val accent: Color,
+    val accentSoft: Color,
+    val onAccent: Color,
+
+    // Data colors
+    val protein: Color,
+    val proteinSoft: Color,
+    val carbs: Color,
+    val carbsSoft: Color,
+    val fat: Color,
+    val fatSoft: Color,
+    val water: Color,
+    val waterSoft: Color,
+
+    // Status
+    val warning: Color,
+    val warningSoft: Color,
+    val danger: Color,
+    val dangerSoft: Color,
 )
 
-val LightNutraSemanticColors = NutraSemanticColors(
+val LightNutraColors = NutraColors(
     isDark = false,
-    background = LightBackground,
-    cardSurface = LightCardSurface,
-    elevatedSurface = LightElevatedSurface,
-    hairlineBorder = LightHairlineBorder,
-    textPrimary = LightTextPrimary,
-    textSecondary = LightTextSecondary,
-    textMuted = LightTextMuted,
-    calorieAccent = LightCalorieAccent,
-    calorieContainer = LightCalorieContainer,
-    overBudgetAccent = LightOverBudgetAccent,
-    overBudgetContainer = LightOverBudgetContainer,
-    proteinAccent = LightProteinAccent,
-    proteinContainer = LightProteinContainer,
-    carbsAccent = LightCarbsAccent,
-    carbsContainer = LightCarbsContainer,
-    fatAccent = LightFatAccent,
-    fatContainer = LightFatContainer,
-    waterAccent = LightWaterAccent,
-    waterContainer = LightWaterContainer,
+    background = Color(0xFFF5F5F3),
+    surface = Color(0xFFFFFFFF),
+    surfaceMuted = Color(0xFFEFEFEC),
+    surfaceElevated = Color(0xFFFFFFFF),
+    segmentThumb = Color(0xFFFFFFFF),
+    divider = Color(0xFFE8E8E4),
+    scrim = Color(0x66000000),
+
+    textPrimary = Color(0xFF111111),
+    textSecondary = Color(0xFF6B6B68),
+    textTertiary = Color(0xFFA1A19D),
+
+    ink = Color(0xFF111111),
+    onInk = Color(0xFFFFFFFF),
+
+    accent = Color(0xFF17A35A),
+    accentSoft = Color(0xFFE2F4E9),
+    onAccent = Color(0xFFFFFFFF),
+
+    protein = Color(0xFFEF5F5B),
+    proteinSoft = Color(0xFFFDECEB),
+    carbs = Color(0xFFF0A23B),
+    carbsSoft = Color(0xFFFDF1E1),
+    fat = Color(0xFF6B7BF2),
+    fatSoft = Color(0xFFECEEFD),
+    water = Color(0xFF2F9BEF),
+    waterSoft = Color(0xFFE5F2FD),
+
+    warning = Color(0xFFE5822F),
+    warningSoft = Color(0xFFFCEEE2),
+    danger = Color(0xFFE5484D),
+    dangerSoft = Color(0xFFFCE9EA),
 )
 
-val DarkNutraSemanticColors = NutraSemanticColors(
+val DarkNutraColors = NutraColors(
     isDark = true,
-    background = DarkBackground,
-    cardSurface = DarkCardSurface,
-    elevatedSurface = DarkElevatedSurface,
-    hairlineBorder = DarkHairlineBorder,
-    textPrimary = DarkTextPrimary,
-    textSecondary = DarkTextSecondary,
-    textMuted = DarkTextMuted,
-    calorieAccent = DarkCalorieAccent,
-    calorieContainer = DarkCalorieContainer,
-    overBudgetAccent = DarkOverBudgetAccent,
-    overBudgetContainer = DarkOverBudgetContainer,
-    proteinAccent = DarkProteinAccent,
-    proteinContainer = DarkProteinContainer,
-    carbsAccent = DarkCarbsAccent,
-    carbsContainer = DarkCarbsContainer,
-    fatAccent = DarkFatAccent,
-    fatContainer = DarkFatContainer,
-    waterAccent = DarkWaterAccent,
-    waterContainer = DarkWaterContainer,
+    background = Color(0xFF0C0C0C),
+    surface = Color(0xFF171717),
+    surfaceMuted = Color(0xFF242424),
+    surfaceElevated = Color(0xFF1C1C1C),
+    segmentThumb = Color(0xFF383838),
+    divider = Color(0xFF262626),
+    scrim = Color(0x99000000),
+
+    textPrimary = Color(0xFFF4F4F2),
+    textSecondary = Color(0xFFA3A39E),
+    textTertiary = Color(0xFF6F6F6B),
+
+    ink = Color(0xFFF4F4F2),
+    onInk = Color(0xFF0C0C0C),
+
+    accent = Color(0xFF34D27B),
+    accentSoft = Color(0xFF12301F),
+    onAccent = Color(0xFF06140C),
+
+    protein = Color(0xFFFF7A72),
+    proteinSoft = Color(0xFF3A1D1B),
+    carbs = Color(0xFFFFB95C),
+    carbsSoft = Color(0xFF392A16),
+    fat = Color(0xFF8D99FF),
+    fatSoft = Color(0xFF22254A),
+    water = Color(0xFF5BB5FF),
+    waterSoft = Color(0xFF142B40),
+
+    warning = Color(0xFFFF9A4D),
+    warningSoft = Color(0xFF3A2414),
+    danger = Color(0xFFFF6369),
+    dangerSoft = Color(0xFF3B1819),
 )
 
-val LocalNutraColors = staticCompositionLocalOf { LightNutraSemanticColors }
+val LocalNutraColors = staticCompositionLocalOf { LightNutraColors }

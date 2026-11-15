@@ -2,22 +2,21 @@ package com.nutra.app.feature.dashboard
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -25,32 +24,30 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
-import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.DinnerDining
 import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.LocalCafe
 import androidx.compose.material.icons.rounded.Remove
+import androidx.compose.material.icons.rounded.Restaurant
 import androidx.compose.material.icons.rounded.WaterDrop
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material.icons.rounded.WbSunny
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -60,14 +57,28 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nutra.app.core.designsystem.CalorieDisplayMode
-import com.nutra.app.core.designsystem.NutraCalorieArcRing
+import com.nutra.app.core.designsystem.NutraButton
+import com.nutra.app.core.designsystem.NutraButtonSize
+import com.nutra.app.core.designsystem.NutraButtonStyle
+import com.nutra.app.core.designsystem.NutraCalorieRing
 import com.nutra.app.core.designsystem.NutraCard
-import com.nutra.app.core.designsystem.NutraChip
-import com.nutra.app.core.designsystem.NutraMacroProgressBar
+import com.nutra.app.core.designsystem.NutraDialog
+import com.nutra.app.core.designsystem.NutraDivider
+import com.nutra.app.core.designsystem.NutraDot
+import com.nutra.app.core.designsystem.NutraIconBadge
+import com.nutra.app.core.designsystem.NutraIconButton
+import com.nutra.app.core.designsystem.NutraLinearProgress
+import com.nutra.app.core.designsystem.NutraMacroStat
+import com.nutra.app.core.designsystem.NutraScreenHeader
+import com.nutra.app.core.designsystem.NutraSectionHeader
+import com.nutra.app.core.designsystem.NutraSnackbarHost
 import com.nutra.app.core.designsystem.NutraTheme
 import com.nutra.app.domain.model.DayGoalStatus
 import com.nutra.app.domain.model.DayStatusIndicator
@@ -76,6 +87,7 @@ import com.nutra.app.domain.model.MealSummary
 import com.nutra.app.domain.model.MealType
 import com.nutra.app.feature.logging.AddFoodModalSheet
 import kotlinx.coroutines.delay
+import java.text.NumberFormat
 import java.time.LocalDate
 import java.time.format.TextStyle
 import java.util.Locale
@@ -83,15 +95,26 @@ import kotlin.math.roundToInt
 
 private val TR_LOCALE = Locale.forLanguageTag("tr-TR")
 
+private fun formatInt(value: Int): String =
+    NumberFormat.getIntegerInstance(TR_LOCALE).format(value)
+
 @Composable
 fun DashboardScreen(
     viewModel: DashboardViewModel,
     contentPadding: PaddingValues = PaddingValues(0.dp),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    if (state.isLoading) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(NutraTheme.colors.background),
+        )
+        return
+    }
     val haptic = LocalHapticFeedback.current
+    val layoutDirection = LocalLayoutDirection.current
 
-    // Auto-dismiss status / undo banner after 4.5 seconds
     LaunchedEffect(state.lastDeletedItem, state.statusBannerMessage) {
         if (state.lastDeletedItem != null || state.statusBannerMessage != null) {
             delay(4500)
@@ -102,46 +125,36 @@ fun DashboardScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(NutraTheme.colors.background)
-            .padding(contentPadding),
+            .background(NutraTheme.colors.background),
     ) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
-                start = NutraTheme.spacing.screenHorizontal,
-                end = NutraTheme.spacing.screenHorizontal,
-                top = 12.dp,
-                bottom = 96.dp,
+                start = contentPadding.calculateStartPadding(layoutDirection) + NutraTheme.spacing.screen,
+                end = contentPadding.calculateEndPadding(layoutDirection) + NutraTheme.spacing.screen,
+                top = contentPadding.calculateTopPadding() + 12.dp,
+                bottom = contentPadding.calculateBottomPadding() + 16.dp,
             ),
-            verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.medium),
+            verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.lg),
         ) {
-            // 1. Top Date Header & AI Quick Button
             item(key = "header") {
-                DateNavigationHeader(
-                    selectedDate = state.selectedDate,
-                    onPreviousWeek = { viewModel.shiftWeek(-1) },
-                    onNextWeek = { viewModel.shiftWeek(1) },
-                    onJumpToToday = viewModel::jumpToToday,
-                    onOpenAiQuickLog = {
-                        val defaultMeal = inferCurrentMealType()
-                        viewModel.openAddFoodModal(defaultMeal, LoggingTabMode.AI_ANALYZE)
-                    },
-                )
+                DashboardHeader(selectedDate = state.selectedDate)
             }
 
-            // 2. 7-Day Week Strip with Semantic Status Dots
             item(key = "week_strip") {
                 WeekDateStrip(
                     weekDays = state.weekDays,
                     selectedDate = state.selectedDate,
                     statusMap = state.weekStatusMap,
                     onSelectDate = viewModel::selectDate,
+                    onPreviousWeek = { viewModel.shiftWeek(-1) },
+                    onNextWeek = { viewModel.shiftWeek(1) },
+                    onJumpToToday = viewModel::jumpToToday,
                 )
             }
 
-            // 3. Bento Hero Summary Card (Calorie Ring + 3 Macro Bars)
-            item(key = "bento_hero") {
-                BentoHeroNutritionCard(
+            item(key = "hero_summary") {
+                HeroNutritionCard(
                     consumedCalories = state.dailySummary.consumedCalories,
                     targetCalories = state.dailySummary.goals.calories,
                     consumedProtein = state.dailySummary.consumedProtein,
@@ -155,9 +168,8 @@ fun DashboardScreen(
                 )
             }
 
-            // 4. Compact Hydration (Water) Card with Multi-Container Chips
             item(key = "water_card") {
-                CompactWaterTrackerCard(
+                WaterTrackerCard(
                     currentWaterMl = state.dailySummary.waterMl,
                     targetWaterMl = state.dailySummary.goals.waterMl,
                     onAddWater = { delta ->
@@ -167,32 +179,18 @@ fun DashboardScreen(
                 )
             }
 
-            // 5. Section Header for Meals
-            item(key = "meals_section_title") {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 6.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = "Günlük Öğünler",
-                        style = NutraTheme.typography.sectionTitle,
-                        color = NutraTheme.colors.textPrimary,
-                    )
-                    Text(
-                        text = "${state.dailySummary.meals.sumOf { it.items.size }} kayıt",
-                        style = NutraTheme.typography.macroLabel,
-                        color = NutraTheme.colors.textMuted,
-                    )
-                }
+            item(key = "meals_header") {
+                val totalEntries = state.dailySummary.meals.sumOf { it.items.size }
+                NutraSectionHeader(
+                    title = "Öğünler",
+                    supportingText = if (totalEntries > 0) "$totalEntries kayıt" else null,
+                    modifier = Modifier.padding(top = NutraTheme.spacing.xs),
+                )
             }
 
-            // 6. Accordion Meal Cards (Breakfast, Lunch, Dinner, Snack)
             state.dailySummary.meals.forEach { mealSummary ->
                 item(key = "meal_${mealSummary.mealType.name}") {
-                    AccordionMealCard(
+                    MealCard(
                         mealSummary = mealSummary,
                         isExpanded = state.expandedMeals.contains(mealSummary.mealType),
                         onToggleExpand = {
@@ -213,71 +211,37 @@ fun DashboardScreen(
             }
         }
 
-        // Bottom Undo / Status Banner
-        AnimatedVisibility(
-            visible = state.lastDeletedItem != null || state.statusBannerMessage != null,
-            enter = fadeIn() + expandVertically(),
-            exit = fadeOut() + shrinkVertically(),
+        val deletedItem = state.lastDeletedItem
+        val bannerVisible = deletedItem != null || state.statusBannerMessage != null
+        val bannerText = if (deletedItem != null) {
+            "${deletedItem.foodName} silindi"
+        } else {
+            state.statusBannerMessage.orEmpty()
+        }
+
+        NutraSnackbarHost(
+            visible = bannerVisible,
+            message = bannerText,
+            actionLabel = if (deletedItem != null) "Geri al" else null,
+            onAction = if (deletedItem != null) {
+                {
+                    haptic.performHapticFeedback(HapticFeedbackType.Confirm)
+                    viewModel.undoDeleteLoggedItem()
+                }
+            } else {
+                null
+            },
+            icon = if (deletedItem == null && bannerVisible) Icons.Rounded.Check else null,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(horizontal = NutraTheme.spacing.screenHorizontal, vertical = 14.dp),
-        ) {
-            NutraCard(
-                shape = NutraTheme.shapes.innerSubCard,
-                backgroundColor = NutraTheme.colors.textPrimary,
-                borderColor = NutraTheme.colors.textPrimary,
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    val deleted = state.lastDeletedItem
-                    Text(
-                        text = if (deleted != null) {
-                            "${deleted.foodName} silindi"
-                        } else {
-                            state.statusBannerMessage.orEmpty()
-                        },
-                        style = NutraTheme.typography.foodItemTitle,
-                        color = NutraTheme.colors.background,
-                        modifier = Modifier.weight(1f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    if (deleted != null) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            modifier = Modifier
-                                .clip(NutraTheme.shapes.chip)
-                                .clickable {
-                                    haptic.performHapticFeedback(HapticFeedbackType.Confirm)
-                                    viewModel.undoDeleteLoggedItem()
-                                }
-                                .padding(horizontal = 8.dp, vertical = 4.dp),
-                        ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Rounded.Undo,
-                                contentDescription = null,
-                                tint = NutraTheme.colors.calorieAccent,
-                                modifier = Modifier.size(16.dp),
-                            )
-                            Text(
-                                text = "Geri Al",
-                                style = NutraTheme.typography.macroValue,
-                                color = NutraTheme.colors.calorieAccent,
-                            )
-                        }
-                    }
-                }
-            }
-        }
+                .padding(
+                    start = NutraTheme.spacing.screen,
+                    end = NutraTheme.spacing.screen,
+                    bottom = contentPadding.calculateBottomPadding() + 8.dp,
+                ),
+        )
     }
 
-    // Quick Edit Logged Portion Dialog
     val editingItem = state.editingLogItem
     if (editingItem != null) {
         EditLoggedFoodPortionDialog(
@@ -294,7 +258,6 @@ fun DashboardScreen(
         )
     }
 
-    // Unified Add Food Modal Sheet
     if (state.activeLoggingMealType != null) {
         AddFoodModalSheet(
             state = state,
@@ -321,86 +284,29 @@ fun DashboardScreen(
 }
 
 @Composable
-private fun DateNavigationHeader(
-    selectedDate: LocalDate,
-    onPreviousWeek: () -> Unit,
-    onNextWeek: () -> Unit,
-    onJumpToToday: () -> Unit,
-    onOpenAiQuickLog: () -> Unit,
-) {
+private fun DashboardHeader(selectedDate: LocalDate) {
     val today = LocalDate.now()
     val isToday = selectedDate == today
-    val dateLabel = when (selectedDate) {
-        today -> "Bugün, ${selectedDate.dayOfMonth} ${selectedDate.month.getDisplayName(TextStyle.FULL, TR_LOCALE)}"
-        today.minusDays(1) -> "Dün, ${selectedDate.dayOfMonth} ${selectedDate.month.getDisplayName(TextStyle.FULL, TR_LOCALE)}"
-        today.plusDays(1) -> "Yarın, ${selectedDate.dayOfMonth} ${selectedDate.month.getDisplayName(TextStyle.FULL, TR_LOCALE)}"
-        else -> "${selectedDate.dayOfMonth} ${selectedDate.month.getDisplayName(TextStyle.FULL, TR_LOCALE)} ${selectedDate.year}"
+    val dayOfWeek = selectedDate.dayOfWeek.getDisplayName(TextStyle.FULL, TR_LOCALE)
+        .replaceFirstChar { it.uppercaseChar() }
+    val monthName = selectedDate.month.getDisplayName(TextStyle.FULL, TR_LOCALE)
+    val eyebrow = if (selectedDate.year == today.year) {
+        "$dayOfWeek, ${selectedDate.dayOfMonth} $monthName"
+    } else {
+        "$dayOfWeek, ${selectedDate.dayOfMonth} $monthName ${selectedDate.year}"
+    }
+    val title = when (selectedDate) {
+        today -> "Bugün"
+        today.minusDays(1) -> "Dün"
+        today.plusDays(1) -> "Yarın"
+        else -> "${selectedDate.dayOfMonth} $monthName"
     }
 
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column {
-            Text(
-                text = "Nutra",
-                style = NutraTheme.typography.macroLabel,
-                color = NutraTheme.colors.calorieAccent,
-            )
-            Text(
-                text = dateLabel,
-                style = NutraTheme.typography.screenHeader,
-                color = NutraTheme.colors.textPrimary,
-            )
-        }
-
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            if (!isToday) {
-                NutraChip(
-                    text = "Bugün",
-                    selected = true,
-                    onClick = onJumpToToday,
-                )
-            }
-            NutraChip(
-                text = "AI Ekle",
-                selected = false,
-                onClick = onOpenAiQuickLog,
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Rounded.AutoAwesome,
-                        contentDescription = null,
-                        tint = NutraTheme.colors.calorieAccent,
-                        modifier = Modifier.size(15.dp),
-                    )
-                },
-            )
-            IconButton(
-                onClick = onPreviousWeek,
-                modifier = Modifier.size(32.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowLeft,
-                    contentDescription = "Önceki Hafta",
-                    tint = NutraTheme.colors.textSecondary,
-                )
-            }
-            IconButton(
-                onClick = onNextWeek,
-                modifier = Modifier.size(32.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                    contentDescription = "Sonraki Hafta",
-                    tint = NutraTheme.colors.textSecondary,
-                )
-            }
-        }
-    }
+    NutraScreenHeader(
+        title = title,
+        eyebrow = eyebrow,
+        eyebrowColor = if (isToday) NutraTheme.colors.accent else NutraTheme.colors.textSecondary,
+    )
 }
 
 @Composable
@@ -409,73 +315,150 @@ private fun WeekDateStrip(
     selectedDate: LocalDate,
     statusMap: Map<String, DayStatusIndicator>,
     onSelectDate: (LocalDate) -> Unit,
+    onPreviousWeek: () -> Unit,
+    onNextWeek: () -> Unit,
+    onJumpToToday: () -> Unit,
 ) {
     val haptic = LocalHapticFeedback.current
     val today = LocalDate.now()
+    val monthLabel = "${
+        selectedDate.month.getDisplayName(TextStyle.FULL, TR_LOCALE)
+            .replaceFirstChar { it.uppercaseChar() }
+    } ${selectedDate.year}"
+    val isToday = selectedDate == today
 
-    NutraCard(
-        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = monthLabel,
+                style = NutraTheme.typography.labelSmall,
+                color = NutraTheme.colors.textSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                if (!isToday) {
+                    Text(
+                        text = "Bugüne dön",
+                        style = NutraTheme.typography.labelSmall,
+                        color = NutraTheme.colors.accent,
+                        modifier = Modifier
+                            .clip(NutraTheme.shapes.pill)
+                            .background(NutraTheme.colors.accentSoft)
+                            .clickable(role = Role.Button) {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onJumpToToday()
+                            }
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                    )
+                }
+                NutraIconButton(
+                    icon = Icons.AutoMirrored.Rounded.KeyboardArrowLeft,
+                    contentDescription = "Önceki hafta",
+                    onClick = onPreviousWeek,
+                    size = 34.dp,
+                    iconSize = 18.dp,
+                    containerColor = NutraTheme.colors.surfaceMuted,
+                    contentColor = NutraTheme.colors.textSecondary,
+                )
+                NutraIconButton(
+                    icon = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                    contentDescription = "Sonraki hafta",
+                    onClick = onNextWeek,
+                    size = 34.dp,
+                    iconSize = 18.dp,
+                    containerColor = NutraTheme.colors.surfaceMuted,
+                    contentColor = NutraTheme.colors.textSecondary,
+                )
+            }
+        }
+
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             weekDays.forEach { day ->
                 val isSelected = day == selectedDate
-                val isToday = day == today
-                val indicator = statusMap[day.toString()]
-                val status = indicator?.status ?: DayGoalStatus.EMPTY
+                val isDayToday = day == today
+                val status = statusMap[day.toString()]?.status ?: DayGoalStatus.EMPTY
 
-                val pillBg by animateColorAsState(
+                val circleBg by animateColorAsState(
                     targetValue = when {
-                        isSelected -> NutraTheme.colors.calorieAccent
-                        isToday -> NutraTheme.colors.elevatedSurface
+                        isSelected -> NutraTheme.colors.ink
+                        isDayToday -> NutraTheme.colors.accentSoft
                         else -> Color.Transparent
                     },
-                    label = "DayPillBg",
+                    animationSpec = tween(160),
+                    label = "dayCircleBg",
+                )
+                val dayNumberColor by animateColorAsState(
+                    targetValue = when {
+                        isSelected -> NutraTheme.colors.onInk
+                        isDayToday -> NutraTheme.colors.accent
+                        else -> NutraTheme.colors.textPrimary
+                    },
+                    animationSpec = tween(160),
+                    label = "dayText",
                 )
 
-                val dayName = day.dayOfWeek.getDisplayName(TextStyle.SHORT, TR_LOCALE)
+                val dayShort = day.dayOfWeek.getDisplayName(TextStyle.SHORT, TR_LOCALE)
+                    .trimEnd('.')
                     .take(3)
                     .replaceFirstChar { it.uppercaseChar() }
+
+                val dotColor = when (status) {
+                    DayGoalStatus.ON_TARGET -> NutraTheme.colors.accent
+                    DayGoalStatus.OVER_BUDGET -> NutraTheme.colors.warning
+                    DayGoalStatus.PARTIAL -> NutraTheme.colors.textTertiary
+                    DayGoalStatus.EMPTY -> Color.Transparent
+                }
 
                 Column(
                     modifier = Modifier
                         .weight(1f)
-                        .clip(NutraTheme.shapes.innerSubCard)
-                        .background(pillBg)
-                        .clickable {
+                        .clip(NutraTheme.shapes.md)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            role = Role.Tab,
+                        ) {
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             onSelectDate(day)
                         }
-                        .padding(vertical = 8.dp),
+                        .padding(vertical = 4.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Text(
-                        text = dayName,
-                        style = NutraTheme.typography.badgeLabel,
-                        color = if (isSelected) Color.White.copy(alpha = 0.88f) else NutraTheme.colors.textMuted,
+                        text = dayShort,
+                        style = NutraTheme.typography.caption,
+                        color = if (isSelected) NutraTheme.colors.textPrimary else NutraTheme.colors.textTertiary,
+                        maxLines = 1,
                     )
-                    Text(
-                        text = "${day.dayOfMonth}",
-                        style = NutraTheme.typography.cardTitle,
-                        color = if (isSelected) Color.White else NutraTheme.colors.textPrimary,
-                    )
-                    // 4dp Semantic Status Dot
-                    val dotColor = when (status) {
-                        DayGoalStatus.ON_TARGET -> if (isSelected) Color.White else NutraTheme.colors.calorieAccent
-                        DayGoalStatus.OVER_BUDGET -> if (isSelected) Color.White else NutraTheme.colors.overBudgetAccent
-                        DayGoalStatus.PARTIAL -> if (isSelected) Color.White.copy(alpha = 0.7f) else NutraTheme.colors.textMuted
-                        DayGoalStatus.EMPTY -> Color.Transparent
-                    }
                     Box(
                         modifier = Modifier
-                            .size(5.dp)
-                            .clip(NutraTheme.shapes.pill)
-                            .background(dotColor),
-                    )
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(circleBg),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "${day.dayOfMonth}",
+                            style = NutraTheme.typography.titleSmall,
+                            color = dayNumberColor,
+                            maxLines = 1,
+                        )
+                    }
+                    NutraDot(color = dotColor, size = 5.dp)
                 }
             }
         }
@@ -483,7 +466,7 @@ private fun WeekDateStrip(
 }
 
 @Composable
-private fun BentoHeroNutritionCard(
+private fun HeroNutritionCard(
     consumedCalories: Int,
     targetCalories: Int,
     consumedProtein: Float,
@@ -495,244 +478,231 @@ private fun BentoHeroNutritionCard(
     displayMode: CalorieDisplayMode,
     onToggleDisplayMode: () -> Unit,
 ) {
-    val isOverBudget = consumedCalories > targetCalories
-    val overAmount = consumedCalories - targetCalories
+    val safeTarget = targetCalories.coerceAtLeast(1)
+    val isOver = consumedCalories > safeTarget
+    val deltaCalories = if (isOver) consumedCalories - safeTarget else safeTarget - consumedCalories
+    val completionPercent = ((consumedCalories.toFloat() / safeTarget) * 100f).roundToInt()
 
     NutraCard(
-        shape = NutraTheme.shapes.heroCard,
-        contentPadding = PaddingValues(NutraTheme.spacing.heroCardPadding),
         modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(22.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            NutraCalorieRing(
+                consumedCalories = consumedCalories,
+                targetCalories = targetCalories,
+                displayMode = displayMode,
+                onToggleDisplayMode = onToggleDisplayMode,
+                size = 192.dp,
+                strokeWidth = 14.dp,
+            )
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                NutraCalorieArcRing(
-                    consumedCalories = consumedCalories,
-                    targetCalories = targetCalories,
-                    displayMode = displayMode,
-                    onToggleDisplayMode = onToggleDisplayMode,
-                    size = 144.dp,
-                    strokeWidth = 12.dp,
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "${formatInt(deltaCalories)} kcal",
+                        style = NutraTheme.typography.numberSmall,
+                        color = if (isOver) NutraTheme.colors.warning else NutraTheme.colors.textPrimary,
+                    )
+                    Text(
+                        text = if (isOver) "Hedef fazlası" else "Kalan",
+                        style = NutraTheme.typography.caption,
+                        color = NutraTheme.colors.textTertiary,
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .width(1.dp)
+                        .height(26.dp)
+                        .background(NutraTheme.colors.divider),
                 )
 
-                Spacer(modifier = Modifier.width(18.dp))
-
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    NutraMacroProgressBar(
-                        label = "Protein",
-                        consumedGrams = consumedProtein,
-                        targetGrams = targetProtein,
-                        accentColor = NutraTheme.colors.proteinAccent,
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "%$completionPercent",
+                        style = NutraTheme.typography.numberSmall,
+                        color = NutraTheme.colors.textPrimary,
                     )
-                    NutraMacroProgressBar(
-                        label = "Karbonhidrat",
-                        consumedGrams = consumedCarbs,
-                        targetGrams = targetCarbs,
-                        accentColor = NutraTheme.colors.carbsAccent,
-                    )
-                    NutraMacroProgressBar(
-                        label = "Yağ",
-                        consumedGrams = consumedFat,
-                        targetGrams = targetFat,
-                        accentColor = NutraTheme.colors.fatAccent,
+                    Text(
+                        text = "Günlük oran",
+                        style = NutraTheme.typography.caption,
+                        color = NutraTheme.colors.textTertiary,
                     )
                 }
             }
+        }
 
-            // Concentric Footer Strip inside Hero Card (14dp inner radius)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(NutraTheme.shapes.innerSubCard)
-                    .background(
-                        if (isOverBudget) {
-                            NutraTheme.colors.overBudgetContainer.copy(alpha = if (NutraTheme.colors.isDark) 0.45f else 0.7f)
-                        } else {
-                            NutraTheme.colors.elevatedSurface
-                        },
-                    )
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "Alınan: $consumedCalories / $targetCalories kcal",
-                    style = NutraTheme.typography.macroValue,
-                    color = NutraTheme.colors.textPrimary,
-                )
-                Text(
-                    text = if (isOverBudget) {
-                        "+$overAmount kcal hedef üstü"
-                    } else {
-                        "Halkaya dokun: görünüm değiştir"
-                    },
-                    style = NutraTheme.typography.badgeLabel,
-                    color = if (isOverBudget) {
-                        NutraTheme.colors.overBudgetAccent
-                    } else {
-                        NutraTheme.colors.textMuted
-                    },
-                )
-            }
+        NutraDivider()
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            NutraMacroStat(
+                label = "Protein",
+                consumed = consumedProtein,
+                target = targetProtein,
+                color = NutraTheme.colors.protein,
+                modifier = Modifier.weight(1f),
+            )
+            NutraMacroStat(
+                label = "Karb",
+                consumed = consumedCarbs,
+                target = targetCarbs,
+                color = NutraTheme.colors.carbs,
+                modifier = Modifier.weight(1f),
+            )
+            NutraMacroStat(
+                label = "Yağ",
+                consumed = consumedFat,
+                target = targetFat,
+                color = NutraTheme.colors.fat,
+                modifier = Modifier.weight(1f),
+            )
         }
     }
 }
 
 @Composable
-private fun CompactWaterTrackerCard(
+private fun WaterTrackerCard(
     currentWaterMl: Int,
     targetWaterMl: Int,
     onAddWater: (Int) -> Unit,
 ) {
     val safeTarget = targetWaterMl.coerceAtLeast(1)
     val fraction = (currentWaterMl.toFloat() / safeTarget.toFloat()).coerceIn(0f, 1f)
-    val animatedFraction by animateFloatAsState(
-        targetValue = fraction,
-        animationSpec = spring(dampingRatio = 0.85f, stiffness = 360f),
-        label = "WaterProgressFill",
-    )
 
     NutraCard(
         modifier = Modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(NutraTheme.spacing.standard),
+        contentPadding = PaddingValues(NutraTheme.spacing.card),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(30.dp)
-                            .clip(NutraTheme.shapes.chip)
-                            .background(NutraTheme.colors.waterContainer),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.WaterDrop,
-                            contentDescription = null,
-                            tint = NutraTheme.colors.waterAccent,
-                            modifier = Modifier.size(17.dp),
-                        )
-                    }
-                    Column {
-                        Text(
-                            text = "Su Takibi",
-                            style = NutraTheme.typography.cardTitle,
-                            color = NutraTheme.colors.textPrimary,
-                        )
-                        Text(
-                            text = "%${(fraction * 100).roundToInt()} tamamlandı",
-                            style = NutraTheme.typography.bodySmall,
-                            color = NutraTheme.colors.textSecondary,
-                        )
-                    }
+                NutraIconBadge(
+                    icon = Icons.Rounded.WaterDrop,
+                    tint = NutraTheme.colors.water,
+                    container = NutraTheme.colors.waterSoft,
+                )
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = "Su takibi",
+                        style = NutraTheme.typography.titleSmall,
+                        color = NutraTheme.colors.textPrimary,
+                    )
+                    Text(
+                        text = "%${(fraction * 100).roundToInt()} tamamlandı",
+                        style = NutraTheme.typography.caption,
+                        color = NutraTheme.colors.textTertiary,
+                    )
                 }
+            }
 
+            Row(verticalAlignment = Alignment.Bottom) {
                 Text(
-                    text = "$currentWaterMl / $safeTarget ml",
-                    style = NutraTheme.typography.cardTitle,
-                    color = NutraTheme.colors.waterAccent,
+                    text = formatInt(currentWaterMl),
+                    style = NutraTheme.typography.numberMedium,
+                    color = NutraTheme.colors.textPrimary,
+                )
+                Text(
+                    text = " / ${formatInt(safeTarget)} ml",
+                    style = NutraTheme.typography.caption,
+                    color = NutraTheme.colors.textTertiary,
+                    modifier = Modifier.padding(bottom = 2.dp),
                 )
             }
+        }
 
-            // Smooth Water Progress Bar
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(8.dp)
-                    .clip(NutraTheme.shapes.pill)
-                    .background(NutraTheme.colors.elevatedSurface),
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(animatedFraction.coerceAtLeast(0.02f))
-                        .fillMaxHeight()
-                        .clip(NutraTheme.shapes.pill)
-                        .background(NutraTheme.colors.waterAccent),
-                )
-            }
+        NutraLinearProgress(
+            progress = fraction,
+            color = NutraTheme.colors.water,
+            height = 6.dp,
+        )
 
-            // Multi-Container Quick Add Chips (+200ml Bardak, +330ml Kupa, +500ml Şişe, -200ml)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                WaterQuickChip(
-                    label = "+200ml Bardak",
-                    onClick = { onAddWater(200) },
-                    modifier = Modifier.weight(1f),
-                )
-                WaterQuickChip(
-                    label = "+330ml Kupa",
-                    onClick = { onAddWater(330) },
-                    modifier = Modifier.weight(1f),
-                )
-                WaterQuickChip(
-                    label = "+500ml Şişe",
-                    onClick = { onAddWater(500) },
-                    modifier = Modifier.weight(1f),
-                )
-                if (currentWaterMl > 0) {
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(NutraTheme.shapes.chip)
-                            .background(NutraTheme.colors.elevatedSurface)
-                            .border(1.dp, NutraTheme.colors.hairlineBorder, NutraTheme.shapes.chip)
-                            .clickable { onAddWater(-200) },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Remove,
-                            contentDescription = "200ml Azalt",
-                            tint = NutraTheme.colors.textSecondary,
-                            modifier = Modifier.size(16.dp),
-                        )
-                    }
-                }
-            }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            WaterQuickPill(
+                amountText = "+200 ml",
+                containerLabel = "Bardak",
+                onClick = { onAddWater(200) },
+                modifier = Modifier.weight(1f),
+            )
+            WaterQuickPill(
+                amountText = "+330 ml",
+                containerLabel = "Kupa",
+                onClick = { onAddWater(330) },
+                modifier = Modifier.weight(1f),
+            )
+            WaterQuickPill(
+                amountText = "+500 ml",
+                containerLabel = "Şişe",
+                onClick = { onAddWater(500) },
+                modifier = Modifier.weight(1f),
+            )
+            NutraIconButton(
+                icon = Icons.Rounded.Remove,
+                contentDescription = "200 ml azalt",
+                onClick = { onAddWater(-200) },
+                size = 44.dp,
+                enabled = currentWaterMl > 0,
+            )
         }
     }
 }
 
 @Composable
-private fun WaterQuickChip(
-    label: String,
+private fun WaterQuickPill(
+    amountText: String,
+    containerLabel: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Box(
+    Column(
         modifier = modifier
-            .height(36.dp)
-            .clip(NutraTheme.shapes.chip)
-            .background(NutraTheme.colors.waterAccent.copy(alpha = if (NutraTheme.colors.isDark) 0.16f else 0.10f))
-            .border(1.dp, NutraTheme.colors.waterAccent.copy(alpha = 0.45f), NutraTheme.shapes.chip)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
+            .height(44.dp)
+            .clip(NutraTheme.shapes.pill)
+            .background(NutraTheme.colors.surfaceMuted)
+            .clickable(role = Role.Button, onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
     ) {
         Text(
-            text = label,
-            style = NutraTheme.typography.badgeLabel,
-            color = NutraTheme.colors.waterAccent,
+            text = amountText,
+            style = NutraTheme.typography.labelSmall,
+            color = NutraTheme.colors.textPrimary,
+            maxLines = 1,
+        )
+        Text(
+            text = containerLabel,
+            style = NutraTheme.typography.overline.copy(letterSpacing = NutraTheme.typography.caption.letterSpacing),
+            color = NutraTheme.colors.textTertiary,
             maxLines = 1,
         )
     }
 }
 
 @Composable
-private fun AccordionMealCard(
+private fun MealCard(
     mealSummary: MealSummary,
     isExpanded: Boolean,
     onToggleExpand: () -> Unit,
@@ -741,97 +711,114 @@ private fun AccordionMealCard(
     onDeleteLogItem: (MealLogItem) -> Unit,
 ) {
     val hasItems = mealSummary.items.isNotEmpty()
+    val mealIcon = when (mealSummary.mealType) {
+        MealType.BREAKFAST -> Icons.Rounded.WbSunny
+        MealType.LUNCH -> Icons.Rounded.Restaurant
+        MealType.DINNER -> Icons.Rounded.DinnerDining
+        MealType.SNACK -> Icons.Rounded.LocalCafe
+    }
 
     NutraCard(
         modifier = Modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(16.dp),
+        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 16.dp),
     ) {
-        Column {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    role = Role.Button,
+                ) {
+                    if (hasItems) onToggleExpand() else onAddFoodClick()
+                },
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Row(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(enabled = hasItems, onClick = onToggleExpand),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                    .weight(1f)
+                    .padding(end = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Column(modifier = Modifier.weight(1f)) {
+                NutraIconBadge(
+                    icon = mealIcon,
+                    tint = NutraTheme.colors.textPrimary,
+                    container = NutraTheme.colors.surfaceMuted,
+                )
+
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         Text(
                             text = mealSummary.mealType.title,
-                            style = NutraTheme.typography.cardTitle,
+                            style = NutraTheme.typography.titleSmall,
                             color = NutraTheme.colors.textPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                         if (hasItems) {
-                            Text(
-                                text = "${mealSummary.totalCalories} kcal",
-                                style = NutraTheme.typography.macroValue,
-                                color = NutraTheme.colors.calorieAccent,
-                            )
-                        } else {
-                            Text(
-                                text = "0 kcal",
-                                style = NutraTheme.typography.macroLabel,
-                                color = NutraTheme.colors.textMuted,
+                            Icon(
+                                imageVector = if (isExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                                contentDescription = if (isExpanded) "Daralt" else "Genişlet",
+                                tint = NutraTheme.colors.textTertiary,
+                                modifier = Modifier.size(18.dp),
                             )
                         }
                     }
 
-                    if (hasItems) {
-                        Spacer(modifier = Modifier.height(3.dp))
-                        Text(
-                            text = "P: ${mealSummary.totalProtein.roundToInt()}g · K: ${mealSummary.totalCarbs.roundToInt()}g · Y: ${mealSummary.totalFat.roundToInt()}g",
-                            style = NutraTheme.typography.bodySmall,
-                            color = NutraTheme.colors.textSecondary,
-                        )
-                    }
-                }
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    if (hasItems) {
-                        Icon(
-                            imageVector = if (isExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
-                            contentDescription = null,
-                            tint = NutraTheme.colors.textSecondary,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    }
-
-                    // Ergonomic 40dp Add Button (Concentric 10dp radius)
-                    Box(
-                        modifier = Modifier
-                            .size(38.dp)
-                            .clip(NutraTheme.shapes.chip)
-                            .background(NutraTheme.colors.calorieAccent.copy(alpha = if (NutraTheme.colors.isDark) 0.22f else 0.14f))
-                            .border(1.dp, NutraTheme.colors.calorieAccent.copy(alpha = 0.55f), NutraTheme.shapes.chip)
-                            .clickable(onClick = onAddFoodClick),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Add,
-                            contentDescription = "${mealSummary.mealType.title} Besin Ekle",
-                            tint = NutraTheme.colors.calorieAccent,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    }
+                    Text(
+                        text = if (hasItems) {
+                            "P ${mealSummary.totalProtein.roundToInt()}g · K ${mealSummary.totalCarbs.roundToInt()}g · Y ${mealSummary.totalFat.roundToInt()}g"
+                        } else {
+                            "Henüz eklenmedi"
+                        },
+                        style = NutraTheme.typography.caption,
+                        color = if (hasItems) NutraTheme.colors.textSecondary else NutraTheme.colors.textTertiary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
             }
 
-            AnimatedVisibility(
-                visible = hasItems && isExpanded,
-                enter = expandVertically(animationSpec = spring(stiffness = 400f)) + fadeIn(),
-                exit = shrinkVertically(animationSpec = spring(stiffness = 400f)) + fadeOut(),
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Column(modifier = Modifier.padding(top = 12.dp)) {
-                    HorizontalDivider(color = NutraTheme.colors.hairlineBorder, thickness = 1.dp)
-                    Spacer(modifier = Modifier.height(6.dp))
+                if (hasItems) {
+                    Text(
+                        text = "${formatInt(mealSummary.totalCalories)} kcal",
+                        style = NutraTheme.typography.numberSmall,
+                        color = NutraTheme.colors.textPrimary,
+                    )
+                }
+                NutraIconButton(
+                    icon = Icons.Rounded.Add,
+                    contentDescription = "${mealSummary.mealType.title} besin ekle",
+                    onClick = onAddFoodClick,
+                    size = 40.dp,
+                    iconSize = 20.dp,
+                    containerColor = NutraTheme.colors.surfaceMuted,
+                    contentColor = NutraTheme.colors.textPrimary,
+                )
+            }
+        }
 
-                    mealSummary.items.forEach { item ->
+        AnimatedVisibility(
+            visible = hasItems && isExpanded,
+            enter = expandVertically(tween(220)) + fadeIn(tween(180)),
+            exit = shrinkVertically(tween(180)) + fadeOut(tween(120)),
+        ) {
+            Column(modifier = Modifier.padding(top = 14.dp)) {
+                NutraDivider()
+                mealSummary.items.forEachIndexed { idx, item ->
+                    key(item.id) {
                         val dismissState = rememberSwipeToDismissBoxState()
 
                         SwipeToDismissBox(
@@ -846,15 +833,15 @@ private fun AccordionMealCard(
                                 Box(
                                     modifier = Modifier
                                         .fillMaxSize()
-                                        .clip(NutraTheme.shapes.chip)
-                                        .background(NutraTheme.colors.proteinAccent.copy(alpha = 0.18f))
-                                        .padding(horizontal = 14.dp),
+                                        .clip(NutraTheme.shapes.sm)
+                                        .background(NutraTheme.colors.dangerSoft)
+                                        .padding(horizontal = 16.dp),
                                     contentAlignment = Alignment.CenterEnd,
                                 ) {
                                     Icon(
                                         imageVector = Icons.Rounded.DeleteOutline,
                                         contentDescription = "Sil",
-                                        tint = NutraTheme.colors.proteinAccent,
+                                        tint = NutraTheme.colors.danger,
                                     )
                                 }
                             },
@@ -862,31 +849,42 @@ private fun AccordionMealCard(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(NutraTheme.shapes.chip)
-                                    .background(NutraTheme.colors.cardSurface)
-                                    .clickable { onEditLogItem(item) }
-                                    .padding(vertical = 8.dp, horizontal = 4.dp),
+                                    .background(NutraTheme.colors.surface)
+                                    .clickable(role = Role.Button) { onEditLogItem(item) }
+                                    .padding(vertical = 12.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(end = 12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                                ) {
                                     Text(
                                         text = item.foodName,
-                                        style = NutraTheme.typography.foodItemTitle,
+                                        style = NutraTheme.typography.titleSmall,
                                         color = NutraTheme.colors.textPrimary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
                                     )
                                     Text(
-                                        text = "${item.formattedQuantity} · P:${item.proteinGrams.roundToInt()}g K:${item.carbsGrams.roundToInt()}g Y:${item.fatGrams.roundToInt()}g",
-                                        style = NutraTheme.typography.bodySmall,
+                                        text = "${item.formattedQuantity} · P ${item.proteinGrams.roundToInt()}g · K ${item.carbsGrams.roundToInt()}g · Y ${item.fatGrams.roundToInt()}g",
+                                        style = NutraTheme.typography.caption,
                                         color = NutraTheme.colors.textSecondary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
                                     )
                                 }
                                 Text(
-                                    text = "${item.calories} kcal",
-                                    style = NutraTheme.typography.macroValue,
+                                    text = "${formatInt(item.calories)} kcal",
+                                    style = NutraTheme.typography.numberSmall,
                                     color = NutraTheme.colors.textPrimary,
                                 )
                             }
+                        }
+                        if (idx < mealSummary.items.lastIndex) {
+                            NutraDivider()
                         }
                     }
                 }
@@ -906,66 +904,122 @@ private fun EditLoggedFoodPortionDialog(
     val ratio = multiplier / item.multiplier.coerceAtLeast(0.05f)
     val previewCalories = (item.calories * ratio).roundToInt()
     val previewGrams = (item.totalGrams * ratio).roundToInt()
+    val multLabel = if (multiplier % 1f == 0f) {
+        "${multiplier.toInt()}x"
+    } else {
+        "${String.format(Locale.US, "%.2f", multiplier).trimEnd('0').trimEnd('.')}x"
+    }
 
-    AlertDialog(
+    NutraDialog(
         onDismissRequest = onDismiss,
-        containerColor = NutraTheme.colors.cardSurface,
-        title = {
+        title = item.foodName,
+        message = "${item.unitLabel} · $previewGrams g",
+        confirmText = null,
+        dismissText = null,
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text(
-                text = item.foodName,
-                style = NutraTheme.typography.cardTitle,
-                color = NutraTheme.colors.textPrimary,
+                text = "${formatInt(previewCalories)} kcal",
+                style = NutraTheme.typography.numberLarge,
+                color = NutraTheme.colors.accent,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
             )
-        },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(
-                    text = "Birim: ${item.unitLabel} ($previewGrams g · $previewCalories kcal)",
-                    style = NutraTheme.typography.bodyRegular,
-                    color = NutraTheme.colors.calorieAccent,
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    listOf(0.5f, 1f, 1.5f, 2f).forEach { preset ->
-                        NutraChip(
-                            text = "${if (preset % 1f == 0f) preset.toInt() else preset}x",
-                            selected = multiplier == preset,
-                            onClick = { multiplier = preset },
-                            modifier = Modifier.weight(1f),
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                listOf(0.5f, 1f, 1.5f, 2f).forEach { preset ->
+                    val isSelected = multiplier == preset
+                    val label = "${if (preset % 1f == 0f) preset.toInt() else preset}x"
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(36.dp)
+                            .clip(NutraTheme.shapes.pill)
+                            .background(
+                                if (isSelected) NutraTheme.colors.ink else NutraTheme.colors.surfaceMuted
+                            )
+                            .clickable(role = Role.RadioButton) { multiplier = preset }
+                            .padding(horizontal = 6.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = label,
+                            style = NutraTheme.typography.labelSmall,
+                            color = if (isSelected) NutraTheme.colors.onInk else NutraTheme.colors.textPrimary,
+                            maxLines = 1,
                         )
                     }
                 }
             }
-        },
-        confirmButton = {
-            Button(
-                onClick = { onUpdateMultiplier(multiplier) },
-                colors = ButtonDefaults.buttonColors(containerColor = NutraTheme.colors.calorieAccent),
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(NutraTheme.shapes.md)
+                    .background(NutraTheme.colors.surfaceMuted)
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("Güncelle", color = Color.White)
+                NutraStepperButton(
+                    icon = Icons.Rounded.Remove,
+                    contentDescription = "Porsiyon azalt",
+                    onClick = { multiplier = (multiplier - 0.25f).coerceAtLeast(0.25f) },
+                    containerColorOverride = NutraTheme.colors.surfaceElevated,
+                )
+                Text(
+                    text = multLabel,
+                    style = NutraTheme.typography.numberMedium,
+                    color = NutraTheme.colors.textPrimary,
+                )
+                NutraStepperButton(
+                    icon = Icons.Rounded.Add,
+                    contentDescription = "Porsiyon artır",
+                    onClick = { multiplier = (multiplier + 0.25f).coerceAtMost(20f) },
+                    containerColorOverride = NutraTheme.colors.surfaceElevated,
+                )
             }
-        },
-        dismissButton = {
-            Row {
-                TextButton(onClick = onDelete) {
-                    Text("Sil", color = NutraTheme.colors.proteinAccent)
-                }
-                TextButton(onClick = onDismiss) {
-                    Text("İptal", color = NutraTheme.colors.textSecondary)
-                }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                NutraButton(
+                    text = "Sil",
+                    onClick = onDelete,
+                    style = NutraButtonStyle.Destructive,
+                    size = NutraButtonSize.Medium,
+                    modifier = Modifier.weight(0.42f),
+                )
+                NutraButton(
+                    text = "Güncelle",
+                    onClick = { onUpdateMultiplier(multiplier) },
+                    style = NutraButtonStyle.Primary,
+                    size = NutraButtonSize.Medium,
+                    modifier = Modifier.weight(0.58f),
+                )
             }
-        },
-    )
+        }
+    }
 }
 
-private fun inferCurrentMealType(): MealType {
-    val hour = java.time.LocalTime.now().hour
-    return when (hour) {
-        in 5..10 -> MealType.BREAKFAST
-        in 11..15 -> MealType.LUNCH
-        in 17..21 -> MealType.DINNER
-        else -> MealType.SNACK
-    }
+@Composable
+private fun NutraStepperButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String?,
+    onClick: () -> Unit,
+    containerColorOverride: Color,
+) {
+    NutraIconButton(
+        icon = icon,
+        contentDescription = contentDescription,
+        onClick = onClick,
+        size = 40.dp,
+        iconSize = 18.dp,
+        containerColor = containerColorOverride,
+        contentColor = NutraTheme.colors.textPrimary,
+    )
 }

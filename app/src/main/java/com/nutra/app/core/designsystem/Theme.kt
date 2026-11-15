@@ -1,6 +1,11 @@
 package com.nutra.app.core.designsystem
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.graphics.drawable.ColorDrawable
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
@@ -8,45 +13,58 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import com.nutra.app.domain.model.ThemePreference
 
-private val LightMaterialScheme = lightColorScheme(
-    primary = LightCalorieAccent,
-    onPrimary = LightCardSurface,
-    primaryContainer = LightCalorieContainer,
-    onPrimaryContainer = LightTextPrimary,
-    secondary = LightWaterAccent,
-    secondaryContainer = LightWaterContainer,
-    tertiary = LightFatAccent,
-    background = LightBackground,
-    onBackground = LightTextPrimary,
-    surface = LightCardSurface,
-    onSurface = LightTextPrimary,
-    surfaceVariant = LightElevatedSurface,
-    onSurfaceVariant = LightTextSecondary,
-    outline = LightHairlineBorder,
-    outlineVariant = LightHairlineBorder,
-)
+private fun NutraColors.toMaterialScheme(): ColorScheme {
+    val base = if (isDark) darkColorScheme() else lightColorScheme()
+    return base.copy(
+        primary = ink,
+        onPrimary = onInk,
+        primaryContainer = accentSoft,
+        onPrimaryContainer = textPrimary,
+        secondary = accent,
+        onSecondary = onAccent,
+        secondaryContainer = surfaceMuted,
+        onSecondaryContainer = textPrimary,
+        tertiary = water,
+        background = background,
+        onBackground = textPrimary,
+        surface = surface,
+        onSurface = textPrimary,
+        surfaceVariant = surfaceMuted,
+        onSurfaceVariant = textSecondary,
+        surfaceContainerLowest = surface,
+        surfaceContainerLow = surface,
+        surfaceContainer = surfaceElevated,
+        surfaceContainerHigh = surfaceElevated,
+        surfaceContainerHighest = surfaceMuted,
+        surfaceTint = surface,
+        outline = divider,
+        outlineVariant = divider,
+        error = danger,
+        onError = onInk,
+        errorContainer = dangerSoft,
+        scrim = scrim,
+    )
+}
 
-private val DarkMaterialScheme = darkColorScheme(
-    primary = DarkCalorieAccent,
-    onPrimary = DarkBackground,
-    primaryContainer = DarkCalorieContainer,
-    onPrimaryContainer = DarkTextPrimary,
-    secondary = DarkWaterAccent,
-    secondaryContainer = DarkWaterContainer,
-    tertiary = DarkFatAccent,
-    background = DarkBackground,
-    onBackground = DarkTextPrimary,
-    surface = DarkCardSurface,
-    onSurface = DarkTextPrimary,
-    surfaceVariant = DarkElevatedSurface,
-    onSurfaceVariant = DarkTextSecondary,
-    outline = DarkHairlineBorder,
-    outlineVariant = DarkHairlineBorder,
-)
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
+@Composable
+fun ThemePreference.resolveIsDark(): Boolean = when (this) {
+    ThemePreference.SYSTEM -> isSystemInDarkTheme()
+    ThemePreference.LIGHT -> false
+    ThemePreference.DARK -> true
+}
 
 @Composable
 fun NutraTheme(
@@ -54,40 +72,40 @@ fun NutraTheme(
     useDynamicColor: Boolean = false,
     content: @Composable () -> Unit,
 ) {
-    val isDark = when (themePreference) {
-        ThemePreference.SYSTEM -> isSystemInDarkTheme()
-        ThemePreference.LIGHT -> false
-        ThemePreference.DARK -> true
-    }
+    val isDark = themePreference.resolveIsDark()
 
     val context = LocalContext.current
-    val baseSemantic = if (isDark) DarkNutraSemanticColors else LightNutraSemanticColors
+    val baseColors = if (isDark) DarkNutraColors else LightNutraColors
 
-    val colorScheme = when {
-        useDynamicColor -> {
-            if (isDark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
-        isDark -> DarkMaterialScheme
-        else -> LightMaterialScheme
-    }
-
-    val effectiveSemantic = if (useDynamicColor) {
-        baseSemantic.copy(
-            calorieAccent = colorScheme.primary,
-            calorieContainer = colorScheme.primaryContainer,
+    // Dynamic color only re-tints the brand accent; neutrals stay calm.
+    val colors = if (useDynamicColor) {
+        val dynamic = if (isDark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+        baseColors.copy(
+            accent = dynamic.primary,
+            accentSoft = dynamic.primaryContainer,
+            onAccent = dynamic.onPrimary,
         )
     } else {
-        baseSemantic
+        baseColors
+    }
+
+    val view = LocalView.current
+    val backgroundArgb = colors.background.toArgb()
+    if (!view.isInEditMode) {
+        DisposableEffect(view, backgroundArgb) {
+            view.context.findActivity()?.window?.setBackgroundDrawable(ColorDrawable(backgroundArgb))
+            onDispose {}
+        }
     }
 
     CompositionLocalProvider(
-        LocalNutraColors provides effectiveSemantic,
-        LocalNutraTypography provides DefaultNutraCustomTypography,
+        LocalNutraColors provides colors,
+        LocalNutraTypography provides DefaultNutraTypography,
         LocalNutraSpacing provides NutraSpacing(),
         LocalNutraShapes provides NutraShapes(),
     ) {
         MaterialTheme(
-            colorScheme = colorScheme,
+            colorScheme = colors.toMaterialScheme(),
             typography = Material3Typography,
             content = content,
         )
@@ -95,12 +113,12 @@ fun NutraTheme(
 }
 
 object NutraTheme {
-    val colors: NutraSemanticColors
+    val colors: NutraColors
         @Composable
         @ReadOnlyComposable
         get() = LocalNutraColors.current
 
-    val typography: NutraCustomTypography
+    val typography: NutraTypography
         @Composable
         @ReadOnlyComposable
         get() = LocalNutraTypography.current

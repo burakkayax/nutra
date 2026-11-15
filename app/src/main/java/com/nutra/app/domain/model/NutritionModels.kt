@@ -5,8 +5,8 @@ import kotlin.math.roundToInt
 
 enum class ThemePreference(val title: String) {
     SYSTEM("Sistem"),
-    LIGHT("Açık (Alabaster)"),
-    DARK("Koyu (Obsidyen)"),
+    LIGHT("Açık"),
+    DARK("Koyu"),
 }
 
 enum class GoalType(

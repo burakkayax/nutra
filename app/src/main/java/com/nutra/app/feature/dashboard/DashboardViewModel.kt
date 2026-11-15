@@ -36,12 +36,13 @@ import javax.inject.Inject
 
 enum class LoggingTabMode(val title: String) {
     CATALOG("Katalog"),
-    AI_ANALYZE("AI Analiz"),
+    AI_ANALYZE("AI"),
     BARCODE("Barkod"),
-    CUSTOM("Özel Ekle"),
+    CUSTOM("Özel"),
 }
 
 data class DashboardUiState(
+    val isLoading: Boolean = true,
     val selectedDate: LocalDate = LocalDate.now(),
     val weekDays: List<LocalDate> = emptyList(),
     val weekStatusMap: Map<String, DayStatusIndicator> = emptyMap(),
@@ -51,8 +52,8 @@ data class DashboardUiState(
         meals = MealType.entries.map { MealSummary(it, emptyList()) },
         waterMl = 0,
     ),
-    val calorieDisplayMode: CalorieDisplayMode = CalorieDisplayMode.REMAINING,
-    val expandedMeals: Set<MealType> = setOf(MealType.BREAKFAST),
+    val calorieDisplayMode: CalorieDisplayMode = CalorieDisplayMode.CONSUMED,
+    val expandedMeals: Set<MealType> = emptySet(),
     val activeLoggingMealType: MealType? = null,
     val loggingTabMode: LoggingTabMode = LoggingTabMode.CATALOG,
     val searchQuery: String = "",
@@ -101,8 +102,8 @@ class DashboardViewModel @Inject constructor(
 ) : ViewModel() {
 
     private val selectedDateFlow = MutableStateFlow(LocalDate.now())
-    private val calorieDisplayModeFlow = MutableStateFlow(CalorieDisplayMode.REMAINING)
-    private val expandedMealsFlow = MutableStateFlow(setOf(MealType.BREAKFAST, MealType.LUNCH, MealType.DINNER))
+    private val calorieDisplayModeFlow = MutableStateFlow(CalorieDisplayMode.CONSUMED)
+    private val expandedMealsFlow = MutableStateFlow<Set<MealType>>(emptySet())
     private val modalStateFlow = MutableStateFlow(LoggingModalInternalState())
 
     private val allFoodsFlow = nutritionRepository.observeAllFoods()
@@ -147,6 +148,7 @@ class DashboardViewModel @Inject constructor(
         )
 
         DashboardUiState(
+            isLoading = false,
             selectedDate = date,
             weekDays = weekDays,
             weekStatusMap = weekStatus,
@@ -208,7 +210,6 @@ class DashboardViewModel @Inject constructor(
     }
 
     fun openAddFoodModal(mealType: MealType, initialTab: LoggingTabMode = LoggingTabMode.CATALOG) {
-        expandedMealsFlow.update { it + mealType }
         modalStateFlow.update {
             it.copy(
                 activeLoggingMealType = mealType,

@@ -2,6 +2,7 @@ package com.nutra.app.feature.analytics
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -9,28 +10,26 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.MonitorWeight
 import androidx.compose.material.icons.rounded.Remove
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,124 +37,152 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.nutra.app.core.designsystem.NutraButton
+import com.nutra.app.core.designsystem.NutraButtonSize
+import com.nutra.app.core.designsystem.NutraButtonStyle
 import com.nutra.app.core.designsystem.NutraCard
-import com.nutra.app.core.designsystem.NutraChip
+import com.nutra.app.core.designsystem.NutraDialog
+import com.nutra.app.core.designsystem.NutraDivider
+import com.nutra.app.core.designsystem.NutraDot
+import com.nutra.app.core.designsystem.NutraEmptyState
+import com.nutra.app.core.designsystem.NutraIconButton
+import com.nutra.app.core.designsystem.NutraScreenHeader
 import com.nutra.app.core.designsystem.NutraSegmentedControl
 import com.nutra.app.core.designsystem.NutraTheme
 import com.nutra.app.domain.model.DailyAnalyticsPoint
+import com.nutra.app.domain.model.MacroGoals
+import com.nutra.app.domain.model.UserProfile
 import com.nutra.app.domain.model.WeightTrendPoint
+import java.text.NumberFormat
 import java.time.LocalDate
-import java.time.format.TextStyle
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private val TR_LOCALE = Locale.forLanguageTag("tr-TR")
+private val DATE_LABEL_FORMATTER = DateTimeFormatter.ofPattern("d MMM", TR_LOCALE)
+private val SHORT_WEEKDAY_FORMATTER = DateTimeFormatter.ofPattern("EEE", TR_LOCALE)
+
+private fun formatInt(value: Int): String =
+    NumberFormat.getIntegerInstance(TR_LOCALE).format(value)
+
+private fun formatKg(value: Float): String =
+    String.format(TR_LOCALE, "%.1f", value)
+
+private fun formatWaterLitres(ml: Int): String =
+    if (ml >= 1000) {
+        String.format(TR_LOCALE, "%.1f L", ml / 1000f)
+    } else {
+        "${formatInt(ml)} ml"
+    }
+
+private fun formatShortDate(dateIso: String?): String {
+    if (dateIso.isNullOrBlank()) return ""
+    return runCatching {
+        val date = LocalDate.parse(dateIso)
+        if (date == LocalDate.now()) "Bugün" else date.format(DATE_LABEL_FORMATTER)
+    }.getOrDefault(dateIso)
+}
+
+private fun formatShortWeekday(dateIso: String): String =
+    runCatching {
+        LocalDate.parse(dateIso)
+            .format(SHORT_WEEKDAY_FORMATTER)
+            .replace(".", "")
+            .replaceFirstChar { it.uppercase(TR_LOCALE) }
+    }.getOrDefault("")
 
 @Composable
 fun AnalyticsScreen(
     viewModel: AnalyticsViewModel,
     contentPadding: PaddingValues = PaddingValues(0.dp),
 ) {
-    val state by viewModel.uiState.collectAsStateWithLifecycle()
-    val haptic = LocalHapticFeedback.current
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val layoutDirection = LocalLayoutDirection.current
 
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .background(NutraTheme.colors.background)
-            .padding(contentPadding),
+            .background(NutraTheme.colors.background),
         contentPadding = PaddingValues(
-            start = NutraTheme.spacing.screenHorizontal,
-            end = NutraTheme.spacing.screenHorizontal,
-            top = 14.dp,
-            bottom = 96.dp,
+            start = contentPadding.calculateStartPadding(layoutDirection) + NutraTheme.spacing.screen,
+            end = contentPadding.calculateEndPadding(layoutDirection) + NutraTheme.spacing.screen,
+            top = contentPadding.calculateTopPadding() + 12.dp,
+            bottom = contentPadding.calculateBottomPadding() + 16.dp,
         ),
-        verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.medium),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         item(key = "header") {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    text = "Analiz & İlerleme",
-                    style = NutraTheme.typography.screenHeader,
-                    color = NutraTheme.colors.textPrimary,
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                NutraScreenHeader(
+                    title = "İlerleme",
+                    eyebrow = "Beslenme ve kilo özeti",
                 )
-                Text(
-                    text = "Grafikler üzerinde parmağınızı gezdirerek gün detaylarını inceleyin",
-                    style = NutraTheme.typography.bodySmall,
-                    color = NutraTheme.colors.textSecondary,
+
+                NutraSegmentedControl(
+                    items = AnalyticsRangeOption.entries,
+                    selectedItem = uiState.selectedRange,
+                    onItemSelected = viewModel::selectRange,
+                    labelProvider = { it.title },
                 )
             }
         }
 
-        item(key = "range_selector") {
-            NutraSegmentedControl(
-                items = AnalyticsRangeOption.entries,
-                selectedItem = state.selectedRange,
-                onItemSelected = viewModel::selectRange,
-                labelProvider = { it.title },
-            )
-        }
-
-        // 1. Haptic Scrubbing Calorie & Macro Bar Chart Card
         item(key = "calorie_chart") {
             HapticScrubbingCalorieChartCard(
-                points = state.dailyPoints,
-                selectedIndex = state.scrubbedDayIndex ?: (state.dailyPoints.size - 1).coerceAtLeast(0),
-                averageCalories = state.averageCalories,
-                onScrubIndexChanged = { newIdx ->
-                    if (newIdx != state.scrubbedDayIndex) {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        viewModel.updateScrubbedDayIndex(newIdx)
-                    }
-                },
+                points = uiState.dailyPoints,
+                scrubbedIndex = uiState.scrubbedDayIndex,
+                activePoint = uiState.activeDayPoint,
+                targetCalories = uiState.profile.goals.calories,
+                averageCalories = uiState.averageCalories,
+                averageWaterMl = uiState.averageWaterMl,
+                selectedRange = uiState.selectedRange,
+                onScrub = viewModel::updateScrubbedDayIndex,
             )
         }
 
-        // 2. Macro Distribution Breakdown Card
         item(key = "macro_split") {
             MacroSplitComparisonCard(
-                points = state.dailyPoints,
-                goalType = state.profile.goalType,
+                activeDay = uiState.activeDayPoint,
+                goals = uiState.profile.goals,
             )
         }
 
-        // 3. Weight History & 7-Day EMA True Trend Curve Card
         item(key = "weight_trend") {
             WeightTrendBezierCard(
-                trendPoints = state.weightTrendPoints,
-                selectedIndex = state.scrubbedWeightIndex ?: (state.weightTrendPoints.size - 1).coerceAtLeast(0),
-                currentWeightKg = state.profile.currentWeightKg,
-                targetWeightKg = state.profile.targetWeightKg,
-                onScrubIndexChanged = { newIdx ->
-                    if (newIdx != state.scrubbedWeightIndex) {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        viewModel.updateScrubbedWeightIndex(newIdx)
-                    }
-                },
-                onOpenLogWeight = viewModel::openAddWeightDialog,
+                points = uiState.weightTrendPoints,
+                scrubbedIndex = uiState.scrubbedWeightIndex,
+                profile = uiState.profile,
+                onScrub = viewModel::updateScrubbedWeightIndex,
+                onAddWeightClick = viewModel::openAddWeightDialog,
             )
         }
     }
 
-    if (state.showAddWeightDialog) {
+    if (uiState.showAddWeightDialog) {
+        val latestWeight = uiState.weightTrendPoints.lastOrNull()?.rawWeightKg
+            ?: uiState.profile.currentWeightKg
         LogWeightDialog(
-            initialWeightKg = state.profile.currentWeightKg,
+            initialWeight = latestWeight,
             onDismiss = viewModel::closeAddWeightDialog,
-            onConfirm = { newWeight ->
-                haptic.performHapticFeedback(HapticFeedbackType.Confirm)
-                viewModel.logNewWeight(newWeight)
-            },
+            onSave = viewModel::logNewWeight,
         )
     }
 }
@@ -163,461 +190,946 @@ fun AnalyticsScreen(
 @Composable
 private fun HapticScrubbingCalorieChartCard(
     points: List<DailyAnalyticsPoint>,
-    selectedIndex: Int,
+    scrubbedIndex: Int?,
+    activePoint: DailyAnalyticsPoint?,
+    targetCalories: Int,
     averageCalories: Int,
-    onScrubIndexChanged: (Int) -> Unit,
+    averageWaterMl: Int,
+    selectedRange: AnalyticsRangeOption,
+    onScrub: (Int?) -> Unit,
 ) {
-    val activePoint = points.getOrNull(selectedIndex)
-    val calorieAccent = NutraTheme.colors.calorieAccent
-    val overBudgetAccent = NutraTheme.colors.overBudgetAccent
-    val elevatedColor = NutraTheme.colors.elevatedSurface
-    val mutedColor = NutraTheme.colors.textMuted
+    val colors = NutraTheme.colors
+    val haptic = LocalHapticFeedback.current
+    val currentScrub by rememberUpdatedState(scrubbedIndex)
 
-    NutraCard(
-        shape = NutraTheme.shapes.heroCard,
-        contentPadding = PaddingValues(20.dp),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            // Live Scrubbed Day Inspection Header
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Top,
+    NutraCard {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Top,
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                Column {
-                    val dateTitle = activePoint?.dateIso?.let { iso ->
-                        runCatching {
-                            val d = LocalDate.parse(iso)
-                            "${d.dayOfMonth} ${d.month.getDisplayName(TextStyle.SHORT, TR_LOCALE)} (${
-                                d.dayOfWeek.getDisplayName(TextStyle.SHORT, TR_LOCALE)
-                            })"
-                        }.getOrDefault(iso)
-                    } ?: "Bugün"
-
+                Text(
+                    text = if (scrubbedIndex != null && activePoint != null) {
+                        formatShortDate(activePoint.dateIso)
+                    } else {
+                        "Kalori geçmişi"
+                    },
+                    style = NutraTheme.typography.caption,
+                    color = if (scrubbedIndex != null) colors.accent else colors.textSecondary,
+                )
+                Row(
+                    verticalAlignment = Alignment.Bottom,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
                     Text(
-                        text = dateTitle,
-                        style = NutraTheme.typography.macroLabel,
-                        color = NutraTheme.colors.textSecondary,
+                        text = formatInt(activePoint?.calories ?: 0),
+                        style = NutraTheme.typography.numberLarge,
+                        color = colors.textPrimary,
                     )
                     Text(
-                        text = "${activePoint?.calories ?: 0} kcal",
-                        style = NutraTheme.typography.statLargeNumber,
-                        color = NutraTheme.colors.textPrimary,
+                        text = "/ ${formatInt(activePoint?.targetCalories ?: targetCalories)} kcal",
+                        style = NutraTheme.typography.body,
+                        color = colors.textSecondary,
+                        modifier = Modifier.padding(bottom = 3.dp),
                     )
-                }
-
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        text = "Ort: $averageCalories kcal",
-                        style = NutraTheme.typography.macroValue,
-                        color = NutraTheme.colors.calorieAccent,
-                    )
-                    if (activePoint != null) {
-                        Text(
-                            text = "P:${activePoint.proteinGrams.roundToInt()}g · K:${activePoint.carbsGrams.roundToInt()}g · Y:${activePoint.fatGrams.roundToInt()}g",
-                            style = NutraTheme.typography.bodySmall,
-                            color = NutraTheme.colors.textSecondary,
-                        )
-                    }
                 }
             }
 
-            // Interactive Canvas Bar Chart with Haptic Scrubbing
-            val maxCal = (points.maxOfOrNull { maxOf(it.calories, it.targetCalories) } ?: 2400)
-                .coerceAtLeast(1500) * 1.15f
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = "Ort. ${formatInt(averageCalories)} kcal",
+                    style = NutraTheme.typography.caption,
+                    color = colors.textSecondary,
+                )
+                Text(
+                    text = "Ort. su ${formatWaterLitres(averageWaterMl)}",
+                    style = NutraTheme.typography.caption,
+                    color = colors.water,
+                )
+            }
+        }
+
+        if (points.isEmpty()) {
+            NutraEmptyState(
+                icon = Icons.Rounded.MonitorWeight,
+                title = "Henüz kalori kaydı yok",
+                message = "Bugün sekmesinden öğün eklediğinde grafik oluşur.",
+                modifier = Modifier.padding(top = 16.dp),
+            )
+            return@NutraCard
+        }
+
+        val maxChartCalories = remember(points, targetCalories) {
+            val peak = points.maxOfOrNull { maxOf(it.calories, it.targetCalories) } ?: targetCalories
+            (maxOf(peak, targetCalories) * 1.15f).coerceAtLeast(800f)
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 20.dp)
+                .height(156.dp),
+        ) {
+            var lastDraggedIndex = remember(points.size) { -1 }
 
             Canvas(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(168.dp)
+                    .fillMaxSize()
                     .pointerInput(points.size) {
-                        if (points.isEmpty()) return@pointerInput
                         detectTapGestures { offset ->
-                            val slotWidth = size.width / points.size.toFloat()
-                            val idx = (offset.x / slotWidth).toInt().coerceIn(0, points.size - 1)
-                            onScrubIndexChanged(idx)
+                            if (points.isEmpty()) return@detectTapGestures
+                            val idx = ((offset.x / size.width.coerceAtLeast(1)) * points.size)
+                                .toInt()
+                                .coerceIn(0, points.lastIndex)
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onScrub(if (currentScrub == idx) null else idx)
                         }
                     }
                     .pointerInput(points.size) {
-                        if (points.isEmpty()) return@pointerInput
-                        detectHorizontalDragGestures { change, _ ->
-                            change.consume()
-                            val slotWidth = size.width / points.size.toFloat()
-                            val idx = (change.position.x / slotWidth).toInt().coerceIn(0, points.size - 1)
-                            onScrubIndexChanged(idx)
-                        }
+                        detectHorizontalDragGestures(
+                            onDragStart = { offset ->
+                                if (points.isEmpty()) return@detectHorizontalDragGestures
+                                val idx = ((offset.x / size.width.coerceAtLeast(1)) * points.size)
+                                    .toInt()
+                                    .coerceIn(0, points.lastIndex)
+                                lastDraggedIndex = idx
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onScrub(idx)
+                            },
+                            onHorizontalDrag = { change, _ ->
+                                if (points.isEmpty()) return@detectHorizontalDragGestures
+                                change.consume()
+                                val idx = ((change.position.x / size.width.coerceAtLeast(1)) * points.size)
+                                    .toInt()
+                                    .coerceIn(0, points.lastIndex)
+                                if (idx != lastDraggedIndex) {
+                                    lastDraggedIndex = idx
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    onScrub(idx)
+                                }
+                            },
+                            onDragEnd = {
+                                lastDraggedIndex = -1
+                                onScrub(null)
+                            },
+                            onDragCancel = {
+                                lastDraggedIndex = -1
+                                onScrub(null)
+                            },
+                        )
                     },
             ) {
-                if (points.isEmpty()) return@Canvas
-
-                val targetCal = points.first().targetCalories
-                val targetY = size.height - ((targetCal / maxCal) * size.height).coerceIn(0f, size.height)
-
-                // Dashed Target Calorie Line
+                val targetY = size.height * (1f - (targetCalories / maxChartCalories).coerceIn(0f, 1f))
                 drawLine(
-                    color = mutedColor.copy(alpha = 0.45f),
+                    color = colors.textTertiary.copy(alpha = 0.45f),
                     start = Offset(0f, targetY),
                     end = Offset(size.width, targetY),
-                    strokeWidth = 1.5.dp.toPx(),
-                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 10f), 0f),
+                    strokeWidth = 1.dp.toPx(),
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f)),
                 )
 
                 val count = points.size
                 val slotWidth = size.width / count.toFloat()
-                val barWidth = (slotWidth * 0.56f).coerceIn(6.dp.toPx(), 24.dp.toPx())
+                val maxBarWidth = when (selectedRange) {
+                    AnalyticsRangeOption.DAYS_7 -> 22.dp.toPx()
+                    AnalyticsRangeOption.DAYS_14 -> 12.dp.toPx()
+                    AnalyticsRangeOption.DAYS_30 -> 6.dp.toPx()
+                }
+                val barWidth = (slotWidth * 0.56f).coerceIn(3.dp.toPx(), maxBarWidth)
+                val minStubHeight = 6.dp.toPx()
+                val corner = CornerRadius(barWidth / 2f, barWidth / 2f)
 
-                points.forEachIndexed { idx, pt ->
-                    val centerX = (idx + 0.5f) * slotWidth
-                    val left = centerX - (barWidth / 2f)
-                    val isSelected = idx == selectedIndex
-
-                    // Full Track Pill
-                    drawRoundRect(
-                        color = elevatedColor.copy(alpha = if (isSelected) 0.9f else 0.45f),
-                        topLeft = Offset(left, 0f),
-                        size = Size(barWidth, size.height),
-                        cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f),
-                    )
-
-                    // Filled Calorie Bar
-                    val ratio = (pt.calories / maxCal).coerceIn(0f, 1f)
-                    val barHeight = (ratio * size.height).coerceAtLeast(if (pt.calories > 0) 6.dp.toPx() else 0f)
-                    if (barHeight > 0f) {
-                        val isOver = pt.calories > (pt.targetCalories * 1.08f)
-                        val baseColor = if (isOver) overBudgetAccent else calorieAccent
-                        drawRoundRect(
-                            color = if (isSelected) baseColor else baseColor.copy(alpha = 0.55f),
-                            topLeft = Offset(left, size.height - barHeight),
-                            size = Size(barWidth, barHeight),
-                            cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f),
-                        )
+                points.forEachIndexed { index, pt ->
+                    val isSelected = scrubbedIndex == null || scrubbedIndex == index
+                    val x = index * slotWidth + (slotWidth - barWidth) / 2f
+                    val rawHeight = if (pt.calories > 0) {
+                        (size.height * (pt.calories / maxChartCalories).coerceIn(0f, 1f))
+                            .coerceAtLeast(minStubHeight)
+                    } else {
+                        minStubHeight
                     }
+                    val y = size.height - rawHeight
+
+                    val baseColor = when {
+                        pt.calories == 0 -> colors.surfaceMuted
+                        pt.calories > pt.targetCalories -> colors.warning
+                        else -> colors.accent
+                    }
+                    val finalColor = if (isSelected) baseColor else baseColor.copy(alpha = 0.28f)
+
+                    drawRoundRect(
+                        color = finalColor,
+                        topLeft = Offset(x, y),
+                        size = Size(barWidth, rawHeight),
+                        cornerRadius = corner,
+                    )
                 }
             }
+        }
+
+        // X-axis date strip
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 10.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            if (selectedRange == AnalyticsRangeOption.DAYS_7 && points.size <= 7) {
+                points.forEachIndexed { index, pt ->
+                    val isActive = scrubbedIndex == index
+                    Text(
+                        text = formatShortWeekday(pt.dateIso),
+                        style = NutraTheme.typography.caption,
+                        color = if (isActive) colors.textPrimary else colors.textTertiary,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            } else {
+                Text(
+                    text = formatShortDate(points.firstOrNull()?.dateIso),
+                    style = NutraTheme.typography.caption,
+                    color = colors.textTertiary,
+                )
+                if (scrubbedIndex != null && activePoint != null) {
+                    Text(
+                        text = formatShortDate(activePoint.dateIso),
+                        style = NutraTheme.typography.labelSmall,
+                        color = colors.textPrimary,
+                    )
+                } else {
+                    Text(
+                        text = "Hedef: ${formatInt(targetCalories)} kcal",
+                        style = NutraTheme.typography.caption,
+                        color = colors.textTertiary,
+                    )
+                }
+                Text(
+                    text = formatShortDate(points.lastOrNull()?.dateIso),
+                    style = NutraTheme.typography.caption,
+                    color = colors.textTertiary,
+                )
+            }
+        }
+
+        if (selectedRange == AnalyticsRangeOption.DAYS_7) {
+            Text(
+                text = "Çubukların üzerinde kaydırarak günlük değerleri incele · Hedef ${formatInt(targetCalories)} kcal",
+                style = NutraTheme.typography.caption,
+                color = colors.textTertiary,
+                modifier = Modifier.padding(top = 10.dp),
+            )
         }
     }
 }
 
 @Composable
 private fun MacroSplitComparisonCard(
-    points: List<DailyAnalyticsPoint>,
-    goalType: com.nutra.app.domain.model.GoalType,
+    activeDay: DailyAnalyticsPoint?,
+    goals: MacroGoals,
 ) {
-    val totalP = points.sumOf { it.proteinGrams.toDouble() }.toFloat()
-    val totalC = points.sumOf { it.carbsGrams.toDouble() }.toFloat()
-    val totalF = points.sumOf { it.fatGrams.toDouble() }.toFloat()
+    val colors = NutraTheme.colors
+    val proteinG = activeDay?.proteinGrams ?: 0f
+    val carbsG = activeDay?.carbsGrams ?: 0f
+    val fatG = activeDay?.fatGrams ?: 0f
 
-    val pKcal = totalP * 4f
-    val cKcal = totalC * 4f
-    val fKcal = totalF * 9f
-    val sumKcal = (pKcal + cKcal + fKcal).coerceAtLeast(1f)
+    val proteinKcal = proteinG * 4f
+    val carbsKcal = carbsG * 4f
+    val fatKcal = fatG * 9f
+    val totalActualKcal = proteinKcal + carbsKcal + fatKcal
 
-    val actualPRatio = if (totalP + totalC + totalF > 0f) pKcal / sumKcal else goalType.proteinRatio
-    val actualCRatio = if (totalP + totalC + totalF > 0f) cKcal / sumKcal else goalType.carbsRatio
-    val actualFRatio = if (totalP + totalC + totalF > 0f) fKcal / sumKcal else goalType.fatRatio
+    val actualP = if (totalActualKcal > 0f) proteinKcal / totalActualKcal else 0f
+    val actualC = if (totalActualKcal > 0f) carbsKcal / totalActualKcal else 0f
+    val actualF = if (totalActualKcal > 0f) fatKcal / totalActualKcal else 0f
 
-    NutraCard(
-        modifier = Modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(16.dp),
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(
-                text = "Makro Enerji Dağılımı (Gerçekleşen vs. Hedef)",
-                style = NutraTheme.typography.cardTitle,
-                color = NutraTheme.colors.textPrimary,
+    val targetProteinKcal = goals.proteinGrams * 4f
+    val targetCarbsKcal = goals.carbsGrams * 4f
+    val targetFatKcal = goals.fatGrams * 9f
+    val totalTargetKcal = (targetProteinKcal + targetCarbsKcal + targetFatKcal).coerceAtLeast(1f)
+
+    val targetP = targetProteinKcal / totalTargetKcal
+    val targetC = targetCarbsKcal / totalTargetKcal
+    val targetF = targetFatKcal / totalTargetKcal
+
+    NutraCard {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = "Makro dengesi",
+                    style = NutraTheme.typography.titleMedium,
+                    color = colors.textPrimary,
+                )
+                Text(
+                    text = if (activeDay != null && totalActualKcal > 0f) {
+                        "${formatShortDate(activeDay.dateIso)} · Hedef oranlarla karşılaştırma"
+                    } else {
+                        "Seçili gün için makro verisi bekleniyor"
+                    },
+                    style = NutraTheme.typography.caption,
+                    color = colors.textSecondary,
+                )
+            }
+        }
+
+        // Actual vs Target stacked bar
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            StackedRatioBar(
+                proteinRatio = actualP,
+                carbsRatio = actualC,
+                fatRatio = actualF,
+                hasData = totalActualKcal > 0f,
+                height = 12.dp,
+                alpha = 1f,
             )
+            StackedRatioBar(
+                proteinRatio = targetP,
+                carbsRatio = targetC,
+                fatRatio = targetF,
+                hasData = true,
+                height = 5.dp,
+                alpha = 0.45f,
+            )
+        }
 
-            // Multi-Segment Proportional Bar
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(10.dp)
-                    .clip(NutraTheme.shapes.pill),
-                horizontalArrangement = Arrangement.spacedBy(3.dp),
-            ) {
-                Box(
-                    modifier = Modifier
-                        .weight(actualPRatio.coerceAtLeast(0.05f))
-                        .fillMaxHeight()
-                        .background(NutraTheme.colors.proteinAccent),
-                )
-                Box(
-                    modifier = Modifier
-                        .weight(actualCRatio.coerceAtLeast(0.05f))
-                        .fillMaxHeight()
-                        .background(NutraTheme.colors.carbsAccent),
-                )
-                Box(
-                    modifier = Modifier
-                        .weight(actualFRatio.coerceAtLeast(0.05f))
-                        .fillMaxHeight()
-                        .background(NutraTheme.colors.fatAccent),
-                )
-            }
+        NutraDivider(modifier = Modifier.padding(vertical = 16.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                MacroPercentItem(
-                    title = "Protein",
-                    actualPct = (actualPRatio * 100).roundToInt(),
-                    targetPct = (goalType.proteinRatio * 100).roundToInt(),
-                    color = NutraTheme.colors.proteinAccent,
-                )
-                MacroPercentItem(
-                    title = "Karbonhidrat",
-                    actualPct = (actualCRatio * 100).roundToInt(),
-                    targetPct = (goalType.carbsRatio * 100).roundToInt(),
-                    color = NutraTheme.colors.carbsAccent,
-                )
-                MacroPercentItem(
-                    title = "Yağ",
-                    actualPct = (actualFRatio * 100).roundToInt(),
-                    targetPct = (goalType.fatRatio * 100).roundToInt(),
-                    color = NutraTheme.colors.fatAccent,
-                )
-            }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            MacroSplitColumn(
+                label = "Protein",
+                dotColor = colors.protein,
+                grams = proteinG.roundToInt(),
+                targetGrams = goals.proteinGrams,
+                actualPercent = (actualP * 100f).roundToInt(),
+                targetPercent = (targetP * 100f).roundToInt(),
+                modifier = Modifier.weight(1f),
+            )
+            MacroSplitColumn(
+                label = "Karb.",
+                dotColor = colors.carbs,
+                grams = carbsG.roundToInt(),
+                targetGrams = goals.carbsGrams,
+                actualPercent = (actualC * 100f).roundToInt(),
+                targetPercent = (targetC * 100f).roundToInt(),
+                modifier = Modifier.weight(1f),
+            )
+            MacroSplitColumn(
+                label = "Yağ",
+                dotColor = colors.fat,
+                grams = fatG.roundToInt(),
+                targetGrams = goals.fatGrams,
+                actualPercent = (actualF * 100f).roundToInt(),
+                targetPercent = (targetF * 100f).roundToInt(),
+                modifier = Modifier.weight(1f),
+            )
         }
     }
 }
 
 @Composable
-private fun MacroPercentItem(
-    title: String,
-    actualPct: Int,
-    targetPct: Int,
-    color: Color,
+private fun StackedRatioBar(
+    proteinRatio: Float,
+    carbsRatio: Float,
+    fatRatio: Float,
+    hasData: Boolean,
+    height: androidx.compose.ui.unit.Dp,
+    alpha: Float,
 ) {
-    Column {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
-        ) {
+    val colors = NutraTheme.colors
+    if (!hasData) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(height)
+                .clip(NutraTheme.shapes.pill)
+                .background(colors.surfaceMuted),
+        )
+        return
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(height)
+            .clip(NutraTheme.shapes.pill),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        if (proteinRatio > 0.005f) {
             Box(
                 modifier = Modifier
-                    .size(7.dp)
-                    .clip(NutraTheme.shapes.pill)
-                    .background(color),
+                    .weight(proteinRatio.coerceAtLeast(0.01f))
+                    .fillMaxHeight()
+                    .background(colors.protein.copy(alpha = alpha)),
             )
+        }
+        if (carbsRatio > 0.005f) {
+            Box(
+                modifier = Modifier
+                    .weight(carbsRatio.coerceAtLeast(0.01f))
+                    .fillMaxHeight()
+                    .background(colors.carbs.copy(alpha = alpha)),
+            )
+        }
+        if (fatRatio > 0.005f) {
+            Box(
+                modifier = Modifier
+                    .weight(fatRatio.coerceAtLeast(0.01f))
+                    .fillMaxHeight()
+                    .background(colors.fat.copy(alpha = alpha)),
+            )
+        }
+    }
+}
+
+@Composable
+private fun MacroSplitColumn(
+    label: String,
+    dotColor: Color,
+    grams: Int,
+    targetGrams: Int,
+    actualPercent: Int,
+    targetPercent: Int,
+    modifier: Modifier = Modifier,
+) {
+    val colors = NutraTheme.colors
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            NutraDot(color = dotColor, size = 7.dp)
             Text(
-                text = title,
-                style = NutraTheme.typography.macroLabel,
-                color = NutraTheme.colors.textSecondary,
+                text = label,
+                style = NutraTheme.typography.caption,
+                color = colors.textSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
         Text(
-            text = "%$actualPct (Hedef %$targetPct)",
-            style = NutraTheme.typography.macroValue,
-            color = NutraTheme.colors.textPrimary,
+            text = "%$actualPercent",
+            style = NutraTheme.typography.numberMedium,
+            color = colors.textPrimary,
+        )
+        Text(
+            text = "${grams}g / ${targetGrams}g · H:%$targetPercent",
+            style = NutraTheme.typography.caption,
+            color = colors.textTertiary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }
 
 @Composable
 private fun WeightTrendBezierCard(
-    trendPoints: List<WeightTrendPoint>,
-    selectedIndex: Int,
-    currentWeightKg: Float,
-    targetWeightKg: Float,
-    onScrubIndexChanged: (Int) -> Unit,
-    onOpenLogWeight: () -> Unit,
+    points: List<WeightTrendPoint>,
+    scrubbedIndex: Int?,
+    profile: UserProfile,
+    onScrub: (Int?) -> Unit,
+    onAddWeightClick: () -> Unit,
 ) {
-    val activePoint = trendPoints.getOrNull(selectedIndex)
-    val displayRaw = activePoint?.rawWeightKg ?: currentWeightKg
-    val displayEma = activePoint?.emaTrendKg ?: currentWeightKg
-    val diffToTarget = abs(displayEma - targetWeightKg)
+    val colors = NutraTheme.colors
+    val haptic = LocalHapticFeedback.current
+    val currentScrub by rememberUpdatedState(scrubbedIndex)
 
-    val trendColor = NutraTheme.colors.calorieAccent
-    val rawDotColor = NutraTheme.colors.textMuted
-
-    NutraCard(
-        shape = NutraTheme.shapes.heroCard,
-        contentPadding = PaddingValues(20.dp),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
+    NutraCard {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                Column {
-                    Text(
-                        text = "Kilo & Gerçek Trend (7 Günlük EMA)",
-                        style = NutraTheme.typography.cardTitle,
-                        color = NutraTheme.colors.textPrimary,
-                    )
-                    Text(
-                        text = "Ödem dalgalanmalarını filtreleyen hareketli ortalama",
-                        style = NutraTheme.typography.bodySmall,
-                        color = NutraTheme.colors.textSecondary,
-                    )
-                }
-
-                NutraChip(
-                    text = "+ Tartı Ekle",
-                    selected = true,
-                    onClick = onOpenLogWeight,
+                Text(
+                    text = "Kilo trendi",
+                    style = NutraTheme.typography.titleMedium,
+                    color = colors.textPrimary,
+                )
+                Text(
+                    text = "7 günlük ortalama · Hedef ${formatKg(profile.targetWeightKg)} kg",
+                    style = NutraTheme.typography.caption,
+                    color = colors.textSecondary,
                 )
             }
 
-            // Metrics Strip
+            NutraButton(
+                text = "Kilo ekle",
+                onClick = onAddWeightClick,
+                style = NutraButtonStyle.Secondary,
+                size = NutraButtonSize.Small,
+                leadingIcon = Icons.Rounded.Add,
+            )
+        }
+
+        if (points.isEmpty()) {
+            NutraEmptyState(
+                icon = Icons.Rounded.MonitorWeight,
+                title = "Henüz kilo kaydı yok",
+                message = "Günlük tartını eklediğinde dalgalanmaları yumuşatan 7 günlük trend eğrisi çizilir.",
+                modifier = Modifier.padding(top = 18.dp),
+                action = {
+                    NutraButton(
+                        text = "İlk kiloyu ekle",
+                        onClick = onAddWeightClick,
+                        style = NutraButtonStyle.Primary,
+                        size = NutraButtonSize.Medium,
+                    )
+                },
+            )
+            return@NutraCard
+        }
+
+        if (points.size == 1) {
+            val only = points.first()
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(NutraTheme.shapes.innerSubCard)
-                    .background(NutraTheme.colors.elevatedSurface)
-                    .padding(14.dp),
+                    .padding(top = 18.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Bottom,
             ) {
-                Column {
-                    Text("Gerçek Trend", style = NutraTheme.typography.badgeLabel, color = NutraTheme.colors.textSecondary)
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
-                        text = String.format(Locale.US, "%.1f kg", displayEma),
-                        style = NutraTheme.typography.cardTitle,
-                        color = NutraTheme.colors.calorieAccent,
+                        text = formatShortDate(only.dateIso),
+                        style = NutraTheme.typography.caption,
+                        color = colors.textSecondary,
                     )
-                }
-                Column {
-                    Text("Günlük Tartı", style = NutraTheme.typography.badgeLabel, color = NutraTheme.colors.textSecondary)
                     Text(
-                        text = String.format(Locale.US, "%.1f kg", displayRaw),
-                        style = NutraTheme.typography.cardTitle,
-                        color = NutraTheme.colors.textPrimary,
+                        text = "${formatKg(only.rawWeightKg)} kg",
+                        style = NutraTheme.typography.numberLarge,
+                        color = colors.textPrimary,
                     )
                 }
-                Column(horizontalAlignment = Alignment.End) {
-                    Text("Hedefe Fark", style = NutraTheme.typography.badgeLabel, color = NutraTheme.colors.textSecondary)
-                    Text(
-                        text = String.format(Locale.US, "%.1f kg", diffToTarget),
-                        style = NutraTheme.typography.cardTitle,
-                        color = NutraTheme.colors.textPrimary,
-                    )
-                }
-            }
-
-            if (trendPoints.size >= 2) {
-                val minW = (trendPoints.minOf { minOf(it.rawWeightKg, it.emaTrendKg) } - 1.2f)
-                val maxW = (trendPoints.maxOf { maxOf(it.rawWeightKg, it.emaTrendKg) } + 1.2f)
-                val span = (maxW - minW).coerceAtLeast(1f)
-
-                Canvas(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(140.dp)
-                        .pointerInput(trendPoints.size) {
-                            detectHorizontalDragGestures { change, _ ->
-                                change.consume()
-                                val slotW = size.width / trendPoints.size.toFloat()
-                                val idx = (change.position.x / slotW).toInt().coerceIn(0, trendPoints.size - 1)
-                                onScrubIndexChanged(idx)
-                            }
-                        },
-                ) {
-                    val stepX = size.width / (trendPoints.size - 1).toFloat()
-                    val emaOffsets = trendPoints.mapIndexed { idx, pt ->
-                        val x = idx * stepX
-                        val y = size.height - (((pt.emaTrendKg - minW) / span) * size.height)
-                        Offset(x, y)
-                    }
-
-                    // Smooth Cubic Bezier EMA Trend Path
-                    val path = Path().apply {
-                        moveTo(emaOffsets.first().x, emaOffsets.first().y)
-                        for (i in 0 until emaOffsets.size - 1) {
-                            val p0 = emaOffsets[i]
-                            val p1 = emaOffsets[i + 1]
-                            val ctrlX = (p0.x + p1.x) / 2f
-                            cubicTo(ctrlX, p0.y, ctrlX, p1.y, p1.x, p1.y)
-                        }
-                    }
-
-                    drawPath(
-                        path = path,
-                        color = trendColor,
-                        style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round),
-                    )
-
-                    // Raw Scale Dots & Selected Indicator
-                    trendPoints.forEachIndexed { idx, pt ->
-                        val x = idx * stepX
-                        val rawY = size.height - (((pt.rawWeightKg - minW) / span) * size.height)
-                        drawCircle(
-                            color = rawDotColor.copy(alpha = 0.55f),
-                            radius = 3.5.dp.toPx(),
-                            center = Offset(x, rawY),
-                        )
-                        if (idx == selectedIndex) {
-                            drawCircle(
-                                color = trendColor,
-                                radius = 6.dp.toPx(),
-                                center = emaOffsets[idx],
-                            )
-                        }
-                    }
-                }
-            } else {
                 Text(
-                    text = "Trend eğrisini görmek için farklı günlerde tartı kaydı ekleyin.",
-                    style = NutraTheme.typography.bodySmall,
-                    color = NutraTheme.colors.textMuted,
+                    text = "Eğri için 1 kayıt daha ekle",
+                    style = NutraTheme.typography.caption,
+                    color = colors.textTertiary,
                 )
             }
+            return@NutraCard
+        }
+
+        val activePoint = scrubbedIndex?.let { points.getOrNull(it) } ?: points.last()
+        val firstEma = points.first().emaTrendKg
+        val deltaFromStart = activePoint.emaTrendKg - firstEma
+        val deltaSign = if (deltaFromStart > 0.05f) "+" else ""
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 18.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Bottom,
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = "${formatShortDate(activePoint.dateIso)} · Trend",
+                    style = NutraTheme.typography.caption,
+                    color = if (scrubbedIndex != null) colors.accent else colors.textSecondary,
+                )
+                Row(
+                    verticalAlignment = Alignment.Bottom,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = "${formatKg(activePoint.emaTrendKg)} kg",
+                        style = NutraTheme.typography.numberLarge,
+                        color = colors.textPrimary,
+                    )
+                    Text(
+                        text = "$deltaSign${formatKg(deltaFromStart)} kg",
+                        style = NutraTheme.typography.labelSmall,
+                        color = when {
+                            abs(deltaFromStart) < 0.1f -> colors.textSecondary
+                            else -> colors.accent
+                        },
+                        modifier = Modifier.padding(bottom = 4.dp),
+                    )
+                }
+            }
+
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    text = "Tartı",
+                    style = NutraTheme.typography.caption,
+                    color = colors.textTertiary,
+                )
+                Text(
+                    text = "${formatKg(activePoint.rawWeightKg)} kg",
+                    style = NutraTheme.typography.numberSmall,
+                    color = colors.textSecondary,
+                )
+            }
+        }
+
+        val targetWeight = profile.targetWeightKg
+        val (minY, maxY) = remember(points, targetWeight) {
+            val allValues = buildList {
+                points.forEach {
+                    add(it.rawWeightKg)
+                    add(it.emaTrendKg)
+                }
+                if (abs(targetWeight - points.last().emaTrendKg) <= 25f) {
+                    add(targetWeight)
+                }
+            }
+            val rawMin = allValues.minOrNull() ?: 60f
+            val rawMax = allValues.maxOrNull() ?: 80f
+            val span = (rawMax - rawMin).coerceAtLeast(1.5f)
+            val pad = span * 0.18f
+            (rawMin - pad) to (rawMax + pad)
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 18.dp)
+                .height(172.dp),
+        ) {
+            var lastDraggedIndex = remember(points.size) { -1 }
+
+            Canvas(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(points.size) {
+                        detectTapGestures { offset ->
+                            if (points.size < 2) return@detectTapGestures
+                            val idx = ((offset.x / size.width.coerceAtLeast(1)) * points.lastIndex)
+                                .roundToInt()
+                                .coerceIn(0, points.lastIndex)
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onScrub(if (currentScrub == idx) null else idx)
+                        }
+                    }
+                    .pointerInput(points.size) {
+                        detectHorizontalDragGestures(
+                            onDragStart = { offset ->
+                                if (points.size < 2) return@detectHorizontalDragGestures
+                                val idx = ((offset.x / size.width.coerceAtLeast(1)) * points.lastIndex)
+                                    .roundToInt()
+                                    .coerceIn(0, points.lastIndex)
+                                lastDraggedIndex = idx
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onScrub(idx)
+                            },
+                            onHorizontalDrag = { change, _ ->
+                                if (points.size < 2) return@detectHorizontalDragGestures
+                                change.consume()
+                                val idx = ((change.position.x / size.width.coerceAtLeast(1)) * points.lastIndex)
+                                    .roundToInt()
+                                    .coerceIn(0, points.lastIndex)
+                                if (idx != lastDraggedIndex) {
+                                    lastDraggedIndex = idx
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    onScrub(idx)
+                                }
+                            },
+                            onDragEnd = {
+                                lastDraggedIndex = -1
+                                onScrub(null)
+                            },
+                            onDragCancel = {
+                                lastDraggedIndex = -1
+                                onScrub(null)
+                            },
+                        )
+                    },
+            ) {
+                val range = (maxY - minY).coerceAtLeast(0.5f)
+                val padX = 8.dp.toPx()
+                val usableWidth = (size.width - padX * 2f).coerceAtLeast(1f)
+                val padTop = 8.dp.toPx()
+                val usableHeight = (size.height - padTop * 2f).coerceAtLeast(1f)
+
+                fun yFor(weight: Float): Float {
+                    val norm = ((weight - minY) / range).coerceIn(0f, 1f)
+                    return padTop + usableHeight * (1f - norm)
+                }
+
+                fun xFor(index: Int): Float {
+                    val frac = index.toFloat() / points.lastIndex.coerceAtLeast(1)
+                    return padX + usableWidth * frac
+                }
+
+                // Target weight dashed line when in visible bounds
+                if (targetWeight in minY..maxY) {
+                    val targetLineY = yFor(targetWeight)
+                    drawLine(
+                        color = colors.accent.copy(alpha = 0.45f),
+                        start = Offset(padX, targetLineY),
+                        end = Offset(size.width - padX, targetLineY),
+                        strokeWidth = 1.dp.toPx(),
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f)),
+                    )
+                }
+
+                // Smooth cubic Bezier path for EMA curve
+                val emaPoints = points.mapIndexed { idx, pt ->
+                    Offset(xFor(idx), yFor(pt.emaTrendKg))
+                }
+                val curvePath = Path().apply {
+                    moveTo(emaPoints.first().x, emaPoints.first().y)
+                    for (i in 0 until emaPoints.lastIndex) {
+                        val p0 = emaPoints[i]
+                        val p1 = emaPoints[i + 1]
+                        val midX = (p0.x + p1.x) / 2f
+                        cubicTo(midX, p0.y, midX, p1.y, p1.x, p1.y)
+                    }
+                }
+
+                val fillPath = Path().apply {
+                    addPath(curvePath)
+                    lineTo(emaPoints.last().x, size.height)
+                    lineTo(emaPoints.first().x, size.height)
+                    close()
+                }
+                drawPath(
+                    path = fillPath,
+                    brush = Brush.verticalGradient(
+                        colors = listOf(
+                            colors.accent.copy(alpha = 0.16f),
+                            Color.Transparent,
+                        ),
+                        startY = 0f,
+                        endY = size.height,
+                    ),
+                )
+
+                drawPath(
+                    path = curvePath,
+                    color = colors.accent,
+                    style = Stroke(
+                        width = 2.5.dp.toPx(),
+                        cap = StrokeCap.Round,
+                        join = StrokeJoin.Round,
+                    ),
+                )
+
+                // Raw daily measurements as quiet dots
+                points.forEachIndexed { idx, pt ->
+                    drawCircle(
+                        color = colors.textTertiary.copy(alpha = 0.5f),
+                        radius = 3.dp.toPx(),
+                        center = Offset(xFor(idx), yFor(pt.rawWeightKg)),
+                    )
+                }
+
+                // Highlight indicator on scrubbed or latest EMA node
+                val focusIdx = scrubbedIndex ?: points.lastIndex
+                val focusOffset = emaPoints[focusIdx]
+
+                if (scrubbedIndex != null) {
+                    drawLine(
+                        color = colors.divider,
+                        start = Offset(focusOffset.x, 0f),
+                        end = Offset(focusOffset.x, size.height),
+                        strokeWidth = 1.dp.toPx(),
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f)),
+                    )
+                }
+
+                drawCircle(
+                    color = colors.surface,
+                    radius = 6.dp.toPx(),
+                    center = focusOffset,
+                )
+                drawCircle(
+                    color = colors.accent,
+                    radius = 4.dp.toPx(),
+                    center = focusOffset,
+                )
+            }
+        }
+
+        // Bottom range dates + compact legend
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                text = formatShortDate(points.first().dateIso),
+                style = NutraTheme.typography.caption,
+                color = colors.textTertiary,
+            )
+            Text(
+                text = formatShortDate(activePoint.dateIso),
+                style = if (scrubbedIndex != null) NutraTheme.typography.labelSmall else NutraTheme.typography.caption,
+                color = if (scrubbedIndex != null) colors.textPrimary else colors.textTertiary,
+            )
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            LegendItem(
+                color = colors.accent,
+                text = "EMA trend",
+                isLine = true,
+            )
+            LegendItem(
+                color = colors.textTertiary.copy(alpha = 0.65f),
+                text = "Günlük tartı",
+                isLine = false,
+            )
         }
     }
 }
 
 @Composable
-private fun LogWeightDialog(
-    initialWeightKg: Float,
-    onDismiss: () -> Unit,
-    onConfirm: (Float) -> Unit,
+private fun LegendItem(
+    color: Color,
+    text: String,
+    isLine: Boolean,
 ) {
-    var weight by remember(initialWeightKg) { mutableFloatStateOf(initialWeightKg) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = NutraTheme.colors.cardSurface,
-        title = {
-            Text(
-                text = "Günlük Tartı Kaydı",
-                style = NutraTheme.typography.cardTitle,
-                color = NutraTheme.colors.textPrimary,
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        if (isLine) {
+            Box(
+                modifier = Modifier
+                    .width(12.dp)
+                    .height(2.5.dp)
+                    .clip(NutraTheme.shapes.pill)
+                    .background(color),
             )
-        },
-        text = {
+        } else {
+            NutraDot(color = color, size = 6.dp)
+        }
+        Text(
+            text = text,
+            style = NutraTheme.typography.caption,
+            color = NutraTheme.colors.textTertiary,
+        )
+    }
+}
+
+@Composable
+private fun LogWeightDialog(
+    initialWeight: Float,
+    onDismiss: () -> Unit,
+    onSave: (Float) -> Unit,
+) {
+    val colors = NutraTheme.colors
+    var weight by remember(initialWeight) { mutableFloatStateOf(initialWeight) }
+
+    NutraDialog(
+        onDismissRequest = onDismiss,
+        title = "Tartı ekle",
+        message = "Bugünkü kilonu kaydederek trend eğrini güncel tut.",
+        confirmText = "Kaydet",
+        onConfirm = { onSave(weight) },
+        dismissText = "Vazgeç",
+        onDismiss = onDismiss,
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Text(
+                text = "${formatKg(weight)} kg",
+                style = NutraTheme.typography.numberLarge,
+                color = colors.textPrimary,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            // Quick offset pills
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                listOf(-1.0f, -0.5f, 0.5f, 1.0f).forEach { delta ->
+                    val prefix = if (delta > 0f) "+" else ""
+                    val label = "$prefix${formatKg(delta)}"
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(36.dp)
+                            .clip(NutraTheme.shapes.pill)
+                            .background(colors.surfaceMuted)
+                            .clickable(role = Role.Button) {
+                                weight = (((weight + delta) * 10f).roundToInt() / 10f).coerceIn(35f, 250f)
+                            }
+                            .padding(horizontal = 4.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = label,
+                            style = NutraTheme.typography.labelSmall,
+                            color = colors.textPrimary,
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
+
+            // 0.1 kg precision stepper
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(NutraTheme.shapes.md)
+                    .background(colors.surfaceMuted)
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                IconButton(onClick = { weight = ((weight - 0.1f) * 10f).roundToInt() / 10f }) {
-                    Icon(Icons.Rounded.Remove, contentDescription = "Azalt", tint = NutraTheme.colors.textPrimary)
-                }
-                Text(
-                    text = String.format(Locale.US, "%.1f kg", weight),
-                    style = NutraTheme.typography.statLargeNumber,
-                    color = NutraTheme.colors.calorieAccent,
+                NutraIconButton(
+                    icon = Icons.Rounded.Remove,
+                    contentDescription = "0.1 kg azalt",
+                    onClick = {
+                        weight = (((weight - 0.1f) * 10f).roundToInt() / 10f).coerceIn(35f, 250f)
+                    },
+                    size = 40.dp,
+                    iconSize = 18.dp,
+                    containerColor = colors.surfaceElevated,
                 )
-                IconButton(onClick = { weight = ((weight + 0.1f) * 10f).roundToInt() / 10f }) {
-                    Icon(Icons.Rounded.Add, contentDescription = "Artır", tint = NutraTheme.colors.textPrimary)
-                }
+                Text(
+                    text = "0,1 kg hassasiyet",
+                    style = NutraTheme.typography.caption,
+                    color = colors.textSecondary,
+                )
+                NutraIconButton(
+                    icon = Icons.Rounded.Add,
+                    contentDescription = "0.1 kg artır",
+                    onClick = {
+                        weight = (((weight + 0.1f) * 10f).roundToInt() / 10f).coerceIn(35f, 250f)
+                    },
+                    size = 40.dp,
+                    iconSize = 18.dp,
+                    containerColor = colors.surfaceElevated,
+                )
             }
-        },
-        confirmButton = {
-            Button(
-                onClick = { onConfirm(weight) },
-                colors = ButtonDefaults.buttonColors(containerColor = NutraTheme.colors.calorieAccent),
-            ) {
-                Text("Kaydet", color = Color.White)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("İptal", color = NutraTheme.colors.textSecondary)
-            }
-        },
-    )
+        }
+    }
 }
