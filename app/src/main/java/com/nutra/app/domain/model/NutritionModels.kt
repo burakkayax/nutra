@@ -1,0 +1,304 @@
+package com.nutra.app.domain.model
+
+import kotlinx.serialization.Serializable
+import kotlin.math.roundToInt
+
+enum class ThemePreference(val title: String) {
+    SYSTEM("Sistem"),
+    LIGHT("Açık (Alabaster)"),
+    DARK("Koyu (Obsidyen)"),
+}
+
+enum class GoalType(
+    val title: String,
+    val subtitle: String,
+    val calorieDelta: Int,
+    val proteinRatio: Float,
+    val carbsRatio: Float,
+    val fatRatio: Float,
+) {
+    LOSE_WEIGHT(
+        title = "Kilo Verme",
+        subtitle = "Kas kütlesini koruyarak sağlıklı yağ yakımı (-400 kcal)",
+        calorieDelta = -400,
+        proteinRatio = 0.32f,
+        carbsRatio = 0.40f,
+        fatRatio = 0.28f,
+    ),
+    MAINTAIN(
+        title = "Kilosunu Koruma",
+        subtitle = "Mevcut formu, enerjiyi ve metabolik dengeyi koruma",
+        calorieDelta = 0,
+        proteinRatio = 0.28f,
+        carbsRatio = 0.44f,
+        fatRatio = 0.28f,
+    ),
+    GAIN_MUSCLE(
+        title = "Kas & Hacim Kazanımı",
+        subtitle = "Temiz kas gelişimi ve güç artışı (+300 kcal)",
+        calorieDelta = 300,
+        proteinRatio = 0.30f,
+        carbsRatio = 0.45f,
+        fatRatio = 0.25f,
+    ),
+}
+
+enum class BiologicalSex(val title: String) {
+    FEMALE("Kadın"),
+    MALE("Erkek"),
+}
+
+enum class ActivityLevel(
+    val title: String,
+    val subtitle: String,
+    val multiplier: Float,
+) {
+    SEDENTARY("Az Hareketli", "Masa başı iş, günlük hafif yürüyüş", 1.2f),
+    LIGHT("Hafif Aktif", "Haftada 1–3 gün egzersiz veya yürüyüş", 1.375f),
+    MODERATE("Orta Aktif", "Haftada 3–5 gün düzenli antrenman", 1.55f),
+    ACTIVE("Çok Aktif", "Haftada 6–7 gün yoğun spor veya fiziksel iş", 1.725f),
+}
+
+enum class MealType(
+    val title: String,
+    val sortOrder: Int,
+) {
+    BREAKFAST("Kahvaltı", 0),
+    LUNCH("Öğle Yemeği", 1),
+    DINNER("Akşam Yemeği", 2),
+    SNACK("Ara Öğün", 3),
+}
+
+enum class FoodCategory(val title: String) {
+    ALL("Tümü"),
+    BREAKFAST("Kahvaltılık"),
+    SOUP("Çorbalar"),
+    HOME_COOKED("Ev Yemekleri"),
+    MEAT_POULTRY("Et & Tavuk"),
+    SALAD_MEZE("Salata & Meze"),
+    FRUIT_NUTS("Meyve & Kuruyemiş"),
+    DRINKS("İçecekler"),
+    CUSTOM("Özel"),
+}
+
+@Serializable
+data class ServingUnit(
+    val label: String,
+    val grams: Float,
+)
+
+@Serializable
+data class FoodItem(
+    val id: Long = 0L,
+    val name: String,
+    val subtitle: String,
+    val category: FoodCategory,
+    val caloriesPer100g: Int,
+    val proteinPer100g: Float,
+    val carbsPer100g: Float,
+    val fatPer100g: Float,
+    val defaultUnitLabel: String,
+    val defaultUnitGrams: Float,
+    val alternateUnits: List<ServingUnit> = emptyList(),
+    val preferredMealTypes: Set<MealType> = emptySet(),
+    val barcode: String? = null,
+    val isFavorite: Boolean = false,
+    val isCustom: Boolean = false,
+) {
+    val allUnits: List<ServingUnit>
+        get() {
+            val base = ServingUnit(defaultUnitLabel, defaultUnitGrams)
+            val gram100 = ServingUnit("100 Gram", 100f)
+            val gram1 = ServingUnit("1 Gram", 1f)
+            return buildList {
+                add(base)
+                alternateUnits.forEach { unit ->
+                    if (none { it.label.equals(unit.label, ignoreCase = true) }) {
+                        add(unit)
+                    }
+                }
+                if (none { it.grams == 100f }) add(gram100)
+                if (none { it.grams == 1f }) add(gram1)
+            }
+        }
+
+    fun caloriesForGrams(grams: Float): Int =
+        ((caloriesPer100g * grams) / 100f).roundToInt().coerceAtLeast(0)
+
+    fun proteinForGrams(grams: Float): Float =
+        ((proteinPer100g * grams) / 100f * 10f).roundToInt() / 10f
+
+    fun carbsForGrams(grams: Float): Float =
+        ((carbsPer100g * grams) / 100f * 10f).roundToInt() / 10f
+
+    fun fatForGrams(grams: Float): Float =
+        ((fatPer100g * grams) / 100f * 10f).roundToInt() / 10f
+}
+
+@Serializable
+data class MealLogItem(
+    val id: Long = 0L,
+    val dateIso: String,
+    val mealType: MealType,
+    val foodId: Long?,
+    val foodName: String,
+    val unitLabel: String,
+    val multiplier: Float,
+    val totalGrams: Float,
+    val calories: Int,
+    val proteinGrams: Float,
+    val carbsGrams: Float,
+    val fatGrams: Float,
+    val timestampMillis: Long,
+) {
+    val formattedQuantity: String
+        get() {
+            val multStr = if (multiplier % 1f == 0f) {
+                multiplier.toInt().toString()
+            } else {
+                String.format(java.util.Locale.US, "%.1f", multiplier)
+            }
+            return if (unitLabel == "1 Gram") {
+                "${totalGrams.roundToInt()} g"
+            } else {
+                "${multStr}x $unitLabel (${totalGrams.roundToInt()} g)"
+            }
+        }
+}
+
+@Serializable
+data class MacroGoals(
+    val calories: Int = 2100,
+    val proteinGrams: Int = 140,
+    val carbsGrams: Int = 220,
+    val fatGrams: Int = 70,
+    val waterMl: Int = 2500,
+)
+
+@Serializable
+data class UserProfile(
+    val sex: BiologicalSex = BiologicalSex.MALE,
+    val age: Int = 28,
+    val heightCm: Int = 176,
+    val currentWeightKg: Float = 75f,
+    val targetWeightKg: Float = 70f,
+    val activityLevel: ActivityLevel = ActivityLevel.MODERATE,
+    val goalType: GoalType = GoalType.LOSE_WEIGHT,
+    val goals: MacroGoals = MacroGoals(),
+    val onboardingCompleted: Boolean = false,
+    val themePreference: ThemePreference = ThemePreference.SYSTEM,
+    val useDynamicColor: Boolean = false,
+    val geminiApiKey: String = "",
+    val geminiModel: String = "gemini-2.5-flash",
+)
+
+data class MealSummary(
+    val mealType: MealType,
+    val items: List<MealLogItem>,
+) {
+    val totalCalories: Int get() = items.sumOf { it.calories }
+    val totalProtein: Float get() = items.sumOf { it.proteinGrams.toDouble() }.toFloat()
+    val totalCarbs: Float get() = items.sumOf { it.carbsGrams.toDouble() }.toFloat()
+    val totalFat: Float get() = items.sumOf { it.fatGrams.toDouble() }.toFloat()
+}
+
+data class DailyNutritionSummary(
+    val dateIso: String,
+    val goals: MacroGoals,
+    val meals: List<MealSummary>,
+    val waterMl: Int,
+) {
+    val consumedCalories: Int get() = meals.sumOf { it.totalCalories }
+    val consumedProtein: Float get() = meals.sumOf { it.totalProtein.toDouble() }.toFloat()
+    val consumedCarbs: Float get() = meals.sumOf { it.totalCarbs.toDouble() }.toFloat()
+    val consumedFat: Float get() = meals.sumOf { it.totalFat.toDouble() }.toFloat()
+}
+
+enum class DayGoalStatus {
+    EMPTY,
+    PARTIAL,
+    ON_TARGET,
+    OVER_BUDGET,
+}
+
+data class DayStatusIndicator(
+    val dateIso: String,
+    val consumedCalories: Int,
+    val targetCalories: Int,
+    val status: DayGoalStatus,
+)
+
+@Serializable
+data class ComboFoodEntry(
+    val foodId: Long?,
+    val foodName: String,
+    val unitLabel: String,
+    val multiplier: Float,
+    val totalGrams: Float,
+    val calories: Int,
+    val proteinGrams: Float,
+    val carbsGrams: Float,
+    val fatGrams: Float,
+)
+
+data class SmartComboSuggestion(
+    val id: String,
+    val title: String,
+    val subtitle: String,
+    val items: List<ComboFoodEntry>,
+    val coOccurrenceCount: Int,
+) {
+    val totalCalories: Int get() = items.sumOf { it.calories }
+    val totalProtein: Float get() = items.sumOf { it.proteinGrams.toDouble() }.toFloat()
+    val totalCarbs: Float get() = items.sumOf { it.carbsGrams.toDouble() }.toFloat()
+    val totalFat: Float get() = items.sumOf { it.fatGrams.toDouble() }.toFloat()
+}
+
+data class AiAnalyzedFoodItem(
+    val id: String,
+    val name: String,
+    val unitLabel: String,
+    val baseGrams: Float,
+    val multiplier: Float = 1f,
+    val baseCalories: Int,
+    val baseProtein: Float,
+    val baseCarbs: Float,
+    val baseFat: Float,
+    val confidence: Float = 0.92f,
+    val included: Boolean = true,
+) {
+    val effectiveGrams: Float get() = baseGrams * multiplier
+    val effectiveCalories: Int get() = (baseCalories * multiplier).roundToInt()
+    val effectiveProtein: Float get() = ((baseProtein * multiplier) * 10f).roundToInt() / 10f
+    val effectiveCarbs: Float get() = ((baseCarbs * multiplier) * 10f).roundToInt() / 10f
+    val effectiveFat: Float get() = ((baseFat * multiplier) * 10f).roundToInt() / 10f
+}
+
+@Serializable
+data class WeightEntry(
+    val id: Long = 0L,
+    val dateIso: String,
+    val weightKg: Float,
+    val timestampMillis: Long,
+)
+
+data class WeightTrendPoint(
+    val dateIso: String,
+    val rawWeightKg: Float,
+    val emaTrendKg: Float,
+)
+
+data class DailyAnalyticsPoint(
+    val dateIso: String,
+    val calories: Int,
+    val targetCalories: Int,
+    val proteinGrams: Float,
+    val carbsGrams: Float,
+    val fatGrams: Float,
+    val waterMl: Int,
+)
+
+sealed interface AppResult<out T> {
+    data class Success<T>(val data: T) : AppResult<T>
+    data class Error(val message: String, val cause: Throwable? = null) : AppResult<Nothing>
+}

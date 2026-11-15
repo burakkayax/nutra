@@ -1,0 +1,2 @@
+-keep class com.nutra.app.** { *; }
+-dontwarn com.google.errorprone.annotations.**
