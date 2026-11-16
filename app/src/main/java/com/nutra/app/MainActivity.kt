@@ -509,6 +509,7 @@ private fun NutraBottomBar(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
+                            .padding(vertical = 4.dp)
                             .clip(NutraTheme.shapes.pill)
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
@@ -529,7 +530,7 @@ private fun NutraBottomBar(
                             tint = tint,
                             modifier = Modifier.size(24.dp),
                         )
-                        Spacer(Modifier.height(3.dp))
+                        Spacer(Modifier.height(4.dp))
                         Text(
                             text = dest.title,
                             style = NutraTheme.typography.overline.copy(letterSpacing = NutraTheme.typography.caption.letterSpacing),

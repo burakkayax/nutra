@@ -56,6 +56,7 @@ data class NutraColors(
     val warningSoft: Color,
     val danger: Color,
     val dangerSoft: Color,
+    val favorite: Color,
 )
 
 val LightNutraColors = NutraColors(
@@ -92,6 +93,7 @@ val LightNutraColors = NutraColors(
     warningSoft = Color(0xFFFCEEE2),
     danger = Color(0xFFE5484D),
     dangerSoft = Color(0xFFFCE9EA),
+    favorite = Color(0xFFE5484D),
 )
 
 val DarkNutraColors = NutraColors(
@@ -128,6 +130,7 @@ val DarkNutraColors = NutraColors(
     warningSoft = Color(0xFF3A2414),
     danger = Color(0xFFFF6369),
     dangerSoft = Color(0xFF3B1819),
+    favorite = Color(0xFFFF6369),
 )
 
 val LocalNutraColors = staticCompositionLocalOf { LightNutraColors }

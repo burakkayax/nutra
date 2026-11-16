@@ -190,7 +190,7 @@ fun ProfileScreen(
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         BodyStatColumn(
                             label = "Mevcut",
@@ -210,7 +210,7 @@ fun ProfileScreen(
                         BodyStatColumn(
                             label = "Yaş",
                             value = "${profile.age}",
-                            modifier = Modifier.weight(0.75f),
+                            modifier = Modifier.weight(1f),
                         )
                     }
                 }

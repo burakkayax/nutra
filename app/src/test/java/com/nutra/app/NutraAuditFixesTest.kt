@@ -31,6 +31,11 @@ class NutraAuditFixesTest {
         assertEquals("0,0", NutraFormatters.formatKg(Float.NaN))
         assertEquals("72,5", NutraFormatters.formatKg(72.5f))
 
+        assertEquals("0", NutraFormatters.formatMacroGrams(-0.04f))
+        assertEquals("0", NutraFormatters.formatMacroGrams(Float.NaN))
+        assertEquals("12", NutraFormatters.formatMacroGrams(12.0f))
+        assertEquals("12,4", NutraFormatters.formatMacroGrams(12.4f))
+
         assertEquals("1", NutraFormatters.formatMultiplier(1.0f))
         assertEquals("1.5", NutraFormatters.formatMultiplier(1.5f))
         assertEquals("1.25", NutraFormatters.formatMultiplier(1.25f))

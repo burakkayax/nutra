@@ -7,8 +7,11 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -104,6 +107,26 @@ enum class NutraButtonSize(val height: Dp, val horizontalPadding: Dp, val iconSi
 
 /** Animation spec used for all progress indicators. */
 private val ProgressSpring = spring<Float>(dampingRatio = 0.9f, stiffness = 260f)
+
+private fun Modifier.nutraRoundedStroke(
+    color: Color,
+    cornerRadius: Dp,
+    strokeWidth: Dp = 1.5.dp,
+): Modifier = drawWithContent {
+    drawContent()
+    if (color.alpha > 0f) {
+        val strokePx = strokeWidth.toPx()
+        val half = strokePx / 2f
+        val radius = cornerRadius.toPx()
+        drawRoundRect(
+            color = color,
+            topLeft = Offset(half, half),
+            size = Size(size.width - strokePx, size.height - strokePx),
+            cornerRadius = CornerRadius(radius, radius),
+            style = Stroke(width = strokePx),
+        )
+    }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Containers
@@ -266,11 +289,12 @@ fun NutraSectionHeader(
 fun NutraDivider(
     modifier: Modifier = Modifier,
     startIndent: Dp = 0.dp,
+    endIndent: Dp = 0.dp,
     color: Color = NutraTheme.colors.divider,
 ) {
     Box(
         modifier = modifier
-            .padding(start = startIndent)
+            .padding(start = startIndent, end = endIndent)
             .fillMaxWidth()
             .height(1.dp)
             .background(color),
@@ -296,12 +320,17 @@ fun NutraButton(
     val colors = NutraTheme.colors
     val haptic = LocalHapticFeedback.current
     val (container, content) = when (style) {
-        NutraButtonStyle.Primary -> colors.ink to colors.onInk
+        NutraButtonStyle.Primary -> if (colors.isDark) {
+            colors.accent to colors.onAccent
+        } else {
+            colors.ink to colors.onInk
+        }
         NutraButtonStyle.Secondary -> colors.surfaceMuted to colors.textPrimary
         NutraButtonStyle.Accent -> colors.accent to colors.onAccent
         NutraButtonStyle.Ghost -> Color.Transparent to colors.textPrimary
         NutraButtonStyle.Destructive -> colors.dangerSoft to colors.danger
     }
+    val horizontalPad = if (style == NutraButtonStyle.Ghost) 8.dp else size.horizontalPadding
     val isActive = enabled && !loading
     Surface(
         onClick = {
@@ -319,7 +348,7 @@ fun NutraButton(
         Row(
             modifier = Modifier
                 .defaultMinSize(minHeight = size.height)
-                .padding(horizontal = size.horizontalPadding),
+                .padding(horizontal = horizontalPad),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -390,9 +419,13 @@ fun NutraLinearProgress(
     color: Color = NutraTheme.colors.accent,
     trackColor: Color = NutraTheme.colors.surfaceMuted,
     height: Dp = 6.dp,
+    overflowProgress: Float = 0f,
+    overflowColor: Color = NutraTheme.colors.warning,
 ) {
     val safeProgress = if (progress.isFinite()) progress.coerceIn(0f, 1f) else 0f
+    val safeOverflow = if (overflowProgress.isFinite()) overflowProgress.coerceIn(0f, 1f) else 0f
     val animatedState = animateFloatAsState(safeProgress, ProgressSpring, label = "bar")
+    val animatedOverflowState = animateFloatAsState(safeOverflow, ProgressSpring, label = "barOverflow")
     Spacer(
         modifier = modifier
             .fillMaxWidth()
@@ -407,6 +440,17 @@ fun NutraLinearProgress(
                     drawRoundRect(
                         color = color,
                         size = Size(fillWidth, size.height),
+                        cornerRadius = corner,
+                    )
+                }
+                val overflowFraction = animatedOverflowState.value
+                if (overflowFraction > 0.005f && size.width > 0f) {
+                    val overflowWidth = (size.width * (0.14f + overflowFraction * 0.22f))
+                        .coerceIn(size.height.coerceAtMost(size.width), size.width * 0.36f)
+                    drawRoundRect(
+                        color = overflowColor,
+                        topLeft = Offset(size.width - overflowWidth, 0f),
+                        size = Size(overflowWidth, size.height),
                         cornerRadius = corner,
                     )
                 }
@@ -425,6 +469,14 @@ fun NutraMacroStat(
     unit: String = "g",
 ) {
     val safeTarget = target.coerceAtLeast(1)
+    val ratio = consumed / safeTarget.toFloat()
+    val isOver = consumed.roundToInt() > safeTarget
+    val valueColor by animateColorAsState(
+        targetValue = if (isOver) NutraTheme.colors.warning else NutraTheme.colors.textPrimary,
+        animationSpec = tween(180),
+        label = "macroValueColor",
+    )
+
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(
             text = label,
@@ -432,23 +484,30 @@ fun NutraMacroStat(
             color = NutraTheme.colors.textSecondary,
             maxLines = 1,
         )
-        Row(verticalAlignment = Alignment.Bottom) {
+        Row {
             Text(
                 text = "${consumed.roundToInt()}",
                 style = NutraTheme.typography.numberSmall,
-                color = NutraTheme.colors.textPrimary,
+                color = valueColor,
                 maxLines = 1,
+                modifier = Modifier.alignByBaseline(),
             )
             Text(
-                text = " / $safeTarget$unit",
+                text = " / $safeTarget $unit",
                 style = NutraTheme.typography.caption,
                 color = NutraTheme.colors.textTertiary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(bottom = 1.dp),
+                modifier = Modifier.alignByBaseline(),
             )
         }
-        NutraLinearProgress(progress = consumed / safeTarget, color = color, height = 4.dp)
+        NutraLinearProgress(
+            progress = ratio,
+            color = color,
+            height = 4.dp,
+            overflowProgress = if (isOver) (ratio - 1f).coerceAtLeast(0.05f) else 0f,
+            overflowColor = NutraTheme.colors.warning,
+        )
     }
 }
 
@@ -585,6 +644,48 @@ fun <T> NutraSegmentedControl(
     }
 }
 
+/** Animated circular selection indicator used in selectable cards, radios and checkboxes. */
+@Composable
+fun NutraSelectionIndicator(
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    size: Dp = 22.dp,
+    iconSize: Dp = 14.dp,
+) {
+    val colors = NutraTheme.colors
+    val bg by animateColorAsState(
+        targetValue = if (selected) colors.ink else Color.Transparent,
+        animationSpec = tween(160),
+        label = "selCircleBg",
+    )
+    val border by animateColorAsState(
+        targetValue = if (selected) colors.ink else colors.divider,
+        animationSpec = tween(160),
+        label = "selCircleBorder",
+    )
+    Box(
+        modifier = modifier
+            .size(size)
+            .clip(CircleShape)
+            .background(bg)
+            .border(1.5.dp, border, CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        AnimatedVisibility(
+            visible = selected,
+            enter = scaleIn(tween(150), initialScale = 0.6f) + fadeIn(tween(140)),
+            exit = scaleOut(tween(120), targetScale = 0.6f) + fadeOut(tween(100)),
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Check,
+                contentDescription = null,
+                tint = colors.onInk,
+                modifier = Modifier.size(iconSize),
+            )
+        }
+    }
+}
+
 /**
  * Large selectable option card (e.g. goal or activity level).
  * Selected state uses an ink outline + check mark; no color flooding.
@@ -609,24 +710,9 @@ fun NutraSelectableCard(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clip(NutraTheme.shapes.md)
+            .clip(NutraTheme.shapes.lg)
             .background(NutraTheme.colors.surface)
-            .drawWithContent {
-                drawContent()
-                val borderColor = borderColorState.value
-                if (borderColor.alpha > 0f) {
-                    val strokePx = 1.5.dp.toPx()
-                    val half = strokePx / 2f
-                    val radius = 16.dp.toPx()
-                    drawRoundRect(
-                        color = borderColor,
-                        topLeft = Offset(half, half),
-                        size = Size(size.width - strokePx, size.height - strokePx),
-                        cornerRadius = CornerRadius(radius, radius),
-                        style = Stroke(width = strokePx),
-                    )
-                }
-            }
+            .nutraRoundedStroke(borderColorState.value, cornerRadius = 24.dp, strokeWidth = 1.5.dp)
             .clickable(role = Role.RadioButton) {
                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 onClick()
@@ -636,7 +722,12 @@ fun NutraSelectableCard(
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         if (icon != null) {
-            NutraIconBadge(icon = icon, tint = iconTint, container = iconContainer)
+            NutraIconBadge(
+                icon = icon,
+                tint = iconTint,
+                container = iconContainer,
+                shape = NutraTheme.shapes.xs,
+            )
         }
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(title, style = NutraTheme.typography.titleSmall, color = NutraTheme.colors.textPrimary)
@@ -644,18 +735,7 @@ fun NutraSelectableCard(
                 Text(subtitle, style = NutraTheme.typography.bodySmall, color = NutraTheme.colors.textSecondary)
             }
         }
-        Box(
-            modifier = Modifier
-                .size(22.dp)
-                .clip(CircleShape)
-                .background(if (selected) NutraTheme.colors.ink else Color.Transparent)
-                .border(1.5.dp, if (selected) NutraTheme.colors.ink else NutraTheme.colors.divider, CircleShape),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (selected) {
-                Icon(Icons.Rounded.Check, contentDescription = null, tint = NutraTheme.colors.onInk, modifier = Modifier.size(14.dp))
-            }
-        }
+        NutraSelectionIndicator(selected = selected)
     }
 }
 
@@ -745,21 +825,23 @@ fun NutraMetricStepperRow(
         Box(
             modifier = Modifier
                 .padding(horizontal = 4.dp)
-                .widthIn(min = 72.dp)
+                .widthIn(min = 68.dp)
                 .heightIn(min = 40.dp)
                 .clip(NutraTheme.shapes.pill)
                 .background(valueContainerColor)
                 .then(
                     if (onValueClick != null) {
-                        Modifier.clickable(role = Role.Button) {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onValueClick()
-                        }
+                        Modifier
+                            .border(1.dp, NutraTheme.colors.divider, NutraTheme.shapes.pill)
+                            .clickable(role = Role.Button) {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onValueClick()
+                            }
                     } else {
                         Modifier
                     }
                 )
-                .padding(horizontal = 12.dp, vertical = 6.dp),
+                .padding(horizontal = 10.dp, vertical = 6.dp),
             contentAlignment = Alignment.Center,
         ) {
             Text(
@@ -790,6 +872,7 @@ fun NutraTextField(
     trailing: (@Composable () -> Unit)? = null,
     suffix: String? = null,
     singleLine: Boolean = true,
+    compact: Boolean = false,
     minLines: Int = 1,
     maxLines: Int = if (singleLine) 1 else 6,
     enabled: Boolean = true,
@@ -800,6 +883,12 @@ fun NutraTextField(
     visualTransformation: VisualTransformation = VisualTransformation.None,
 ) {
     val colors = NutraTheme.colors
+    val startPad = if (compact) 12.dp else 16.dp
+    val endPad = when {
+        trailing != null && singleLine -> 6.dp
+        compact -> 12.dp
+        else -> 16.dp
+    }
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         if (label != null) {
             Text(label, style = NutraTheme.typography.labelSmall, color = colors.textSecondary, modifier = Modifier.padding(start = 4.dp))
@@ -824,15 +913,19 @@ fun NutraTextField(
                         .heightIn(min = 52.dp)
                         .clip(NutraTheme.shapes.md)
                         .background(colors.surfaceMuted)
-                        .then(if (isError) Modifier.border(1.5.dp, colors.danger, NutraTheme.shapes.md) else Modifier)
+                        .nutraRoundedStroke(
+                            color = if (isError) colors.danger else Color.Transparent,
+                            cornerRadius = 16.dp,
+                            strokeWidth = 1.5.dp,
+                        )
                         .padding(
-                            start = 16.dp,
-                            end = if (trailing != null && singleLine) 6.dp else 16.dp,
+                            start = startPad,
+                            end = endPad,
                             top = if (singleLine) 6.dp else 14.dp,
                             bottom = if (singleLine) 6.dp else 14.dp,
                         ),
                     verticalAlignment = if (singleLine) Alignment.CenterVertically else Alignment.Top,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 10.dp),
                 ) {
                     if (leadingIcon != null) {
                         Icon(leadingIcon, contentDescription = null, tint = colors.textTertiary, modifier = Modifier.size(20.dp))
@@ -964,37 +1057,46 @@ fun NutraSnackbar(
     onAction: (() -> Unit)? = null,
     icon: ImageVector? = null,
 ) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(NutraTheme.shapes.md)
-            .background(NutraTheme.colors.ink)
-            .padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp)
-            .heightIn(min = 40.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    val colors = NutraTheme.colors
+    val container = if (colors.isDark) colors.surfaceMuted else colors.ink
+    val contentColor = if (colors.isDark) colors.textPrimary else colors.onInk
+
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = NutraTheme.shapes.lg,
+        color = container,
+        border = if (colors.isDark) BorderStroke(1.dp, colors.segmentThumb) else null,
     ) {
-        if (icon != null) {
-            Icon(icon, contentDescription = null, tint = NutraTheme.colors.accent, modifier = Modifier.size(18.dp))
-        }
-        Text(
-            text = message,
-            style = NutraTheme.typography.body,
-            color = NutraTheme.colors.onInk,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f).padding(vertical = 6.dp),
-        )
-        if (actionLabel != null && onAction != null) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp)
+                .heightIn(min = 40.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            if (icon != null) {
+                Icon(icon, contentDescription = null, tint = colors.accent, modifier = Modifier.size(18.dp))
+            }
             Text(
-                text = actionLabel,
-                style = NutraTheme.typography.label,
-                color = NutraTheme.colors.accent,
-                modifier = Modifier
-                    .clip(NutraTheme.shapes.pill)
-                    .clickable(role = Role.Button, onClick = onAction)
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                text = message,
+                style = NutraTheme.typography.body,
+                color = contentColor,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f).padding(vertical = 6.dp),
             )
+            if (actionLabel != null && onAction != null) {
+                Text(
+                    text = actionLabel,
+                    style = NutraTheme.typography.label,
+                    color = colors.accent,
+                    modifier = Modifier
+                        .clip(NutraTheme.shapes.pill)
+                        .clickable(role = Role.Button, onClick = onAction)
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                )
+            }
         }
     }
 }
@@ -1120,13 +1222,14 @@ fun NutraDialog(
 @Composable
 fun NutraBottomActionBar(
     modifier: Modifier = Modifier,
+    includeNavigationInsets: Boolean = true,
     content: @Composable RowScope.() -> Unit,
 ) {
     Row(
         modifier = modifier
             .fillMaxWidth()
             .background(NutraTheme.colors.surfaceElevated)
-            .navigationBarsPadding()
+            .then(if (includeNavigationInsets) Modifier.navigationBarsPadding() else Modifier)
             .padding(horizontal = 20.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1229,12 +1332,10 @@ fun NutraNumericInputDialog(
                             .heightIn(min = 60.dp)
                             .clip(NutraTheme.shapes.md)
                             .background(colors.surfaceMuted)
-                            .then(
-                                if (showError) {
-                                    Modifier.border(1.5.dp, colors.danger, NutraTheme.shapes.md)
-                                } else {
-                                    Modifier
-                                }
+                            .nutraRoundedStroke(
+                                color = if (showError) colors.danger else Color.Transparent,
+                                cornerRadius = 16.dp,
+                                strokeWidth = 1.5.dp,
                             )
                             .padding(horizontal = 16.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,

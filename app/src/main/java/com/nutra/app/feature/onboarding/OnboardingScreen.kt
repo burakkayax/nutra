@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -160,6 +161,7 @@ fun OnboardingScreen(
                     style = NutraButtonStyle.Ghost,
                     size = NutraButtonSize.Small,
                     enabled = !state.isCompleting,
+                    modifier = Modifier.offset(x = 8.dp),
                 )
             }
 
@@ -532,6 +534,7 @@ private fun DailyPlanReviewStep(
                         style = NutraButtonStyle.Ghost,
                         size = NutraButtonSize.Small,
                         leadingIcon = Icons.Rounded.Refresh,
+                        modifier = Modifier.offset(x = 8.dp),
                     )
                 }
             } else {
@@ -568,7 +571,7 @@ private fun DailyPlanReviewStep(
 
                 Column(
                     modifier = Modifier
-                        .clip(NutraTheme.shapes.lg)
+                        .clip(NutraTheme.shapes.md)
                         .background(colors.surfaceMuted)
                         .clickable(role = Role.Button) {
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)

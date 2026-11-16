@@ -1,12 +1,18 @@
 package com.nutra.app.feature.dashboard
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -398,7 +404,11 @@ private fun WeekDateStrip(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                if (!isToday) {
+                AnimatedVisibility(
+                    visible = !isToday,
+                    enter = fadeIn(tween(160)) + expandHorizontally(tween(180)),
+                    exit = fadeOut(tween(120)) + shrinkHorizontally(tween(160)),
+                ) {
                     Box(
                         modifier = Modifier
                             .heightIn(min = 40.dp)
@@ -439,89 +449,101 @@ private fun WeekDateStrip(
             }
         }
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            weekDays.forEach { day ->
-                val isSelected = day == selectedDate
-                val isDayToday = day == today
-                val status = statusMap[day.toString()]?.status ?: DayGoalStatus.EMPTY
+        AnimatedContent(
+            targetState = weekDays.firstOrNull() ?: selectedDate,
+            transitionSpec = {
+                val forward = targetState >= initialState
+                (slideInHorizontally(tween(200)) { if (forward) it / 6 else -it / 6 } +
+                    fadeIn(tween(160))) togetherWith
+                    (slideOutHorizontally(tween(160)) { if (forward) -it / 6 else it / 6 } +
+                        fadeOut(tween(120)))
+            },
+            label = "weekStripTransition",
+        ) { _ ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                weekDays.forEach { day ->
+                    val isSelected = day == selectedDate
+                    val isDayToday = day == today
+                    val status = statusMap[day.toString()]?.status ?: DayGoalStatus.EMPTY
 
-                val circleBgState = animateColorAsState(
-                    targetValue = when {
-                        isSelected -> NutraTheme.colors.ink
-                        isDayToday -> NutraTheme.colors.accentSoft
-                        else -> Color.Transparent
-                    },
-                    animationSpec = tween(160),
-                    label = "dayCircleBg",
-                )
-                val dayNumberColor by animateColorAsState(
-                    targetValue = when {
-                        isSelected -> NutraTheme.colors.onInk
-                        isDayToday -> NutraTheme.colors.accent
-                        else -> NutraTheme.colors.textPrimary
-                    },
-                    animationSpec = tween(160),
-                    label = "dayText",
-                )
-
-                val dayShort = remember(day) {
-                    day.dayOfWeek.getDisplayName(TextStyle.SHORT, NutraFormatters.TR_LOCALE)
-                        .trimEnd('.')
-                        .take(3)
-                        .replaceFirstChar { it.uppercaseChar() }
-                }
-
-                val dotColor = if (isDayToday) {
-                    Color.Transparent
-                } else {
-                    when (status) {
-                        DayGoalStatus.ON_TARGET -> NutraTheme.colors.accent
-                        DayGoalStatus.OVER_BUDGET -> NutraTheme.colors.warning
-                        DayGoalStatus.PARTIAL -> NutraTheme.colors.textTertiary
-                        DayGoalStatus.EMPTY -> Color.Transparent
-                    }
-                }
-
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(NutraTheme.shapes.md)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                            role = Role.Tab,
-                        ) {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onSelectDate(day)
-                        }
-                        .padding(vertical = 4.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Text(
-                        text = dayShort,
-                        style = NutraTheme.typography.caption,
-                        color = if (isSelected) NutraTheme.colors.textPrimary else NutraTheme.colors.textTertiary,
-                        maxLines = 1,
+                    val circleBgState = animateColorAsState(
+                        targetValue = when {
+                            isSelected -> NutraTheme.colors.ink
+                            isDayToday -> NutraTheme.colors.accentSoft
+                            else -> Color.Transparent
+                        },
+                        animationSpec = tween(160),
+                        label = "dayCircleBg",
                     )
-                    Box(
+                    val dayNumberColor by animateColorAsState(
+                        targetValue = when {
+                            isSelected -> NutraTheme.colors.onInk
+                            isDayToday -> NutraTheme.colors.accent
+                            else -> NutraTheme.colors.textPrimary
+                        },
+                        animationSpec = tween(160),
+                        label = "dayText",
+                    )
+
+                    val dayShort = remember(day) {
+                        day.dayOfWeek.getDisplayName(TextStyle.SHORT, NutraFormatters.TR_LOCALE)
+                            .trimEnd('.')
+                            .take(3)
+                            .replaceFirstChar { it.uppercaseChar() }
+                    }
+
+                    val dotColor = if (isDayToday) {
+                        Color.Transparent
+                    } else {
+                        when (status) {
+                            DayGoalStatus.ON_TARGET -> NutraTheme.colors.accent
+                            DayGoalStatus.OVER_BUDGET -> NutraTheme.colors.warning
+                            DayGoalStatus.PARTIAL -> NutraTheme.colors.textTertiary
+                            DayGoalStatus.EMPTY -> Color.Transparent
+                        }
+                    }
+
+                    Column(
                         modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .drawBehind { drawRect(circleBgState.value) },
-                        contentAlignment = Alignment.Center,
+                            .weight(1f)
+                            .clip(NutraTheme.shapes.md)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                role = Role.Tab,
+                            ) {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onSelectDate(day)
+                            }
+                            .padding(vertical = 4.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         Text(
-                            text = "${day.dayOfMonth}",
-                            style = NutraTheme.typography.titleSmall,
-                            color = dayNumberColor,
+                            text = dayShort,
+                            style = NutraTheme.typography.caption,
+                            color = if (isSelected) NutraTheme.colors.textPrimary else NutraTheme.colors.textTertiary,
                             maxLines = 1,
                         )
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .drawBehind { drawRect(circleBgState.value) },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = "${day.dayOfMonth}",
+                                style = NutraTheme.typography.titleSmall,
+                                color = dayNumberColor,
+                                maxLines = 1,
+                            )
+                        }
+                        NutraDot(color = dotColor, size = 5.dp)
                     }
-                    NutraDot(color = dotColor, size = 5.dp)
                 }
             }
         }
@@ -570,19 +592,19 @@ private fun HeroNutritionCard(
                 )
 
                 Row(
-                    verticalAlignment = Alignment.Bottom,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Text(
                         text = formatInt(consumedCalories),
-                        style = NutraTheme.typography.numberLarge,
+                        style = NutraTheme.typography.numberHero,
                         color = NutraTheme.colors.textPrimary,
+                        modifier = Modifier.alignByBaseline(),
                     )
                     Text(
                         text = "/ ${formatInt(safeTarget)} kcal",
                         style = NutraTheme.typography.body,
                         color = NutraTheme.colors.textSecondary,
-                        modifier = Modifier.padding(bottom = 3.dp),
+                        modifier = Modifier.alignByBaseline(),
                     )
                 }
             }
@@ -706,17 +728,18 @@ private fun WaterTrackerCard(
                 )
             }
 
-            Row(verticalAlignment = Alignment.Bottom) {
+            Row {
                 Text(
                     text = formatInt(currentWaterMl),
                     style = NutraTheme.typography.numberMedium,
                     color = NutraTheme.colors.textPrimary,
+                    modifier = Modifier.alignByBaseline(),
                 )
                 Text(
                     text = " / ${formatInt(safeTarget)} ml",
                     style = NutraTheme.typography.caption,
                     color = NutraTheme.colors.textTertiary,
-                    modifier = Modifier.padding(bottom = 2.dp),
+                    modifier = Modifier.alignByBaseline(),
                 )
             }
         }
@@ -785,7 +808,7 @@ private fun WaterQuickPill(
         )
         Text(
             text = containerLabel,
-            style = NutraTheme.typography.overline.copy(letterSpacing = NutraTheme.typography.caption.letterSpacing),
+            style = NutraTheme.typography.caption,
             color = NutraTheme.colors.textTertiary,
             maxLines = 1,
         )
@@ -940,6 +963,7 @@ private fun MealCard(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .clip(NutraTheme.shapes.sm)
                                     .background(NutraTheme.colors.surface)
                                     .clickable(role = Role.Button) { onEditLogItem(item) }
                                     .padding(vertical = 12.dp),
@@ -1077,9 +1101,9 @@ private fun EditLoggedFoodPortionDialog(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(NutraTheme.shapes.md)
+                    .clip(NutraTheme.shapes.pill)
                     .background(NutraTheme.colors.surfaceMuted)
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {

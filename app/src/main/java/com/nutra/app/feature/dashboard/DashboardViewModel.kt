@@ -95,6 +95,16 @@ data class LoggingSheetUiState(
     val barcodeInput: String = "",
     val barcodeLoading: Boolean = false,
     val barcodeErrorMessage: String? = null,
+) {
+    val shouldShowSmartCombos: Boolean
+        get() = !isSearchActive && selectedCategory == FoodCategory.ALL && smartCombos.isNotEmpty()
+}
+
+private data class CatalogAndCombosState(
+    val isSearchActive: Boolean = false,
+    val isCatalogLoading: Boolean = true,
+    val rankedFoods: List<FoodItem> = emptyList(),
+    val smartCombos: List<SmartComboSuggestion> = emptyList(),
 )
 
 private data class DashboardBannerState(
@@ -243,71 +253,75 @@ class DashboardViewModel @Inject constructor(
         .map { it.selectedCategory }
         .distinctUntilChanged()
 
-    private val rankedFoodsWithQueryFlow = isModalOpenFlow.flatMapLatest { isOpen ->
-        if (!isOpen) {
-            flowOf(Triple(false, true, emptyList<FoodItem>()))
-        } else {
-            combine(
-                cachedFoodsFlow,
-                cachedRecentLogsFlow,
-                activeLoggingMealTypeFlow.map { it ?: MealType.BREAKFAST }.distinctUntilChanged(),
-                debouncedSearchQueryFlow,
-                selectedCategoryFlow,
-            ) { foods, logs, mealType, query, category ->
-                val isSearchActive = query.isNotBlank()
-                if (foods == null) {
-                    Triple(isSearchActive, true, emptyList())
-                } else if (foods.isEmpty()) {
-                    Triple(isSearchActive, false, emptyList())
-                } else {
-                    val ranked = rankerAndComboEngine.rankFoodsForMeal(
-                        allFoods = foods,
-                        historicalLogs = logs,
-                        mealType = mealType,
-                        query = query,
-                        selectedCategory = category,
-                    )
-                    Triple(isSearchActive, false, ranked)
-                }
-            }.flowOn(Dispatchers.Default)
-        }
-    }
+    private val activeModalMealFlow = activeLoggingMealTypeFlow
+        .map { it ?: MealType.BREAKFAST }
+        .distinctUntilChanged()
 
-    private val currentMealItemsFlow = combine(
+    private val catalogAndCombosFlow = combine(
         isModalOpenFlow,
-        activeLoggingMealTypeFlow,
-        uiState.map { it.dailySummary.meals }.distinctUntilChanged(),
-    ) { isOpen, mealType, meals ->
-        if (!isOpen || mealType == null) {
-            emptyList()
-        } else {
-            meals.firstOrNull { it.mealType == mealType }?.items.orEmpty()
-        }
-    }.distinctUntilChanged()
+        activeModalMealFlow,
+    ) { isOpen, mealType -> isOpen to mealType }
+        .distinctUntilChanged()
+        .flatMapLatest { (isOpen, mealType) ->
+            if (!isOpen) {
+                flowOf(CatalogAndCombosState())
+            } else {
+                val rankedFlow = combine(
+                    cachedFoodsFlow,
+                    cachedRecentLogsFlow,
+                    debouncedSearchQueryFlow,
+                    selectedCategoryFlow,
+                ) { foods, logs, query, category ->
+                    val isSearchActive = query.isNotBlank()
+                    when {
+                        foods == null -> Triple(isSearchActive, true, emptyList())
+                        foods.isEmpty() -> Triple(isSearchActive, false, emptyList())
+                        else -> {
+                            val ranked = rankerAndComboEngine.rankFoodsForMeal(
+                                allFoods = foods,
+                                historicalLogs = logs,
+                                mealType = mealType,
+                                query = query,
+                                selectedCategory = category,
+                            )
+                            Triple(isSearchActive, false, ranked)
+                        }
+                    }
+                }.flowOn(Dispatchers.Default)
 
-    private val smartCombosFlow = isModalOpenFlow.flatMapLatest { isOpen ->
-        if (!isOpen) {
-            flowOf(emptyList())
-        } else {
-            combine(
-                activeLoggingMealTypeFlow.map { it ?: MealType.BREAKFAST }.distinctUntilChanged(),
-                currentMealItemsFlow,
-                cachedRecentLogsFlow,
-                cachedFoodsFlow,
-            ) { mealType, currentMealItems, logs, foods ->
-                if (foods.isNullOrEmpty()) {
-                    emptyList()
-                } else {
-                    rankerAndComboEngine.buildSmartComboSuggestions(
-                        mealType = mealType,
-                        currentDateMealItems = currentMealItems,
-                        historicalLogs = logs,
-                        catalogFoods = foods,
+                val currentMealItemsForMealFlow = uiState
+                    .map { summary ->
+                        summary.dailySummary.meals.firstOrNull { it.mealType == mealType }?.items.orEmpty()
+                    }
+                    .distinctUntilChanged()
+
+                val combosFlow = combine(
+                    currentMealItemsForMealFlow,
+                    cachedRecentLogsFlow,
+                    cachedFoodsFlow,
+                ) { currentMealItems, logs, foods ->
+                    if (foods.isNullOrEmpty()) {
+                        emptyList()
+                    } else {
+                        rankerAndComboEngine.buildSmartComboSuggestions(
+                            mealType = mealType,
+                            currentDateMealItems = currentMealItems,
+                            historicalLogs = logs,
+                            catalogFoods = foods,
+                        )
+                    }
+                }.flowOn(Dispatchers.Default)
+
+                combine(rankedFlow, combosFlow) { (isSearchActive, isCatalogLoading, rankedFoods), smartCombos ->
+                    CatalogAndCombosState(
+                        isSearchActive = isSearchActive,
+                        isCatalogLoading = isCatalogLoading,
+                        rankedFoods = rankedFoods,
+                        smartCombos = if (isCatalogLoading) emptyList() else smartCombos,
                     )
                 }
-            }.flowOn(Dispatchers.Default)
+            }
         }
-    }
 
     private val isGeminiKeyConfiguredFlow = preferencesDataStore.userProfileFlow
         .map { it.geminiApiKey.isNotBlank() }
@@ -315,18 +329,17 @@ class DashboardViewModel @Inject constructor(
 
     val loggingUiState: StateFlow<LoggingSheetUiState> = combine(
         modalStateFlow,
-        rankedFoodsWithQueryFlow,
-        smartCombosFlow,
+        catalogAndCombosFlow,
         isGeminiKeyConfiguredFlow,
-    ) { modal, (isSearchActive, isCatalogLoading, rankedFoods), smartCombos, isGeminiConfigured ->
+    ) { modal, catalogAndCombos, isGeminiConfigured ->
         LoggingSheetUiState(
             activeLoggingMealType = modal.activeLoggingMealType ?: MealType.BREAKFAST,
             loggingTabMode = modal.loggingTabMode,
             selectedCategory = modal.selectedCategory,
-            isSearchActive = isSearchActive,
-            isCatalogLoading = isCatalogLoading,
-            rankedFoods = rankedFoods,
-            smartCombos = smartCombos,
+            isSearchActive = catalogAndCombos.isSearchActive,
+            isCatalogLoading = catalogAndCombos.isCatalogLoading,
+            rankedFoods = catalogAndCombos.rankedFoods,
+            smartCombos = catalogAndCombos.smartCombos,
             selectedFoodForPortion = modal.selectedFoodForPortion,
             aiPromptText = modal.aiPromptText,
             aiAnalyzing = modal.aiAnalyzing,

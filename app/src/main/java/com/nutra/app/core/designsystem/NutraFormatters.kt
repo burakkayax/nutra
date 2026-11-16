@@ -6,6 +6,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 object NutraFormatters {
     val TR_LOCALE: Locale = Locale.forLanguageTag("tr-TR")
@@ -29,6 +30,16 @@ object NutraFormatters {
     fun formatKg(value: Float): String {
         val normalized = if (!value.isFinite() || abs(value) < 0.05f) 0f else value
         return String.format(TR_LOCALE, "%.1f", normalized)
+    }
+
+    fun formatMacroGrams(value: Float): String {
+        val safe = if (!value.isFinite() || value <= 0f) 0f else value
+        val tenths = (safe * 10f).roundToInt()
+        return if (tenths % 10 == 0) {
+            formatInt(tenths / 10)
+        } else {
+            String.format(TR_LOCALE, "%.1f", tenths / 10f)
+        }
     }
 
     fun formatMultiplier(multiplier: Float): String {

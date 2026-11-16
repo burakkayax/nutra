@@ -15,7 +15,7 @@ val InterFontFamily = FontFamily(
     Font(R.font.inter_regular, FontWeight.Normal, FontStyle.Normal),
     Font(R.font.inter_italic, FontWeight.Normal, FontStyle.Italic),
     Font(R.font.inter_semibold, FontWeight.SemiBold, FontStyle.Normal),
-    Font(R.font.inter_semibold, FontWeight.Bold, FontStyle.Normal),
+    Font(R.font.inter_bold, FontWeight.Bold, FontStyle.Normal),
     Font(R.font.inter_semibold_italic, FontWeight.SemiBold, FontStyle.Italic),
 )
 
@@ -39,7 +39,8 @@ private fun style(
 /**
  * Type scale. Few sizes, strong contrast between levels.
  *
- * display      — hero numbers (calories left)          48 / Bold
+ * display      — hero numbers (portion / setup)     48 / Bold
+ * numberHero   — daily calorie hero                   36 / Bold
  * numberLarge  — big stats in cards                    28 / Bold
  * numberMedium — medium stats / list values            20 / SemiBold
  * titleLarge   — screen titles                         28 / Bold
@@ -56,6 +57,7 @@ private fun style(
 @Immutable
 data class NutraTypography(
     val display: TextStyle,
+    val numberHero: TextStyle,
     val numberLarge: TextStyle,
     val numberMedium: TextStyle,
     val numberSmall: TextStyle,
@@ -73,6 +75,7 @@ data class NutraTypography(
 
 val DefaultNutraTypography = NutraTypography(
     display = style(48, 52, FontWeight.Bold, -1.8, tabular = true),
+    numberHero = style(36, 40, FontWeight.Bold, -1.2, tabular = true),
     numberLarge = style(28, 32, FontWeight.Bold, -0.9, tabular = true),
     numberMedium = style(20, 24, FontWeight.SemiBold, -0.5, tabular = true),
     numberSmall = style(15, 20, FontWeight.SemiBold, -0.2, tabular = true),
