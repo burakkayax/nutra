@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.Icon
@@ -45,6 +46,7 @@ import com.nutra.app.core.designsystem.NutraDialog
 import com.nutra.app.core.designsystem.NutraDivider
 import com.nutra.app.core.designsystem.NutraFormatters
 import com.nutra.app.core.designsystem.NutraIconBadge
+import com.nutra.app.core.designsystem.NutraIconButton
 import com.nutra.app.core.designsystem.NutraIcons
 import com.nutra.app.core.designsystem.NutraListRow
 import com.nutra.app.core.designsystem.NutraMetricStepperRow
@@ -86,9 +88,17 @@ fun ProfileScreen(
     onEditBodyProfile: () -> Unit = {},
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val colors = NutraTheme.colors
+    if (state.isLoading) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(colors.background),
+        )
+        return
+    }
     val profile = state.profile
     val goals = profile.goals
-    val colors = NutraTheme.colors
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
     val layoutDirection = LocalLayoutDirection.current
@@ -112,7 +122,7 @@ fun ProfileScreen(
         }
     }
 
-    LaunchedEffect(state.feedbackMessage) {
+    LaunchedEffect(state.feedbackEventId, state.feedbackMessage) {
         if (state.feedbackMessage != null) {
             delay(3200)
             viewModel.clearFeedback()
@@ -132,7 +142,7 @@ fun ProfileScreen(
                 top = contentPadding.calculateTopPadding() + 28.dp,
                 bottom = contentPadding.calculateBottomPadding() + 16.dp,
             ),
-            verticalArrangement = Arrangement.spacedBy(24.dp),
+            verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.xl),
         ) {
             item(key = "header") {
                 NutraScreenHeader(
@@ -146,7 +156,7 @@ fun ProfileScreen(
                 NutraCard {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(
@@ -220,7 +230,7 @@ fun ProfileScreen(
                         },
                     )
 
-                    NutraCard(contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp)) {
+                    NutraCard(contentPadding = PaddingValues(horizontal = NutraTheme.spacing.card, vertical = NutraTheme.spacing.lg)) {
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             NutraMetricStepperRow(
                                 label = "Kalori",
@@ -363,7 +373,7 @@ fun ProfileScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     NutraSectionHeader(title = "Yapay zeka ve veri")
 
-                    NutraCard(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)) {
+                    NutraCard(contentPadding = PaddingValues(horizontal = NutraTheme.spacing.card, vertical = NutraTheme.spacing.sm)) {
                         NutraListRow(
                             title = "Gemini AI bağlantısı",
                             subtitle = if (profile.geminiApiKey.isNotBlank()) {
@@ -388,7 +398,7 @@ fun ProfileScreen(
                             onClick = { showGeminiDialog = true },
                         )
 
-                        NutraDivider(startIndent = 52.dp)
+                        NutraDivider(startIndent = 54.dp)
 
                         NutraListRow(
                             title = "Verileri dışa aktar",
@@ -412,7 +422,7 @@ fun ProfileScreen(
                             },
                         )
 
-                        NutraDivider(startIndent = 52.dp)
+                        NutraDivider(startIndent = 54.dp)
 
                         NutraListRow(
                             title = "Yedekten geri yükle",
@@ -555,6 +565,20 @@ private fun GeminiConfigDialog(
                 onValueChange = { apiKeyInput = it },
                 label = "Gemini API anahtarı",
                 placeholder = "AIza...",
+                trailing = if (apiKeyInput.isNotEmpty()) {
+                    {
+                        NutraIconButton(
+                            icon = Icons.Rounded.Close,
+                            contentDescription = "Temizle",
+                            onClick = { apiKeyInput = "" },
+                            size = 40.dp,
+                            iconSize = 16.dp,
+                            containerColor = NutraTheme.colors.surfaceElevated,
+                        )
+                    }
+                } else {
+                    null
+                },
                 visualTransformation = PasswordVisualTransformation(),
                 singleLine = true,
             )

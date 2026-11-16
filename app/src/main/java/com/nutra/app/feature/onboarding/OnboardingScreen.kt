@@ -159,6 +159,7 @@ fun OnboardingScreen(
                     },
                     style = NutraButtonStyle.Ghost,
                     size = NutraButtonSize.Small,
+                    enabled = !state.isCompleting,
                 )
             }
 
@@ -255,6 +256,8 @@ fun OnboardingScreen(
                 style = NutraButtonStyle.Primary,
                 size = NutraButtonSize.Large,
                 trailingIcon = if (isLast) Icons.Rounded.Check else Icons.AutoMirrored.Rounded.ArrowForward,
+                loading = isLast && state.isCompleting,
+                enabled = !state.isCompleting,
                 modifier = Modifier.fillMaxWidth(),
             )
         }

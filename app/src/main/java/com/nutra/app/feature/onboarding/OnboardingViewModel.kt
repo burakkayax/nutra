@@ -33,6 +33,7 @@ data class OnboardingUiState(
     val calculatedGoals: MacroGoals = MacroGoals(),
     val customGoals: MacroGoals = MacroGoals(),
     val isCustomized: Boolean = false,
+    val isCompleting: Boolean = false,
 )
 
 @HiltViewModel
@@ -177,21 +178,27 @@ class OnboardingViewModel @Inject constructor(
 
     fun completeOnboarding(onFinished: () -> Unit) {
         val state = _uiState.value
+        if (state.isCompleting) return
+        _uiState.update { it.copy(isCompleting = true) }
         viewModelScope.launch {
-            val profile = UserProfile(
-                sex = state.sex,
-                age = state.age,
-                heightCm = state.heightCm,
-                currentWeightKg = state.currentWeightKg,
-                targetWeightKg = state.targetWeightKg,
-                activityLevel = state.activityLevel,
-                goalType = state.goalType,
-                goals = state.customGoals,
-                onboardingCompleted = true,
-            )
-            preferencesDataStore.saveOnboardingProfile(profile)
-            nutritionRepository.logWeight(LocalDate.now().toString(), state.currentWeightKg)
-            onFinished()
+            try {
+                nutritionRepository.logWeight(LocalDate.now().toString(), state.currentWeightKg)
+                val profile = UserProfile(
+                    sex = state.sex,
+                    age = state.age,
+                    heightCm = state.heightCm,
+                    currentWeightKg = state.currentWeightKg,
+                    targetWeightKg = state.targetWeightKg,
+                    activityLevel = state.activityLevel,
+                    goalType = state.goalType,
+                    goals = state.customGoals,
+                    onboardingCompleted = true,
+                )
+                preferencesDataStore.saveOnboardingProfile(profile)
+                onFinished()
+            } finally {
+                _uiState.update { it.copy(isCompleting = false) }
+            }
         }
     }
 

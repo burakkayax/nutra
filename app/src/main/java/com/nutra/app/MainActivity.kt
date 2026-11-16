@@ -12,6 +12,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -19,6 +20,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -29,14 +31,20 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.windowInsetsTopHeight
@@ -65,13 +73,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.hideFromAccessibility
-import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -274,17 +284,22 @@ fun NutraAppRoot(
                     .fillMaxSize()
                     .background(NutraTheme.colors.background),
             ) {
-                val contentPadding = remember {
+                val navBarBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+                val contentPadding = remember(navBarBottom) {
                     PaddingValues(
                         top = 0.dp,
-                        bottom = BottomBarReservedHeight,
+                        bottom = BottomBarReservedHeight + navBarBottom,
                     )
                 }
+
+                val contentInsets = WindowInsets.statusBars
+                    .union(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal))
+                    .union(WindowInsets.navigationBars.only(WindowInsetsSides.Horizontal))
 
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .windowInsetsPadding(WindowInsets.statusBars),
+                        .windowInsetsPadding(contentInsets),
                 ) {
                     TabSlotBox(isSelected = activeTab == PrimaryDestination.DASHBOARD && !showEditBodyProfile) {
                         saveableStateHolder.SaveableStateProvider(PrimaryDestination.DASHBOARD) {
@@ -330,23 +345,31 @@ fun NutraAppRoot(
                     ) {
                         val profileViewModel: ProfileViewModel = hiltViewModel()
                         val profileState by profileViewModel.uiState.collectAsStateWithLifecycle()
-                        EditBodyProfileScreen(
-                            profile = profileState.profile,
-                            onNavigateBack = { isEditingBodyProfile = false },
-                            onSave = { sex, age, heightCm, currentWeight, targetWeight, activity, goalType, recalculate ->
-                                profileViewModel.updateBodyProfile(
-                                    sex = sex,
-                                    age = age,
-                                    heightCm = heightCm,
-                                    currentWeightKg = currentWeight,
-                                    targetWeightKg = targetWeight,
-                                    activityLevel = activity,
-                                    goalType = goalType,
-                                    recalculateGoals = recalculate,
-                                )
-                                isEditingBodyProfile = false
-                            },
-                        )
+                        if (profileState.isLoading) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(NutraTheme.colors.background),
+                            )
+                        } else {
+                            EditBodyProfileScreen(
+                                profile = profileState.profile,
+                                onNavigateBack = { isEditingBodyProfile = false },
+                                onSave = { sex, age, heightCm, currentWeight, targetWeight, activity, goalType, recalculate ->
+                                    profileViewModel.updateBodyProfile(
+                                        sex = sex,
+                                        age = age,
+                                        heightCm = heightCm,
+                                        currentWeightKg = currentWeight,
+                                        targetWeightKg = targetWeight,
+                                        activityLevel = activity,
+                                        goalType = goalType,
+                                        recalculateGoals = recalculate,
+                                    )
+                                    isEditingBodyProfile = false
+                                },
+                            )
+                        }
                     }
                 }
 
@@ -386,21 +409,41 @@ private fun TabSlotBox(
     isSelected: Boolean,
     content: @Composable () -> Unit,
 ) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .zIndex(if (isSelected) 1f else 0f)
-            .layout { measurable, constraints ->
-                val placeable = measurable.measure(constraints)
-                layout(placeable.width, placeable.height) {
-                    if (isSelected) {
-                        placeable.place(0, 0)
+    val alphaState = animateFloatAsState(
+        targetValue = if (isSelected) 1f else 0f,
+        animationSpec = tween(durationMillis = 160),
+        label = "tabAlpha",
+    )
+
+    val baseModifier = Modifier
+        .fillMaxSize()
+        .zIndex(if (isSelected) 1f else 0f)
+        .graphicsLayer { alpha = alphaState.value }
+        .layout { measurable, constraints ->
+            val placeable = measurable.measure(constraints)
+            layout(placeable.width, placeable.height) {
+                if (isSelected || alphaState.value > 0.01f) {
+                    placeable.place(0, 0)
+                }
+            }
+        }
+        .pointerInput(isSelected) {
+            if (!isSelected) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        event.changes.forEach { it.consume() }
                     }
                 }
             }
-            .semantics {
-                if (!isSelected) hideFromAccessibility()
-            },
+        }
+
+    Box(
+        modifier = if (isSelected) {
+            baseModifier
+        } else {
+            baseModifier.clearAndSetSemantics {}
+        },
     ) {
         content()
     }
@@ -447,6 +490,7 @@ private fun NutraBottomBar(
                 ),
             shape = NutraTheme.shapes.pill,
             color = if (colors.isDark) colors.surfaceElevated else colors.surface,
+            border = if (colors.isDark) BorderStroke(1.dp, colors.segmentThumb.copy(alpha = 0.65f)) else null,
         ) {
             Row(
                 modifier = Modifier

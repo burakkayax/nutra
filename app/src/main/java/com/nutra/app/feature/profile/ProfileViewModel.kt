@@ -27,11 +27,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 
 data class ProfileUiState(
+    val isLoading: Boolean = true,
     val profile: UserProfile = UserProfile(),
     val feedbackMessage: String? = null,
+    val feedbackEventId: Long = 0L,
 )
 
 @HiltViewModel
@@ -46,21 +49,28 @@ class ProfileViewModel @Inject constructor(
     private var calorieScalingBaseline: MacroGoals? = null
     private var lastCalorieScaledGoals: MacroGoals? = null
 
-    private val feedbackFlow = MutableStateFlow<String?>(null)
+    private val feedbackSeq = AtomicLong(0L)
+    private val feedbackFlow = MutableStateFlow<Pair<String?, Long>>(null to 0L)
 
     val uiState: StateFlow<ProfileUiState> = combine(
         preferencesDataStore.userProfileFlow,
         feedbackFlow,
-    ) { profile, message ->
+    ) { profile, (message, eventId) ->
         ProfileUiState(
+            isLoading = false,
             profile = profile,
             feedbackMessage = message,
+            feedbackEventId = eventId,
         )
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(30_000),
         initialValue = ProfileUiState(),
     )
+
+    private fun emitFeedback(message: String) {
+        feedbackFlow.value = message to feedbackSeq.incrementAndGet()
+    }
 
     fun adjustCalorieGoal(delta: Int) {
         viewModelScope.launch {
@@ -133,7 +143,7 @@ class ProfileViewModel @Inject constructor(
                     bounds = profileGoalBounds,
                 )
                 preferencesDataStore.updateGoals(updated)
-                feedbackFlow.value = "Kalori hedefi ${formatTrInt(updated.calories)} kcal olarak güncellendi"
+                emitFeedback("Kalori hedefi ${formatTrInt(updated.calories)} kcal olarak güncellendi")
             }
         }
     }
@@ -150,7 +160,7 @@ class ProfileViewModel @Inject constructor(
         ).copy(waterMl = current.waterMl)
         lastCalorieScaledGoals = updated
         preferencesDataStore.updateGoals(updated)
-        feedbackFlow.value = "Makro hedefleri ${formatTrInt(updated.calories)} kcal için güncellendi"
+        emitFeedback("Makro hedefleri ${formatTrInt(updated.calories)} kcal için güncellendi")
     }
 
     private suspend fun applyWaterGoalLocked(current: MacroGoals, waterMl: Int) {
@@ -159,7 +169,7 @@ class ProfileViewModel @Inject constructor(
         calorieScalingBaseline = calorieScalingBaseline?.copy(waterMl = nextWater)
         lastCalorieScaledGoals = lastCalorieScaledGoals?.copy(waterMl = nextWater)
         preferencesDataStore.updateGoals(updated)
-        feedbackFlow.value = "Su hedefi güncellendi"
+        emitFeedback("Su hedefi güncellendi")
     }
 
     fun recalculateWithMifflinStJeor() {
@@ -177,7 +187,7 @@ class ProfileViewModel @Inject constructor(
                     goalType = p.goalType,
                 )
                 preferencesDataStore.updateGoals(calculated)
-                feedbackFlow.value = "Mifflin-St Jeor formülüne göre hedefler yenilendi"
+                emitFeedback("Mifflin-St Jeor formülüne göre hedefler yenilendi")
             }
         }
     }
@@ -220,11 +230,13 @@ class ProfileViewModel @Inject constructor(
                     goalType = goalType,
                     updatedGoals = updatedGoals,
                 )
-                feedbackFlow.value = if (recalculateGoals) {
-                    "Vücut profili güncellendi ve hedefler yeniden hesaplandı"
-                } else {
-                    "Vücut profili güncellendi"
-                }
+                emitFeedback(
+                    if (recalculateGoals) {
+                        "Vücut profili güncellendi ve hedefler yeniden hesaplandı"
+                    } else {
+                        "Vücut profili güncellendi"
+                    },
+                )
             }
         }
     }
@@ -240,7 +252,7 @@ class ProfileViewModel @Inject constructor(
     fun saveGeminiConfig(apiKey: String, model: String) {
         viewModelScope.launch {
             preferencesDataStore.updateGeminiConfig(apiKey, model)
-            feedbackFlow.value = "AI yapılandırması kaydedildi"
+            emitFeedback("AI yapılandırması kaydedildi")
         }
     }
 
@@ -250,19 +262,24 @@ class ProfileViewModel @Inject constructor(
                 is AppResult.Success -> {
                     val writeResult = withContext(Dispatchers.IO) {
                         runCatching {
-                            contentResolver.openOutputStream(uri)?.use { out ->
+                            val stream = runCatching { contentResolver.openOutputStream(uri, "wt") }.getOrNull()
+                                ?: contentResolver.openOutputStream(uri)
+                                ?: error("Dosya açılamadı")
+                            stream.use { out ->
                                 out.write(res.data.toByteArray(Charsets.UTF_8))
-                            } ?: error("Dosya açılamadı")
+                            }
                         }
                     }
-                    feedbackFlow.value = if (writeResult.isSuccess) {
-                        "Yedek dosyası kaydedildi"
-                    } else {
-                        "Yedek dosyası yazılamadı"
-                    }
+                    emitFeedback(
+                        if (writeResult.isSuccess) {
+                            "Yedek dosyası kaydedildi"
+                        } else {
+                            "Yedek dosyası yazılamadı"
+                        },
+                    )
                 }
                 is AppResult.Error -> {
-                    feedbackFlow.value = res.message
+                    emitFeedback(res.message)
                 }
             }
         }
@@ -276,7 +293,7 @@ class ProfileViewModel @Inject constructor(
                 }.getOrNull()
             }
             if (raw.isNullOrBlank()) {
-                feedbackFlow.value = "Yedek dosyası okunamadı"
+                emitFeedback("Yedek dosyası okunamadı")
                 return@launch
             }
             importBackupJson(raw)
@@ -290,10 +307,10 @@ class ProfileViewModel @Inject constructor(
                     is AppResult.Success -> {
                         calorieScalingBaseline = null
                         lastCalorieScaledGoals = null
-                        feedbackFlow.value = "Yedek başarıyla geri yüklendi"
+                        emitFeedback("Yedek başarıyla geri yüklendi")
                     }
                     is AppResult.Error -> {
-                        feedbackFlow.value = res.message
+                        emitFeedback(res.message)
                     }
                 }
             }
@@ -301,6 +318,6 @@ class ProfileViewModel @Inject constructor(
     }
 
     fun clearFeedback() {
-        feedbackFlow.value = null
+        feedbackFlow.value = null to feedbackSeq.get()
     }
 }

@@ -3,7 +3,6 @@ package com.nutra.app.core.designsystem
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
-import android.graphics.drawable.ColorDrawable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
@@ -19,6 +18,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.core.graphics.drawable.toDrawable
 import com.nutra.app.domain.model.ThemePreference
 
 private fun NutraColors.toMaterialScheme(): ColorScheme {
@@ -100,7 +100,7 @@ fun NutraTheme(
     val backgroundArgb = colors.background.toArgb()
     if (!view.isInEditMode) {
         DisposableEffect(view, backgroundArgb) {
-            view.context.findActivity()?.window?.setBackgroundDrawable(ColorDrawable(backgroundArgb))
+            view.context.findActivity()?.window?.setBackgroundDrawable(backgroundArgb.toDrawable())
             onDispose {}
         }
     }

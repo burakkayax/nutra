@@ -16,12 +16,14 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -71,6 +73,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
@@ -81,6 +84,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -95,7 +99,7 @@ enum class NutraButtonStyle { Primary, Secondary, Accent, Ghost, Destructive }
 enum class NutraButtonSize(val height: Dp, val horizontalPadding: Dp, val iconSize: Dp) {
     Large(56.dp, 24.dp, 20.dp),
     Medium(48.dp, 20.dp, 18.dp),
-    Small(36.dp, 14.dp, 16.dp),
+    Small(40.dp, 14.dp, 16.dp),
 }
 
 /** Animation spec used for all progress indicators. */
@@ -201,10 +205,11 @@ fun NutraSectionHeader(
         modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
+        FlowRow(
             modifier = Modifier.weight(1f).padding(end = 8.dp),
-            verticalAlignment = Alignment.Bottom,
             horizontalArrangement = Arrangement.spacedBy(NutraTheme.spacing.sm),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+            itemVerticalAlignment = Alignment.Bottom,
         ) {
             Text(
                 text = title,
@@ -227,14 +232,14 @@ fun NutraSectionHeader(
         if (actionLabel != null && onAction != null) {
             Row(
                 modifier = Modifier
-                    .heightIn(min = 34.dp)
+                    .heightIn(min = 40.dp)
                     .clip(NutraTheme.shapes.pill)
                     .background(actionContainerColor)
                     .clickable(role = Role.Button) {
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         onAction()
                     }
-                    .padding(horizontal = 12.dp, vertical = 7.dp),
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(5.dp),
             ) {
@@ -386,7 +391,8 @@ fun NutraLinearProgress(
     trackColor: Color = NutraTheme.colors.surfaceMuted,
     height: Dp = 6.dp,
 ) {
-    val animatedState = animateFloatAsState(progress.coerceIn(0f, 1f), ProgressSpring, label = "bar")
+    val safeProgress = if (progress.isFinite()) progress.coerceIn(0f, 1f) else 0f
+    val animatedState = animateFloatAsState(safeProgress, ProgressSpring, label = "bar")
     Spacer(
         modifier = modifier
             .fillMaxWidth()
@@ -471,7 +477,7 @@ fun NutraChip(
     val fg by animateColorAsState(if (selected) colors.onInk else colors.textSecondary, label = "chipFg")
     Row(
         modifier = modifier
-            .height(36.dp)
+            .height(40.dp)
             .clip(NutraTheme.shapes.pill)
             .drawBehind { drawRect(bgState.value) }
             .clickable(role = Role.Tab) {
@@ -489,7 +495,7 @@ fun NutraChip(
     }
 }
 
-/** iOS-style segmented control. */
+/** iOS-style segmented control with sliding thumb. */
 @Composable
 fun <T> NutraSegmentedControl(
     items: List<T>,
@@ -498,54 +504,82 @@ fun <T> NutraSegmentedControl(
     labelProvider: (T) -> String,
     modifier: Modifier = Modifier,
 ) {
+    if (items.isEmpty()) return
     val haptic = LocalHapticFeedback.current
     val segmentThumb = NutraTheme.colors.segmentThumb
     val textPrimary = NutraTheme.colors.textPrimary
     val textSecondary = NutraTheme.colors.textSecondary
-    Row(
+    val layoutDirection = LocalLayoutDirection.current
+
+    val selectedIndex = items.indexOf(selectedItem).coerceAtLeast(0)
+    val animatedIndexState = animateFloatAsState(
+        targetValue = selectedIndex.toFloat(),
+        animationSpec = spring(dampingRatio = 0.86f, stiffness = 420f),
+        label = "segThumbIndex",
+    )
+    val gap = 2.dp
+
+    Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(40.dp)
+            .height(44.dp)
             .clip(NutraTheme.shapes.pill)
             .background(NutraTheme.colors.surfaceMuted)
             .padding(3.dp),
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        items.forEach { item ->
-            val isSelected = item == selectedItem
-            val bgState = animateColorAsState(
-                if (isSelected) segmentThumb else Color.Transparent,
-                tween(180),
-                label = "segBg",
-            )
-            val fg by animateColorAsState(
-                if (isSelected) textPrimary else textSecondary,
-                tween(180),
-                label = "segFg",
-            )
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .clip(NutraTheme.shapes.pill)
-                    .drawBehind { drawRect(bgState.value) }
-                    .clickable(role = Role.Tab) {
-                        if (!isSelected) {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onItemSelected(item)
-                        }
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .drawBehind {
+                    val count = items.size
+                    val gapPx = gap.toPx()
+                    val slotWidth = ((size.width - gapPx * (count - 1)) / count).coerceAtLeast(0f)
+                    val visualIndex = if (layoutDirection == LayoutDirection.Rtl) {
+                        (count - 1) - animatedIndexState.value
+                    } else {
+                        animatedIndexState.value
                     }
-                    .padding(horizontal = 6.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = labelProvider(item),
-                    style = NutraTheme.typography.labelSmall,
-                    color = fg,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Center,
+                    val x = visualIndex * (slotWidth + gapPx)
+                    val corner = CornerRadius(size.height / 2f, size.height / 2f)
+                    drawRoundRect(
+                        color = segmentThumb,
+                        topLeft = Offset(x, 0f),
+                        size = Size(slotWidth, size.height),
+                        cornerRadius = corner,
+                    )
+                },
+            horizontalArrangement = Arrangement.spacedBy(gap),
+        ) {
+            items.forEach { item ->
+                val isSelected = item == selectedItem
+                val fg by animateColorAsState(
+                    targetValue = if (isSelected) textPrimary else textSecondary,
+                    animationSpec = tween(180),
+                    label = "segFg",
                 )
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clip(NutraTheme.shapes.pill)
+                        .clickable(role = Role.Tab) {
+                            if (!isSelected) {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onItemSelected(item)
+                            }
+                        }
+                        .padding(horizontal = 6.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = labelProvider(item),
+                        style = NutraTheme.typography.labelSmall,
+                        color = fg,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center,
+                    )
+                }
             }
         }
     }
@@ -632,18 +666,19 @@ fun NutraSwitch(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
 ) {
+    val colors = NutraTheme.colors
     Switch(
         checked = checked,
         onCheckedChange = onCheckedChange,
         modifier = modifier,
         enabled = enabled,
         colors = SwitchDefaults.colors(
-            checkedThumbColor = NutraTheme.colors.onAccent,
-            checkedTrackColor = NutraTheme.colors.accent,
+            checkedThumbColor = colors.onAccent,
+            checkedTrackColor = colors.accent,
             checkedBorderColor = Color.Transparent,
-            uncheckedThumbColor = NutraTheme.colors.surface,
-            uncheckedTrackColor = NutraTheme.colors.surfaceMuted,
-            uncheckedBorderColor = Color.Transparent,
+            uncheckedThumbColor = if (colors.isDark) colors.textSecondary else colors.surface,
+            uncheckedTrackColor = colors.surfaceMuted,
+            uncheckedBorderColor = if (colors.isDark) colors.segmentThumb else colors.divider,
         ),
         thumbContent = null,
     )
@@ -660,6 +695,7 @@ fun NutraStepperButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     size: Dp = 40.dp,
+    containerColor: Color = NutraTheme.colors.surfaceMuted,
     enabled: Boolean = true,
 ) {
     NutraIconButton(
@@ -669,6 +705,7 @@ fun NutraStepperButton(
         modifier = modifier,
         size = size,
         iconSize = 18.dp,
+        containerColor = containerColor,
         enabled = enabled,
     )
 }
@@ -704,12 +741,12 @@ fun NutraMetricStepperRow(
                 }
             }
         }
-        NutraStepperButton(NutraIcons.Remove, "$label azalt", onDecrement, size = 36.dp)
+        NutraStepperButton(NutraIcons.Remove, "$label azalt", onDecrement, size = 40.dp)
         Box(
             modifier = Modifier
-                .padding(horizontal = 6.dp)
-                .widthIn(min = 78.dp)
-                .heightIn(min = 36.dp)
+                .padding(horizontal = 4.dp)
+                .widthIn(min = 72.dp)
+                .heightIn(min = 40.dp)
                 .clip(NutraTheme.shapes.pill)
                 .background(valueContainerColor)
                 .then(
@@ -733,7 +770,7 @@ fun NutraMetricStepperRow(
                 maxLines = 1,
             )
         }
-        NutraStepperButton(Icons.Rounded.Add, "$label artır", onIncrement, size = 36.dp)
+        NutraStepperButton(Icons.Rounded.Add, "$label artır", onIncrement, size = 40.dp)
     }
 }
 
@@ -788,7 +825,12 @@ fun NutraTextField(
                         .clip(NutraTheme.shapes.md)
                         .background(colors.surfaceMuted)
                         .then(if (isError) Modifier.border(1.5.dp, colors.danger, NutraTheme.shapes.md) else Modifier)
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                        .padding(
+                            start = 16.dp,
+                            end = if (trailing != null && singleLine) 6.dp else 16.dp,
+                            top = if (singleLine) 6.dp else 14.dp,
+                            bottom = if (singleLine) 6.dp else 14.dp,
+                        ),
                     verticalAlignment = if (singleLine) Alignment.CenterVertically else Alignment.Top,
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
@@ -1123,7 +1165,7 @@ fun NutraNumericInputDialog(
         focusRequester.requestFocus()
     }
 
-    val parsed = fieldValue.text.trim().replace(',', '.').toDoubleOrNull()
+    val parsed = NutraFormatters.parseLocalizedDouble(fieldValue.text)
     val isValid = parsed != null && parsed in minValue..maxValue
     val showError = fieldValue.text.isNotEmpty() && !isValid
 
@@ -1150,21 +1192,22 @@ fun NutraNumericInputDialog(
             BasicTextField(
                 value = fieldValue,
                 onValueChange = { next ->
-                    val filtered = buildString {
-                        var hasSeparator = false
-                        next.text.forEach { ch ->
-                            when {
-                                ch.isDigit() -> append(ch)
-                                allowDecimal && (ch == ',' || ch == '.') && !hasSeparator -> {
-                                    hasSeparator = true
-                                    append(ch)
-                                }
-                            }
-                        }
-                    }
-                    val start = next.selection.start.coerceIn(0, filtered.length)
-                    val end = next.selection.end.coerceIn(0, filtered.length)
-                    fieldValue = next.copy(text = filtered, selection = TextRange(start, end))
+                    val filtered = NutraFormatters.sanitizeNumericInput(next.text, allowDecimal = allowDecimal)
+                    val prefixStart = NutraFormatters.sanitizeNumericInput(
+                        next.text.take(next.selection.start.coerceIn(0, next.text.length)),
+                        allowDecimal = allowDecimal,
+                    ).length
+                    val prefixEnd = NutraFormatters.sanitizeNumericInput(
+                        next.text.take(next.selection.end.coerceIn(0, next.text.length)),
+                        allowDecimal = allowDecimal,
+                    ).length
+                    fieldValue = next.copy(
+                        text = filtered,
+                        selection = TextRange(
+                            prefixStart.coerceIn(0, filtered.length),
+                            prefixEnd.coerceIn(0, filtered.length),
+                        ),
+                    )
                 },
                 singleLine = true,
                 textStyle = NutraTheme.typography.numberLarge.copy(color = colors.textPrimary),

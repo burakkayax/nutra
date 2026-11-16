@@ -14,8 +14,14 @@ interface NutraDao {
     @Query("SELECT * FROM food_items ORDER BY isFavorite DESC, name ASC")
     fun observeAllFoods(): Flow<List<FoodItemEntity>>
 
+    @Query("SELECT * FROM food_items")
+    suspend fun getAllFoodsSnapshot(): List<FoodItemEntity>
+
     @Query("SELECT COUNT(*) FROM food_items")
     suspend fun getFoodCount(): Int
+
+    @Query("SELECT * FROM food_items WHERE id = :foodId LIMIT 1")
+    suspend fun findFoodById(foodId: Long): FoodItemEntity?
 
     @Query("SELECT * FROM food_items WHERE barcode = :barcode LIMIT 1")
     suspend fun findFoodByBarcode(barcode: String): FoodItemEntity?
@@ -25,6 +31,9 @@ interface NutraDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertFood(food: FoodItemEntity): Long
+
+    @Update
+    suspend fun updateFood(food: FoodItemEntity)
 
     @Query("UPDATE food_items SET isFavorite = :isFavorite WHERE id = :foodId")
     suspend fun updateFavorite(foodId: Long, isFavorite: Boolean)
@@ -54,9 +63,15 @@ interface NutraDao {
     @Query("DELETE FROM meal_logs WHERE id = :logId")
     suspend fun deleteMealLogById(logId: Long)
 
+    @Query("DELETE FROM meal_logs")
+    suspend fun deleteAllMealLogs()
+
     // --- Water Logs ---
     @Query("SELECT * FROM water_logs WHERE dateIso = :dateIso LIMIT 1")
     fun observeWaterForDate(dateIso: String): Flow<WaterLogEntity?>
+
+    @Query("SELECT * FROM water_logs WHERE dateIso = :dateIso LIMIT 1")
+    suspend fun getWaterForDate(dateIso: String): WaterLogEntity?
 
     @Query("SELECT * FROM water_logs WHERE dateIso BETWEEN :startDateIso AND :endDateIso")
     fun observeWaterInRange(startDateIso: String, endDateIso: String): Flow<List<WaterLogEntity>>
@@ -69,6 +84,9 @@ interface NutraDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertWaterLogs(waterLogs: List<WaterLogEntity>)
+
+    @Query("DELETE FROM water_logs")
+    suspend fun deleteAllWaterLogs()
 
     // --- Weight Logs ---
     @Query("SELECT * FROM weight_logs ORDER BY dateIso ASC, timestampMillis ASC")
@@ -85,4 +103,7 @@ interface NutraDao {
 
     @Query("DELETE FROM weight_logs WHERE id = :id")
     suspend fun deleteWeightLogById(id: Long)
+
+    @Query("DELETE FROM weight_logs")
+    suspend fun deleteAllWeightLogs()
 }

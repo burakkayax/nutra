@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -40,6 +41,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -55,6 +57,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nutra.app.core.designsystem.NutraButton
 import com.nutra.app.core.designsystem.NutraButtonSize
@@ -69,9 +72,11 @@ import com.nutra.app.core.designsystem.NutraIconButton
 import com.nutra.app.core.designsystem.NutraIcons
 import com.nutra.app.core.designsystem.NutraLinearProgress
 import com.nutra.app.core.designsystem.NutraMacroStat
+import com.nutra.app.core.designsystem.NutraNumericInputDialog
 import com.nutra.app.core.designsystem.NutraScreenHeader
 import com.nutra.app.core.designsystem.NutraSectionHeader
 import com.nutra.app.core.designsystem.NutraSnackbarHost
+import com.nutra.app.core.designsystem.NutraStepperButton
 import com.nutra.app.core.designsystem.NutraTheme
 import com.nutra.app.domain.model.DayGoalStatus
 import com.nutra.app.domain.model.DayStatusIndicator
@@ -82,7 +87,6 @@ import com.nutra.app.feature.logging.AddFoodModalSheet
 import kotlinx.coroutines.delay
 import java.time.LocalDate
 import java.time.format.TextStyle
-import java.util.Locale
 import kotlin.math.roundToInt
 
 private fun formatInt(value: Int): String = NutraFormatters.formatInt(value)
@@ -93,6 +97,9 @@ fun DashboardScreen(
     contentPadding: PaddingValues = PaddingValues(0.dp),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+        viewModel.refreshToday()
+    }
     if (state.isLoading) {
         Box(
             modifier = Modifier
@@ -104,7 +111,7 @@ fun DashboardScreen(
     val haptic = LocalHapticFeedback.current
     val layoutDirection = LocalLayoutDirection.current
 
-    LaunchedEffect(state.lastDeletedItem, state.statusBannerMessage) {
+    LaunchedEffect(state.bannerEventId, state.lastDeletedItem, state.statusBannerMessage) {
         if (state.lastDeletedItem != null || state.statusBannerMessage != null) {
             delay(4500)
             viewModel.dismissUndoBanner()
@@ -124,11 +131,12 @@ fun DashboardScreen(
                 top = contentPadding.calculateTopPadding() + 28.dp,
                 bottom = contentPadding.calculateBottomPadding() + 16.dp,
             ),
-            verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.lg),
+            verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.xl),
         ) {
             item(key = "header") {
                 Column {
                     DashboardHeader(
+                        today = state.today,
                         selectedDate = state.selectedDate,
                         isWeekCalendarVisible = state.isWeekCalendarVisible,
                         onToggleWeekCalendar = viewModel::toggleWeekCalendar,
@@ -141,6 +149,7 @@ fun DashboardScreen(
                     ) {
                         Box(modifier = Modifier.padding(top = NutraTheme.spacing.lg)) {
                             WeekDateStrip(
+                                today = state.today,
                                 weekDays = state.weekDays,
                                 selectedDate = state.selectedDate,
                                 statusMap = state.weekStatusMap,
@@ -178,32 +187,30 @@ fun DashboardScreen(
                 )
             }
 
-            item(key = "meals_header") {
-                NutraSectionHeader(
-                    title = "Öğünler",
-                    modifier = Modifier.padding(top = NutraTheme.spacing.xs),
-                )
-            }
-
-            state.dailySummary.meals.forEach { mealSummary ->
-                item(key = "meal_${mealSummary.mealType.name}") {
-                    MealCard(
-                        mealSummary = mealSummary,
-                        isExpanded = state.expandedMeals.contains(mealSummary.mealType),
-                        onToggleExpand = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            viewModel.toggleMealExpanded(mealSummary.mealType)
-                        },
-                        onAddFoodClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            viewModel.openAddFoodModal(mealSummary.mealType)
-                        },
-                        onEditLogItem = viewModel::openEditLoggedItem,
-                        onDeleteLogItem = { item ->
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            viewModel.deleteLoggedItem(item)
-                        },
-                    )
+            item(key = "meals_section") {
+                Column(verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.md)) {
+                    NutraSectionHeader(title = "Öğünler")
+                    state.dailySummary.meals.forEach { mealSummary ->
+                        key(mealSummary.mealType.name) {
+                            MealCard(
+                                mealSummary = mealSummary,
+                                isExpanded = state.expandedMeals.contains(mealSummary.mealType),
+                                onToggleExpand = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    viewModel.toggleMealExpanded(mealSummary.mealType)
+                                },
+                                onAddFoodClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    viewModel.openAddFoodModal(mealSummary.mealType)
+                                },
+                                onEditLogItem = viewModel::openEditLoggedItem,
+                                onDeleteLogItem = { item ->
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    viewModel.deleteLoggedItem(item)
+                                },
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -287,11 +294,11 @@ fun DashboardScreen(
 
 @Composable
 private fun DashboardHeader(
+    today: LocalDate,
     selectedDate: LocalDate,
     isWeekCalendarVisible: Boolean,
     onToggleWeekCalendar: () -> Unit,
 ) {
-    val today = remember(selectedDate) { LocalDate.now() }
     val isToday = selectedDate == today
     val (eyebrow, title) = remember(selectedDate, today) {
         val dayOfWeek = selectedDate.dayOfWeek.getDisplayName(TextStyle.FULL, NutraFormatters.TR_LOCALE)
@@ -354,6 +361,7 @@ private fun DashboardHeader(
 
 @Composable
 private fun WeekDateStrip(
+    today: LocalDate,
     weekDays: List<LocalDate>,
     selectedDate: LocalDate,
     statusMap: Map<String, DayStatusIndicator>,
@@ -363,7 +371,6 @@ private fun WeekDateStrip(
     onJumpToToday: () -> Unit,
 ) {
     val haptic = LocalHapticFeedback.current
-    val today = remember(selectedDate) { LocalDate.now() }
     val monthLabel = remember(selectedDate) {
         "${
             selectedDate.month.getDisplayName(TextStyle.FULL, NutraFormatters.TR_LOCALE)
@@ -392,25 +399,30 @@ private fun WeekDateStrip(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 if (!isToday) {
-                    Text(
-                        text = "Bugüne dön",
-                        style = NutraTheme.typography.labelSmall,
-                        color = NutraTheme.colors.accent,
+                    Box(
                         modifier = Modifier
+                            .heightIn(min = 40.dp)
                             .clip(NutraTheme.shapes.pill)
                             .background(NutraTheme.colors.accentSoft)
                             .clickable(role = Role.Button) {
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 onJumpToToday()
                             }
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                    )
+                            .padding(horizontal = 14.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "Bugüne dön",
+                            style = NutraTheme.typography.labelSmall,
+                            color = NutraTheme.colors.accent,
+                        )
+                    }
                 }
                 NutraIconButton(
                     icon = Icons.AutoMirrored.Rounded.KeyboardArrowLeft,
                     contentDescription = "Önceki hafta",
                     onClick = onPreviousWeek,
-                    size = 34.dp,
+                    size = 40.dp,
                     iconSize = 18.dp,
                     containerColor = NutraTheme.colors.surfaceMuted,
                     contentColor = NutraTheme.colors.textSecondary,
@@ -419,7 +431,7 @@ private fun WeekDateStrip(
                     icon = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
                     contentDescription = "Sonraki hafta",
                     onClick = onNextWeek,
-                    size = 34.dp,
+                    size = 40.dp,
                     iconSize = 18.dp,
                     containerColor = NutraTheme.colors.surfaceMuted,
                     contentColor = NutraTheme.colors.textSecondary,
@@ -583,10 +595,12 @@ private fun HeroNutritionCard(
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
                     Text(
                         text = "${formatInt(deltaCalories)} kcal",
                         style = NutraTheme.typography.numberSmall,
@@ -606,7 +620,10 @@ private fun HeroNutritionCard(
                         .background(NutraTheme.colors.divider),
                 )
 
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
                     Text(
                         text = "%$completionPercent",
                         style = NutraTheme.typography.numberSmall,
@@ -671,27 +688,22 @@ private fun WaterTrackerCard(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                NutraIconBadge(
-                    icon = NutraIcons.WaterDrop,
-                    tint = NutraTheme.colors.water,
-                    container = NutraTheme.colors.waterSoft,
+                Text(
+                    text = "Su takibi",
+                    style = NutraTheme.typography.titleSmall,
+                    color = NutraTheme.colors.textPrimary,
                 )
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(
-                        text = "Su takibi",
-                        style = NutraTheme.typography.titleSmall,
-                        color = NutraTheme.colors.textPrimary,
-                    )
-                    Text(
-                        text = "%${(fraction * 100).roundToInt()} tamamlandı",
-                        style = NutraTheme.typography.caption,
-                        color = NutraTheme.colors.textTertiary,
-                    )
-                }
+                Text(
+                    text = "%${(fraction * 100).roundToInt()} tamamlandı",
+                    style = NutraTheme.typography.caption,
+                    color = NutraTheme.colors.textTertiary,
+                )
             }
 
             Row(verticalAlignment = Alignment.Bottom) {
@@ -742,7 +754,7 @@ private fun WaterTrackerCard(
                 icon = NutraIcons.Remove,
                 contentDescription = "200 ml azalt",
                 onClick = { onAddWater(-200) },
-                size = 44.dp,
+                size = 48.dp,
                 enabled = currentWaterMl > 0,
             )
         }
@@ -758,7 +770,7 @@ private fun WaterQuickPill(
 ) {
     Column(
         modifier = modifier
-            .height(44.dp)
+            .height(48.dp)
             .clip(NutraTheme.shapes.pill)
             .background(NutraTheme.colors.surfaceMuted)
             .clickable(role = Role.Button, onClick = onClick),
@@ -799,7 +811,7 @@ private fun MealCard(
 
     NutraCard(
         modifier = Modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 16.dp),
+        contentPadding = PaddingValues(horizontal = NutraTheme.spacing.card, vertical = NutraTheme.spacing.lg),
     ) {
         Row(
             modifier = Modifier
@@ -979,20 +991,36 @@ private fun EditLoggedFoodPortionDialog(
     onUpdateMultiplier: (Float) -> Unit,
     onDelete: () -> Unit,
 ) {
-    var multiplier by remember(item) { mutableFloatStateOf(item.multiplier) }
-    val ratio = multiplier / item.multiplier.coerceAtLeast(0.05f)
-    val previewCalories = (item.calories * ratio).roundToInt()
-    val previewGrams = (item.totalGrams * ratio).roundToInt()
-    val multLabel = if (multiplier % 1f == 0f) {
-        "${multiplier.toInt()}x"
-    } else {
-        "${String.format(Locale.US, "%.2f", multiplier).trimEnd('0').trimEnd('.')}x"
+    val isRawGramMode = item.unitLabel == "1 Gram"
+    var multiplier by remember(item) {
+        mutableFloatStateOf(
+            if (isRawGramMode) item.totalGrams.coerceIn(1f, 3000f) else item.multiplier.coerceIn(0.25f, 20f),
+        )
     }
+    var showManualGramDialog by remember(item) { mutableStateOf(false) }
+
+    val ratio = if (isRawGramMode) {
+        multiplier / item.totalGrams.coerceAtLeast(1f)
+    } else {
+        multiplier / item.multiplier.coerceAtLeast(0.05f)
+    }
+    val previewCalories = (item.calories * ratio).roundToInt()
+    val previewGrams = if (isRawGramMode) {
+        multiplier.roundToInt()
+    } else {
+        (item.totalGrams * ratio).roundToInt()
+    }
+    val valueLabel = if (isRawGramMode) {
+        "${multiplier.roundToInt()} g"
+    } else {
+        "${NutraFormatters.formatMultiplier(multiplier)}x"
+    }
+    val presets = if (isRawGramMode) listOf(50f, 100f, 150f, 200f) else listOf(0.5f, 1f, 1.5f, 2f)
 
     NutraDialog(
         onDismissRequest = onDismiss,
         title = item.foodName,
-        message = "${item.unitLabel} · $previewGrams g",
+        message = if (isRawGramMode) "Gramaj · $previewGrams g" else "${item.unitLabel} · $previewGrams g",
         confirmText = null,
         dismissText = null,
     ) {
@@ -1009,17 +1037,29 @@ private fun EditLoggedFoodPortionDialog(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                listOf(0.5f, 1f, 1.5f, 2f).forEach { preset ->
+                presets.forEach { preset ->
                     val isSelected = multiplier == preset
-                    val label = "${if (preset % 1f == 0f) preset.toInt() else preset}x"
+                    val label = if (isRawGramMode) {
+                        "${preset.toInt()} g"
+                    } else {
+                        "${NutraFormatters.formatMultiplier(preset)}x"
+                    }
+                    val bgState = animateColorAsState(
+                        targetValue = if (isSelected) NutraTheme.colors.ink else NutraTheme.colors.surfaceMuted,
+                        animationSpec = tween(160),
+                        label = "editPortionPillBg",
+                    )
+                    val fg by animateColorAsState(
+                        targetValue = if (isSelected) NutraTheme.colors.onInk else NutraTheme.colors.textPrimary,
+                        animationSpec = tween(160),
+                        label = "editPortionPillFg",
+                    )
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .height(36.dp)
+                            .height(40.dp)
                             .clip(NutraTheme.shapes.pill)
-                            .background(
-                                if (isSelected) NutraTheme.colors.ink else NutraTheme.colors.surfaceMuted
-                            )
+                            .drawBehind { drawRect(bgState.value) }
                             .clickable(role = Role.RadioButton) { multiplier = preset }
                             .padding(horizontal = 6.dp),
                         contentAlignment = Alignment.Center,
@@ -1027,7 +1067,7 @@ private fun EditLoggedFoodPortionDialog(
                         Text(
                             text = label,
                             style = NutraTheme.typography.labelSmall,
-                            color = if (isSelected) NutraTheme.colors.onInk else NutraTheme.colors.textPrimary,
+                            color = fg,
                             maxLines = 1,
                         )
                     }
@@ -1045,20 +1085,46 @@ private fun EditLoggedFoodPortionDialog(
             ) {
                 NutraStepperButton(
                     icon = NutraIcons.Remove,
-                    contentDescription = "Porsiyon azalt",
-                    onClick = { multiplier = (multiplier - 0.25f).coerceAtLeast(0.25f) },
-                    containerColorOverride = NutraTheme.colors.surfaceElevated,
+                    contentDescription = if (isRawGramMode) "10 g azalt" else "Porsiyon azalt",
+                    onClick = {
+                        multiplier = if (isRawGramMode) {
+                            (multiplier - 10f).coerceAtLeast(1f)
+                        } else {
+                            (multiplier - 0.25f).coerceAtLeast(0.25f)
+                        }
+                    },
+                    containerColor = NutraTheme.colors.surfaceElevated,
                 )
-                Text(
-                    text = multLabel,
-                    style = NutraTheme.typography.numberMedium,
-                    color = NutraTheme.colors.textPrimary,
-                )
+                Box(
+                    modifier = Modifier
+                        .clip(NutraTheme.shapes.pill)
+                        .then(
+                            if (isRawGramMode) {
+                                Modifier.clickable(role = Role.Button) { showManualGramDialog = true }
+                            } else {
+                                Modifier
+                            },
+                        )
+                        .padding(horizontal = 14.dp, vertical = 6.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = valueLabel,
+                        style = NutraTheme.typography.numberMedium,
+                        color = NutraTheme.colors.textPrimary,
+                    )
+                }
                 NutraStepperButton(
                     icon = Icons.Rounded.Add,
-                    contentDescription = "Porsiyon artır",
-                    onClick = { multiplier = (multiplier + 0.25f).coerceAtMost(20f) },
-                    containerColorOverride = NutraTheme.colors.surfaceElevated,
+                    contentDescription = if (isRawGramMode) "10 g artır" else "Porsiyon artır",
+                    onClick = {
+                        multiplier = if (isRawGramMode) {
+                            (multiplier + 10f).coerceAtMost(3000f)
+                        } else {
+                            (multiplier + 0.25f).coerceAtMost(20f)
+                        }
+                    },
+                    containerColor = NutraTheme.colors.surfaceElevated,
                 )
             }
 
@@ -1083,22 +1149,21 @@ private fun EditLoggedFoodPortionDialog(
             }
         }
     }
-}
 
-@Composable
-private fun NutraStepperButton(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    contentDescription: String?,
-    onClick: () -> Unit,
-    containerColorOverride: Color,
-) {
-    NutraIconButton(
-        icon = icon,
-        contentDescription = contentDescription,
-        onClick = onClick,
-        size = 40.dp,
-        iconSize = 18.dp,
-        containerColor = containerColorOverride,
-        contentColor = NutraTheme.colors.textPrimary,
-    )
+    if (showManualGramDialog && isRawGramMode) {
+        NutraNumericInputDialog(
+            title = "Gramaj",
+            initialValue = multiplier.roundToInt().toString(),
+            unit = "g",
+            rangeHint = "1 – 3.000 g",
+            minValue = 1.0,
+            maxValue = 3000.0,
+            allowDecimal = true,
+            onDismiss = { showManualGramDialog = false },
+            onConfirm = { entered ->
+                multiplier = entered.toFloat().coerceIn(1f, 3000f)
+                showManualGramDialog = false
+            },
+        )
+    }
 }

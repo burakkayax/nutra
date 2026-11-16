@@ -25,6 +25,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -51,6 +52,8 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nutra.app.core.designsystem.NutraButton
 import com.nutra.app.core.designsystem.NutraButtonSize
@@ -63,6 +66,7 @@ import com.nutra.app.core.designsystem.NutraEmptyState
 import com.nutra.app.core.designsystem.NutraFormatters
 import com.nutra.app.core.designsystem.NutraIconButton
 import com.nutra.app.core.designsystem.NutraIcons
+import com.nutra.app.core.designsystem.NutraNumericInputDialog
 import com.nutra.app.core.designsystem.NutraScreenHeader
 import com.nutra.app.core.designsystem.NutraSegmentedControl
 import com.nutra.app.core.designsystem.NutraTheme
@@ -70,7 +74,6 @@ import com.nutra.app.domain.model.DailyAnalyticsPoint
 import com.nutra.app.domain.model.MacroGoals
 import com.nutra.app.domain.model.UserProfile
 import com.nutra.app.domain.model.WeightTrendPoint
-import java.time.LocalDate
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -91,6 +94,10 @@ fun AnalyticsScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val layoutDirection = LocalLayoutDirection.current
+
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        viewModel.refreshToday()
+    }
 
     if (uiState.isLoading) {
         AnalyticsLoadingSkeleton(
@@ -447,6 +454,7 @@ private fun HapticScrubbingBarChart(
     val colors = NutraTheme.colors
     val haptic = LocalHapticFeedback.current
     val currentScrub by rememberUpdatedState(scrubbedIndex)
+    val latestOnScrub by rememberUpdatedState(onScrub)
     val dashEffect = remember { PathEffect.dashPathEffect(floatArrayOf(10f, 8f)) }
     val subtleTertiary = remember(colors.textTertiary) { colors.textTertiary.copy(alpha = 0.45f) }
 
@@ -456,8 +464,6 @@ private fun HapticScrubbingBarChart(
             .padding(top = 20.dp)
             .height(156.dp),
     ) {
-        var lastDraggedIndex = remember(points.size) { -1 }
-
         Canvas(
             modifier = Modifier
                 .fillMaxSize()
@@ -468,10 +474,11 @@ private fun HapticScrubbingBarChart(
                             .toInt()
                             .coerceIn(0, points.lastIndex)
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onScrub(if (currentScrub == idx) null else idx)
+                        latestOnScrub(if (currentScrub == idx) null else idx)
                     }
                 }
                 .pointerInput(points.size) {
+                    var lastDraggedIndex = -1
                     detectHorizontalDragGestures(
                         onDragStart = { offset ->
                             if (points.isEmpty()) return@detectHorizontalDragGestures
@@ -480,7 +487,7 @@ private fun HapticScrubbingBarChart(
                                 .coerceIn(0, points.lastIndex)
                             lastDraggedIndex = idx
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onScrub(idx)
+                            latestOnScrub(idx)
                         },
                         onHorizontalDrag = { change, _ ->
                             if (points.isEmpty()) return@detectHorizontalDragGestures
@@ -491,16 +498,16 @@ private fun HapticScrubbingBarChart(
                             if (idx != lastDraggedIndex) {
                                 lastDraggedIndex = idx
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                onScrub(idx)
+                                latestOnScrub(idx)
                             }
                         },
                         onDragEnd = {
                             lastDraggedIndex = -1
-                            onScrub(null)
+                            latestOnScrub(null)
                         },
                         onDragCancel = {
                             lastDraggedIndex = -1
-                            onScrub(null)
+                            latestOnScrub(null)
                         },
                     )
                 },
@@ -638,7 +645,7 @@ private fun MacroSplitComparisonCard(
     NutraCard {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -832,7 +839,7 @@ private fun WeightTrendBezierCard(
     NutraCard {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(
@@ -911,7 +918,7 @@ private fun WeightTrendBezierCard(
         val activePoint = scrubbedIndex?.let { points.getOrNull(it) } ?: points.last()
         val firstEma = points.first().emaTrendKg
         val deltaFromStart = activePoint.emaTrendKg - firstEma
-        val deltaSign = if (deltaFromStart > 0.05f) "+" else ""
+        val deltaSign = if (deltaFromStart >= 0.05f) "+" else ""
 
         Row(
             modifier = Modifier
@@ -985,8 +992,8 @@ private fun WeightTrendBezierCard(
                 .padding(top = 18.dp)
                 .height(172.dp),
         ) {
-            var lastDraggedIndex = remember(points.size) { -1 }
             val currentScrubState = rememberUpdatedState(scrubbedIndex)
+            val latestOnScrub by rememberUpdatedState(onScrub)
 
             Spacer(
                 modifier = Modifier
@@ -998,10 +1005,11 @@ private fun WeightTrendBezierCard(
                                 .roundToInt()
                                 .coerceIn(0, points.lastIndex)
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onScrub(if (currentScrubState.value == idx) null else idx)
+                            latestOnScrub(if (currentScrubState.value == idx) null else idx)
                         }
                     }
                     .pointerInput(points.size) {
+                        var lastDraggedIndex = -1
                         detectHorizontalDragGestures(
                             onDragStart = { offset ->
                                 if (points.size < 2) return@detectHorizontalDragGestures
@@ -1010,7 +1018,7 @@ private fun WeightTrendBezierCard(
                                     .coerceIn(0, points.lastIndex)
                                 lastDraggedIndex = idx
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                onScrub(idx)
+                                latestOnScrub(idx)
                             },
                             onHorizontalDrag = { change, _ ->
                                 if (points.size < 2) return@detectHorizontalDragGestures
@@ -1021,16 +1029,16 @@ private fun WeightTrendBezierCard(
                                 if (idx != lastDraggedIndex) {
                                     lastDraggedIndex = idx
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    onScrub(idx)
+                                    latestOnScrub(idx)
                                 }
                             },
                             onDragEnd = {
                                 lastDraggedIndex = -1
-                                onScrub(null)
+                                latestOnScrub(null)
                             },
                             onDragCancel = {
                                 lastDraggedIndex = -1
-                                onScrub(null)
+                                latestOnScrub(null)
                             },
                         )
                     }
@@ -1233,14 +1241,19 @@ private fun LogWeightDialog(
     onSave: (Float) -> Unit,
 ) {
     val colors = NutraTheme.colors
-    var weight by remember(initialWeight) { mutableFloatStateOf(initialWeight) }
+    val haptic = LocalHapticFeedback.current
+    var weight by remember(initialWeight) { mutableFloatStateOf(initialWeight.coerceIn(35f, 250f)) }
+    var showManualInput by remember { mutableStateOf(false) }
 
     NutraDialog(
         onDismissRequest = onDismiss,
         title = "Tartı ekle",
         message = "Bugünkü kilonu kaydederek trend eğrini güncel tut.",
         confirmText = "Kaydet",
-        onConfirm = { onSave(weight) },
+        onConfirm = {
+            haptic.performHapticFeedback(HapticFeedbackType.Confirm)
+            onSave(weight)
+        },
         dismissText = "Vazgeç",
         onDismiss = onDismiss,
     ) {
@@ -1248,13 +1261,24 @@ private fun LogWeightDialog(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Text(
-                text = "${formatKg(weight)} kg",
-                style = NutraTheme.typography.numberLarge,
-                color = colors.textPrimary,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth(),
-            )
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .clip(NutraTheme.shapes.pill)
+                    .background(colors.surfaceMuted)
+                    .clickable(role = Role.Button) {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        showManualInput = true
+                    }
+                    .padding(horizontal = 20.dp, vertical = 8.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "${formatKg(weight)} kg",
+                    style = NutraTheme.typography.numberLarge,
+                    color = colors.textPrimary,
+                )
+            }
 
             // Quick offset pills
             Row(
@@ -1267,10 +1291,11 @@ private fun LogWeightDialog(
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .height(36.dp)
+                            .height(40.dp)
                             .clip(NutraTheme.shapes.pill)
                             .background(colors.surfaceMuted)
                             .clickable(role = Role.Button) {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 weight = (((weight + delta) * 10f).roundToInt() / 10f).coerceIn(35f, 250f)
                             }
                             .padding(horizontal = 4.dp),
@@ -1307,7 +1332,7 @@ private fun LogWeightDialog(
                     containerColor = colors.surfaceElevated,
                 )
                 Text(
-                    text = "0,1 kg hassasiyet",
+                    text = "0,1 kg · dokunarak yaz",
                     style = NutraTheme.typography.caption,
                     color = colors.textSecondary,
                 )
@@ -1323,5 +1348,22 @@ private fun LogWeightDialog(
                 )
             }
         }
+    }
+
+    if (showManualInput) {
+        NutraNumericInputDialog(
+            title = "Tartı",
+            initialValue = formatKg(weight),
+            unit = "kg",
+            rangeHint = "35,0 – 250,0 kg",
+            minValue = 35.0,
+            maxValue = 250.0,
+            allowDecimal = true,
+            onDismiss = { showManualInput = false },
+            onConfirm = { entered ->
+                weight = ((entered * 10.0).roundToInt().coerceIn(350, 2500)) / 10f
+                showManualInput = false
+            },
+        )
     }
 }

@@ -142,7 +142,7 @@ fun EditBodyProfileScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = NutraTheme.spacing.screen)
                 .padding(top = 8.dp, bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(24.dp),
+            verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.xl),
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 NutraSectionHeader(title = "Cinsiyet")
@@ -173,17 +173,19 @@ fun EditBodyProfileScreen(
                     title = "Vücut ölçüleri",
                     supportingText = "Değere dokunarak yazabilirsin",
                 )
-                NutraCard(contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp)) {
+                NutraCard(contentPadding = PaddingValues(horizontal = NutraTheme.spacing.card, vertical = NutraTheme.spacing.lg)) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         NutraMetricStepperRow(
                             label = "Mevcut kilo",
                             valueText = "${formatKg(currentWeight)} kg",
                             onDecrement = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 currentWeight = ((currentWeight - 0.5f) * 10f)
                                     .roundToInt()
                                     .coerceIn(350, 2500) / 10f
                             },
                             onIncrement = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 currentWeight = ((currentWeight + 0.5f) * 10f)
                                     .roundToInt()
                                     .coerceIn(350, 2500) / 10f
@@ -195,11 +197,13 @@ fun EditBodyProfileScreen(
                             label = "Hedef kilo",
                             valueText = "${formatKg(targetWeight)} kg",
                             onDecrement = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 targetWeight = ((targetWeight - 0.5f) * 10f)
                                     .roundToInt()
                                     .coerceIn(350, 2500) / 10f
                             },
                             onIncrement = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 targetWeight = ((targetWeight + 0.5f) * 10f)
                                     .roundToInt()
                                     .coerceIn(350, 2500) / 10f
@@ -210,16 +214,28 @@ fun EditBodyProfileScreen(
                         NutraMetricStepperRow(
                             label = "Boy",
                             valueText = "$heightCm cm",
-                            onDecrement = { heightCm = (heightCm - 1).coerceIn(130, 225) },
-                            onIncrement = { heightCm = (heightCm + 1).coerceIn(130, 225) },
+                            onDecrement = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                heightCm = (heightCm - 1).coerceIn(130, 225)
+                            },
+                            onIncrement = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                heightCm = (heightCm + 1).coerceIn(130, 225)
+                            },
                             onValueClick = { activeBodyField = BodyMetricField.HEIGHT },
                         )
                         NutraDivider()
                         NutraMetricStepperRow(
                             label = "Yaş",
                             valueText = "$age yaş",
-                            onDecrement = { age = (age - 1).coerceIn(14, 95) },
-                            onIncrement = { age = (age + 1).coerceIn(14, 95) },
+                            onDecrement = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                age = (age - 1).coerceIn(14, 95)
+                            },
+                            onIncrement = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                age = (age + 1).coerceIn(14, 95)
+                            },
                             onValueClick = { activeBodyField = BodyMetricField.AGE },
                         )
                     }
@@ -240,7 +256,7 @@ fun EditBodyProfileScreen(
                 }
             }
 
-            NutraCard(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp)) {
+            NutraCard(contentPadding = PaddingValues(horizontal = NutraTheme.spacing.card, vertical = NutraTheme.spacing.lg)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,

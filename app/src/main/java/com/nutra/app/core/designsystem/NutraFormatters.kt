@@ -5,6 +5,7 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.abs
 
 object NutraFormatters {
     val TR_LOCALE: Locale = Locale.forLanguageTag("tr-TR")
@@ -25,7 +26,40 @@ object NutraFormatters {
 
     fun formatInt(value: Int): String = intFormatter.get()!!.format(value)
 
-    fun formatKg(value: Float): String = String.format(TR_LOCALE, "%.1f", value)
+    fun formatKg(value: Float): String {
+        val normalized = if (!value.isFinite() || abs(value) < 0.05f) 0f else value
+        return String.format(TR_LOCALE, "%.1f", normalized)
+    }
+
+    fun formatMultiplier(multiplier: Float): String {
+        val safe = if (multiplier.isFinite()) multiplier else 1f
+        return if (safe % 1f == 0f) {
+            safe.toInt().toString()
+        } else {
+            String.format(Locale.US, "%.2f", safe).trimEnd('0').trimEnd('.')
+        }
+    }
+
+    fun sanitizeNumericInput(input: String, allowDecimal: Boolean = true): String {
+        var hasSeparator = false
+        return buildString(input.length) {
+            for (ch in input) {
+                when {
+                    ch.isDigit() -> append(ch)
+                    allowDecimal && (ch == ',' || ch == '.') && !hasSeparator -> {
+                        hasSeparator = true
+                        append(ch)
+                    }
+                }
+            }
+        }
+    }
+
+    fun parseLocalizedFloat(input: String): Float? =
+        input.trim().replace(',', '.').toFloatOrNull()?.takeIf { it.isFinite() }
+
+    fun parseLocalizedDouble(input: String): Double? =
+        input.trim().replace(',', '.').toDoubleOrNull()?.takeIf { it.isFinite() }
 
     fun formatWaterLitres(ml: Int): String =
         if (ml >= 1000) {

@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Base64
+import androidx.core.graphics.scale
 import com.nutra.app.domain.model.AiAnalyzedFoodItem
 import com.nutra.app.domain.model.AppResult
 import com.nutra.app.domain.model.FoodItem
@@ -21,6 +22,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -60,9 +62,13 @@ class GeminiAiService @Inject constructor(
     }
 
     private companion object {
-        val SEGMENT_SPLIT_REGEX = Regex("[,;\\n]|\\bve\\b|\\bile\\b|\\bartı\\b|\\+")
+        val SEGMENT_SPLIT_REGEX = Regex(
+            "(?<!\\d),|,(?!\\d)|[;\\n]|(?:^|\\s)(?:ve|[iİ]le|art[ıiİI])(?=\\s|$)|\\+",
+            RegexOption.IGNORE_CASE,
+        )
         val GRAM_REGEX = Regex("(\\d+(?:[.,]\\d+)?)\\s*(?:gr|gram|g|ml)\\b", RegexOption.IGNORE_CASE)
         val COUNT_REGEX = Regex("^(\\d+(?:[.,]\\d+)?)\\s*(adet|dilim|kase|porsiyon|bardak|kaşık|kasik|avuç|avuc|tane|ölçek|olcek)?\\b", RegexOption.IGNORE_CASE)
+        val HALF_WORD_REGEX = Regex("\\byarim\\b")
         val UNIT_WORD_STRIP_REGEX = Regex("\\b(yarim|tam|orta|buyuk|kucuk|ince|kalin|adet|tane|dilim|kase|porsiyon|su|bardagi|bardak|yemek|tatli|kasigi|kasik|avuc|olcek|paket)\\b")
         val NUMBER_STRIP_REGEX = Regex("\\d+(?:[.,]\\d+)?")
         val WHITESPACE_REGEX = Regex("\\s+")
@@ -82,7 +88,7 @@ class GeminiAiService @Inject constructor(
             val srcWidth = boundsOpts.outWidth
             val srcHeight = boundsOpts.outHeight
             if (srcWidth <= 0 || srcHeight <= 0) {
-                return@runCatching contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                return@runCatching null
             }
 
             var sampleSize = 1
@@ -98,11 +104,10 @@ class GeminiAiService @Inject constructor(
 
             val scale = MAX_IMAGE_DIMENSION_PX.toFloat() / max(decoded.width, decoded.height).toFloat()
             val finalBitmap = if (scale < 1f) {
-                Bitmap.createScaledBitmap(
-                    decoded,
-                    (decoded.width * scale).roundToInt().coerceAtLeast(1),
-                    (decoded.height * scale).roundToInt().coerceAtLeast(1),
-                    true,
+                decoded.scale(
+                    width = (decoded.width * scale).roundToInt().coerceAtLeast(1),
+                    height = (decoded.height * scale).roundToInt().coerceAtLeast(1),
+                    filter = true,
                 ).also {
                     if (it !== decoded) decoded.recycle()
                 }
@@ -156,7 +161,11 @@ class GeminiAiService @Inject constructor(
                     return@withContext AppResult.Success(fallback)
                 }
             }
-            return@withContext remoteResult
+            return@withContext if (remoteResult is AppResult.Success) {
+                AppResult.Error("Fotoğraf veya metinden besin ayrıştırılamadı. Lütfen daha net bir açıklama veya fotoğraf deneyin.")
+            } else {
+                remoteResult
+            }
         }
 
         // On-Device NLU & Vision Assist (Zero-Config Mode when API Key is empty)
@@ -282,9 +291,18 @@ class GeminiAiService @Inject constructor(
                 )
             }
 
-            val url = "https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent?key=$apiKey"
+            val cleanModel = modelName.trim().removePrefix("models/").ifBlank { "gemini-2.5-flash" }
+            val url = "https://generativelanguage.googleapis.com/v1beta/models"
+                .toHttpUrl()
+                .newBuilder()
+                .addPathSegment("$cleanModel:generateContent")
+                .build()
             val body = requestPayload.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
-            val request = Request.Builder().url(url).post(body).build()
+            val request = Request.Builder()
+                .url(url)
+                .header("x-goog-api-key", apiKey.trim())
+                .post(body)
+                .build()
 
             okHttpClient.newCall(request).execute().use { response ->
                 val rawBody = response.body?.string().orEmpty()
@@ -304,17 +322,22 @@ class GeminiAiService @Inject constructor(
 
                 val parsed = json.decodeFromString<GeminiFoodAnalysisResponseDto>(textContent)
                 val mapped = parsed.items.map { dto ->
+                    val safeGrams = if (dto.grams.isFinite()) dto.grams.coerceIn(1f, 5000f) else 100f
+                    val safeProtein = if (dto.proteinGrams.isFinite()) dto.proteinGrams.coerceAtLeast(0f) else 0f
+                    val safeCarbs = if (dto.carbsGrams.isFinite()) dto.carbsGrams.coerceAtLeast(0f) else 0f
+                    val safeFat = if (dto.fatGrams.isFinite()) dto.fatGrams.coerceAtLeast(0f) else 0f
+                    val safeConf = if (dto.confidence.isFinite()) dto.confidence.coerceIn(0.5f, 0.99f) else 0.85f
                     AiAnalyzedFoodItem(
                         id = UUID.randomUUID().toString(),
-                        name = dto.name,
-                        unitLabel = dto.unitLabel,
-                        baseGrams = dto.grams.coerceAtLeast(1f),
+                        name = dto.name.ifBlank { "Besin" },
+                        unitLabel = dto.unitLabel.ifBlank { "1 Porsiyon" },
+                        baseGrams = safeGrams,
                         multiplier = 1f,
                         baseCalories = dto.calories.coerceAtLeast(0),
-                        baseProtein = dto.proteinGrams.coerceAtLeast(0f),
-                        baseCarbs = dto.carbsGrams.coerceAtLeast(0f),
-                        baseFat = dto.fatGrams.coerceAtLeast(0f),
-                        confidence = dto.confidence.coerceIn(0.5f, 0.99f),
+                        baseProtein = safeProtein,
+                        baseCarbs = safeCarbs,
+                        baseFat = safeFat,
+                        confidence = safeConf,
                         included = true,
                     )
                 }
@@ -343,17 +366,18 @@ class GeminiAiService @Inject constructor(
 
         for (segment in segments) {
             val normSegment = TurkishTextNormalizer.normalize(segment)
-            val isHalf = normSegment.contains("yarim")
+            val isHalf = HALF_WORD_REGEX.containsMatchIn(normSegment)
 
             val explicitGrams = GRAM_REGEX.find(normSegment)?.groupValues?.getOrNull(1)
-                ?.replace(',', '.')?.toFloatOrNull()
+                ?.replace(',', '.')?.toFloatOrNull()?.takeIf { it.isFinite() && it > 0f }
 
             val countMatch = if (explicitGrams == null) COUNT_REGEX.find(normSegment) else null
             val quantity = when {
+                countMatch != null -> countMatch.groupValues[1].replace(',', '.').toFloatOrNull()
+                    ?.takeIf { it.isFinite() && it > 0f } ?: 1f
                 isHalf -> 0.5f
-                countMatch != null -> countMatch.groupValues[1].replace(',', '.').toFloatOrNull() ?: 1f
                 else -> 1f
-            }
+            }.coerceIn(0.1f, 50f)
 
             // Strip numbers and unit words to match the food name
             val cleanedFoodQuery = normSegment
@@ -367,7 +391,7 @@ class GeminiAiService @Inject constructor(
 
             val matchedFood = findBestCatalogMatch(cleanedFoodQuery, catalogFoods)
             if (matchedFood != null) {
-                val totalGrams = explicitGrams ?: (matchedFood.defaultUnitGrams * quantity)
+                val totalGrams = (explicitGrams ?: (matchedFood.defaultUnitGrams * quantity)).coerceIn(1f, 5000f)
                 val unitDescription = if (explicitGrams != null) {
                     "${explicitGrams.roundToInt()} g"
                 } else if (quantity == 1f) {

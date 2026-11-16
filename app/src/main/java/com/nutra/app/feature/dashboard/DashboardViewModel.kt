@@ -25,6 +25,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -43,7 +44,9 @@ import kotlinx.coroutines.launch
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.temporal.TemporalAdjusters
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
+import kotlin.math.roundToInt
 
 enum class LoggingTabMode(val title: String) {
     CATALOG("Katalog"),
@@ -55,6 +58,7 @@ enum class LoggingTabMode(val title: String) {
 @Immutable
 data class DashboardUiState(
     val isLoading: Boolean = true,
+    val today: LocalDate = LocalDate.now(),
     val selectedDate: LocalDate = LocalDate.now(),
     val isWeekCalendarVisible: Boolean = false,
     val weekDays: List<LocalDate> = emptyList(),
@@ -70,6 +74,7 @@ data class DashboardUiState(
     val editingLogItem: MealLogItem? = null,
     val lastDeletedItem: MealLogItem? = null,
     val statusBannerMessage: String? = null,
+    val bannerEventId: Long = 0L,
 )
 
 @Immutable
@@ -96,6 +101,7 @@ private data class DashboardBannerState(
     val editingLogItem: MealLogItem? = null,
     val lastDeletedItem: MealLogItem? = null,
     val statusBannerMessage: String? = null,
+    val bannerEventId: Long = 0L,
 )
 
 private data class LoggingModalInternalState(
@@ -121,12 +127,16 @@ class DashboardViewModel @Inject constructor(
     private val geminiAiService: dagger.Lazy<GeminiAiService>,
 ) : ViewModel() {
 
-    private val selectedDateFlow = MutableStateFlow(LocalDate.now())
+    private val todayFlow = MutableStateFlow(LocalDate.now())
+    private val selectedDateFlow = MutableStateFlow(todayFlow.value)
     private val isWeekCalendarVisibleFlow = MutableStateFlow(false)
     private val expandedMealsFlow = MutableStateFlow<Set<MealType>>(emptySet())
     private val bannerStateFlow = MutableStateFlow(DashboardBannerState())
     private val modalStateFlow = MutableStateFlow(LoggingModalInternalState())
     private val searchQueryFlow = MutableStateFlow("")
+    private val bannerSeq = AtomicLong(0L)
+    private var aiAnalysisJob: Job? = null
+    private var barcodeLookupJob: Job? = null
     val searchQueryState: StateFlow<String> = searchQueryFlow
 
     private val dateDependentSummaryFlow = selectedDateFlow.flatMapLatest { date ->
@@ -146,13 +156,15 @@ class DashboardViewModel @Inject constructor(
         .distinctUntilChanged()
 
     val uiState: StateFlow<DashboardUiState> = combine(
+        todayFlow,
         dateDependentSummaryFlow,
         combine(expandedMealsFlow, isWeekCalendarVisibleFlow) { e, w -> e to w },
         activeLoggingMealTypeFlow,
         bannerStateFlow,
-    ) { (dateAndDays, summary, weekStatus), (expandedMeals, isWeekCalendarVisible), activeLoggingMeal, banner ->
+    ) { today, (dateAndDays, summary, weekStatus), (expandedMeals, isWeekCalendarVisible), activeLoggingMeal, banner ->
         DashboardUiState(
             isLoading = false,
+            today = today,
             selectedDate = dateAndDays.first,
             isWeekCalendarVisible = isWeekCalendarVisible,
             weekDays = dateAndDays.second,
@@ -163,6 +175,7 @@ class DashboardViewModel @Inject constructor(
             editingLogItem = banner.editingLogItem,
             lastDeletedItem = banner.lastDeletedItem,
             statusBannerMessage = banner.statusBannerMessage,
+            bannerEventId = banner.bannerEventId,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -330,6 +343,17 @@ class DashboardViewModel @Inject constructor(
         initialValue = LoggingSheetUiState(),
     )
 
+    fun refreshToday() {
+        val now = LocalDate.now()
+        val prevToday = todayFlow.value
+        if (now != prevToday) {
+            todayFlow.value = now
+            if (selectedDateFlow.value == prevToday) {
+                selectedDateFlow.value = now
+            }
+        }
+    }
+
     fun selectDate(date: LocalDate) {
         selectedDateFlow.value = date
     }
@@ -343,7 +367,9 @@ class DashboardViewModel @Inject constructor(
     }
 
     fun jumpToToday() {
-        selectedDateFlow.value = LocalDate.now()
+        val now = LocalDate.now()
+        todayFlow.value = now
+        selectedDateFlow.value = now
     }
 
     fun toggleMealExpanded(mealType: MealType) {
@@ -374,12 +400,18 @@ class DashboardViewModel @Inject constructor(
     }
 
     fun closeAddFoodModal() {
+        aiAnalysisJob?.cancel()
+        aiAnalysisJob = null
+        barcodeLookupJob?.cancel()
+        barcodeLookupJob = null
         searchQueryFlow.value = ""
         modalStateFlow.update {
             it.copy(
                 activeLoggingMealType = null,
                 selectedFoodForPortion = null,
+                aiAnalyzing = false,
                 aiErrorMessage = null,
+                barcodeLoading = false,
                 barcodeErrorMessage = null,
             )
         }
@@ -448,9 +480,7 @@ class DashboardViewModel @Inject constructor(
                 multiplier = multiplier,
             )
             modalStateFlow.update { it.copy(selectedFoodForPortion = null) }
-            bannerStateFlow.update {
-                it.copy(statusBannerMessage = "${food.name} (${mealType.title}) eklendi")
-            }
+            showStatusBanner("${food.name} (${mealType.title}) eklendi")
         }
     }
 
@@ -464,9 +494,7 @@ class DashboardViewModel @Inject constructor(
                 entries = combo.items,
             )
             modalStateFlow.update { it.copy(activeLoggingMealType = null) }
-            bannerStateFlow.update {
-                it.copy(statusBannerMessage = "${combo.title} (${combo.totalCalories} kcal) eklendi")
-            }
+            showStatusBanner("${combo.title} (${combo.totalCalories} kcal) eklendi")
         }
     }
 
@@ -488,12 +516,26 @@ class DashboardViewModel @Inject constructor(
     fun deleteLoggedItem(item: MealLogItem) {
         viewModelScope.launch {
             nutritionRepository.deleteMealLog(item.id)
+            val eventId = bannerSeq.incrementAndGet()
             bannerStateFlow.update {
                 it.copy(
                     editingLogItem = null,
                     lastDeletedItem = item,
+                    statusBannerMessage = null,
+                    bannerEventId = eventId,
                 )
             }
+        }
+    }
+
+    private fun showStatusBanner(message: String) {
+        val eventId = bannerSeq.incrementAndGet()
+        bannerStateFlow.update {
+            it.copy(
+                lastDeletedItem = null,
+                statusBannerMessage = message,
+                bannerEventId = eventId,
+            )
         }
     }
 
@@ -515,7 +557,8 @@ class DashboardViewModel @Inject constructor(
     }
 
     fun analyzePhotoWithAi(contentResolver: ContentResolver, uri: Uri) {
-        viewModelScope.launch {
+        aiAnalysisJob?.cancel()
+        aiAnalysisJob = viewModelScope.launch {
             modalStateFlow.update { it.copy(aiAnalyzing = true, aiErrorMessage = null) }
             val aiService = geminiAiService.get()
             val bytes = aiService.loadCompressedImageBytes(contentResolver, uri)
@@ -530,7 +573,8 @@ class DashboardViewModel @Inject constructor(
     }
 
     fun analyzeWithAi(imageBytes: ByteArray? = null) {
-        viewModelScope.launch {
+        aiAnalysisJob?.cancel()
+        aiAnalysisJob = viewModelScope.launch {
             modalStateFlow.update { it.copy(aiAnalyzing = true, aiErrorMessage = null) }
             runAiAnalysisInternal(imageBytes)
         }
@@ -539,7 +583,7 @@ class DashboardViewModel @Inject constructor(
     private suspend fun runAiAnalysisInternal(imageBytes: ByteArray?) {
         val prompt = modalStateFlow.value.aiPromptText
         val profile = preferencesDataStore.getSnapshot()
-        val catalog = loggingUiState.value.rankedFoods
+        val catalog = cachedFoodsFlow.value ?: nutritionRepository.observeAllFoods().first()
         val result = geminiAiService.get().analyzeFoodInput(
             promptText = prompt,
             imageBytes = imageBytes,
@@ -616,9 +660,7 @@ class DashboardViewModel @Inject constructor(
                     aiAnalyzedItems = emptyList(),
                 )
             }
-            bannerStateFlow.update {
-                it.copy(statusBannerMessage = "${entries.size} AI besin kalemi eklendi")
-            }
+            showStatusBanner("${entries.size} AI besin kalemi eklendi")
         }
     }
 
@@ -630,7 +672,8 @@ class DashboardViewModel @Inject constructor(
     fun lookupBarcode(codeOverride: String? = null) {
         val code = (codeOverride ?: modalStateFlow.value.barcodeInput).trim()
         if (code.isBlank()) return
-        viewModelScope.launch {
+        barcodeLookupJob?.cancel()
+        barcodeLookupJob = viewModelScope.launch {
             modalStateFlow.update { it.copy(barcodeInput = code, barcodeLoading = true, barcodeErrorMessage = null) }
             when (val res = nutritionRepository.findOrLookupBarcode(code)) {
                 is AppResult.Success -> {
@@ -664,17 +707,17 @@ class DashboardViewModel @Inject constructor(
         carbsPerServing: Float,
         fatPerServing: Float,
     ) {
-        val safeGrams = unitGrams.coerceAtLeast(1f)
+        val safeGrams = unitGrams.coerceIn(1f, 5000f)
         val factor = 100f / safeGrams
         val newFood = FoodItem(
             name = name.trim(),
-            subtitle = "Özel Besin · $unitLabel",
+            subtitle = "Özel Besin · ${unitLabel.trim().ifBlank { "1 Porsiyon" }}",
             category = FoodCategory.CUSTOM,
-            caloriesPer100g = (caloriesPerServing * factor).toInt().coerceAtLeast(0),
+            caloriesPer100g = (caloriesPerServing * factor).roundToInt().coerceAtLeast(0),
             proteinPer100g = (proteinPerServing * factor).coerceAtLeast(0f),
             carbsPer100g = (carbsPerServing * factor).coerceAtLeast(0f),
             fatPer100g = (fatPerServing * factor).coerceAtLeast(0f),
-            defaultUnitLabel = unitLabel.ifBlank { "1 Porsiyon" },
+            defaultUnitLabel = unitLabel.trim().ifBlank { "1 Porsiyon" },
             defaultUnitGrams = safeGrams,
             isCustom = true,
             isFavorite = true,
@@ -693,9 +736,7 @@ class DashboardViewModel @Inject constructor(
                 multiplier = 1f,
             )
             modalStateFlow.update { it.copy(activeLoggingMealType = null) }
-            bannerStateFlow.update {
-                it.copy(statusBannerMessage = "${savedFood.name} oluşturuldu ve öğüne eklendi")
-            }
+            showStatusBanner("${savedFood.name} oluşturuldu ve öğüne eklendi")
         }
     }
 }

@@ -160,16 +160,17 @@ data class MealLogItem(
 ) {
     val formattedQuantity: String
         get() {
+            if (unitLabel == "1 Gram") {
+                return "${totalGrams.roundToInt()} g"
+            }
             val multStr = if (multiplier % 1f == 0f) {
                 multiplier.toInt().toString()
             } else {
-                String.format(java.util.Locale.US, "%.1f", multiplier)
+                String.format(java.util.Locale.US, "%.2f", multiplier)
+                    .trimEnd('0')
+                    .trimEnd('.')
             }
-            return if (unitLabel == "1 Gram") {
-                "${totalGrams.roundToInt()} g"
-            } else {
-                "${multStr}x $unitLabel (${totalGrams.roundToInt()} g)"
-            }
+            return "${multStr}x $unitLabel (${totalGrams.roundToInt()} g)"
         }
 }
 

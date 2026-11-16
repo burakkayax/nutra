@@ -70,12 +70,12 @@ val LightNutraColors = NutraColors(
 
     textPrimary = Color(0xFF111111),
     textSecondary = Color(0xFF6B6B68),
-    textTertiary = Color(0xFFA1A19D),
+    textTertiary = Color(0xFF767672),
 
     ink = Color(0xFF111111),
     onInk = Color(0xFFFFFFFF),
 
-    accent = Color(0xFF17A35A),
+    accent = Color(0xFF118749),
     accentSoft = Color(0xFFE2F4E9),
     onAccent = Color(0xFFFFFFFF),
 
@@ -106,7 +106,7 @@ val DarkNutraColors = NutraColors(
 
     textPrimary = Color(0xFFF4F4F2),
     textSecondary = Color(0xFFA3A39E),
-    textTertiary = Color(0xFF6F6F6B),
+    textTertiary = Color(0xFF858580),
 
     ink = Color(0xFFF4F4F2),
     onInk = Color(0xFF0C0C0C),

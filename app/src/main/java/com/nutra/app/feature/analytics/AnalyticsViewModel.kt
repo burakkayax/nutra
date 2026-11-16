@@ -72,14 +72,16 @@ class AnalyticsViewModel @Inject constructor(
     private val weightTrendCalculator: WeightTrendCalculator,
 ) : ViewModel() {
 
+    private val todayFlow = MutableStateFlow(LocalDate.now())
     private val rangeFlow = MutableStateFlow(AnalyticsRangeOption.DAYS_7)
     private val scrubbedDayIndexFlow = MutableStateFlow<Int?>(null)
     private val scrubbedWaterIndexFlow = MutableStateFlow<Int?>(null)
     private val scrubbedWeightIndexFlow = MutableStateFlow<Int?>(null)
     private val showWeightDialogFlow = MutableStateFlow(false)
 
-    private val rangeSummaryFlow = rangeFlow.flatMapLatest { option ->
-        val end = LocalDate.now()
+    private val rangeSummaryFlow = combine(rangeFlow, todayFlow) { option, end ->
+        option to end
+    }.flatMapLatest { (option, end) ->
         val start = end.minusDays((option.days - 1).toLong())
         nutritionRepository.observeAnalyticsRange(start, end)
             .map { points ->
@@ -152,6 +154,13 @@ class AnalyticsViewModel @Inject constructor(
         initialValue = AnalyticsUiState(),
     )
 
+    fun refreshToday() {
+        val now = LocalDate.now()
+        if (todayFlow.value != now) {
+            todayFlow.value = now
+        }
+    }
+
     fun selectRange(option: AnalyticsRangeOption) {
         rangeFlow.value = option
         scrubbedDayIndexFlow.value = null
@@ -180,7 +189,9 @@ class AnalyticsViewModel @Inject constructor(
 
     fun logNewWeight(weightKg: Float) {
         viewModelScope.launch {
-            nutritionRepository.logWeight(LocalDate.now().toString(), weightKg)
+            val today = LocalDate.now()
+            todayFlow.value = today
+            nutritionRepository.logWeight(today.toString(), weightKg)
             showWeightDialogFlow.value = false
         }
     }

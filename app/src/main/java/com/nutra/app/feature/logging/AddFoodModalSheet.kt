@@ -1,15 +1,21 @@
 package com.nutra.app.feature.logging
 
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -60,6 +66,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -104,7 +111,6 @@ import com.nutra.app.domain.model.MealType
 import com.nutra.app.domain.model.SmartComboSuggestion
 import com.nutra.app.feature.dashboard.LoggingSheetUiState
 import com.nutra.app.feature.dashboard.LoggingTabMode
-import java.util.Locale
 import kotlin.math.roundToInt
 
 private fun formatInt(value: Int): String = NutraFormatters.formatInt(value)
@@ -153,10 +159,19 @@ fun AddFoodModalSheet(
     val activeMeal = state.activeLoggingMealType
     val portionFood = state.selectedFoodForPortion
 
+    LaunchedEffect(state.selectedCategory, state.isSearchActive) {
+        if (catalogListState.firstVisibleItemIndex > 0 || catalogListState.firstVisibleItemScrollOffset > 0) {
+            catalogListState.scrollToItem(0)
+        }
+    }
+
     NutraModalSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
     ) {
+        BackHandler(enabled = portionFood != null) {
+            onClosePortionPicker()
+        }
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -170,9 +185,13 @@ fun AddFoodModalSheet(
                     .fillMaxWidth()
                     .padding(horizontal = NutraTheme.spacing.screen, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                if (portionFood != null) {
+                AnimatedVisibility(
+                    visible = portionFood != null,
+                    enter = fadeIn(tween(160)) + expandHorizontally(tween(180)),
+                    exit = fadeOut(tween(120)) + shrinkHorizontally(tween(160)),
+                ) {
                     NutraIconButton(
                         icon = Icons.AutoMirrored.Rounded.ArrowBack,
                         contentDescription = "Geri",
@@ -181,14 +200,20 @@ fun AddFoodModalSheet(
                     )
                 }
 
-                Text(
-                    text = if (portionFood != null) "Porsiyon seç" else "Besin ekle",
-                    style = NutraTheme.typography.titleMedium,
-                    color = NutraTheme.colors.textPrimary,
+                AnimatedContent(
+                    targetState = portionFood != null,
+                    transitionSpec = { fadeIn(tween(160)) togetherWith fadeOut(tween(120)) },
                     modifier = Modifier.weight(1f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                    label = "SheetHeaderTitle",
+                ) { isPortion ->
+                    Text(
+                        text = if (isPortion) "Porsiyon seç" else "Besin ekle",
+                        style = NutraTheme.typography.titleMedium,
+                        color = NutraTheme.colors.textPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
 
                 MealSelectorDropdownPill(
                     activeMeal = activeMeal,
@@ -205,74 +230,93 @@ fun AddFoodModalSheet(
 
             Spacer(Modifier.height(6.dp))
 
-            if (portionFood != null) {
-                PortionPickerContent(
-                    food = portionFood,
-                    mealType = activeMeal,
-                    onBack = onClosePortionPicker,
-                    onToggleFavorite = { onToggleFavorite(portionFood) },
-                    onConfirm = { unitLabel, unitGrams, multiplier ->
-                        onConfirmLogFood(portionFood, unitLabel, unitGrams, multiplier)
-                    },
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth(),
-                )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = NutraTheme.spacing.screen, vertical = 4.dp),
-                ) {
-                    NutraSegmentedControl(
-                        items = LoggingTabMode.entries,
-                        selectedItem = state.loggingTabMode,
-                        onItemSelected = onSelectTab,
-                        labelProvider = { it.title },
+            AnimatedContent(
+                targetState = portionFood,
+                contentKey = { it != null },
+                transitionSpec = {
+                    val enteringPortion = targetState != null
+                    if (enteringPortion) {
+                        (slideInHorizontally(tween(240)) { it / 4 } + fadeIn(tween(180))) togetherWith
+                            (slideOutHorizontally(tween(200)) { -it / 6 } + fadeOut(tween(140)))
+                    } else {
+                        (slideInHorizontally(tween(220)) { -it / 6 } + fadeIn(tween(180))) togetherWith
+                            (slideOutHorizontally(tween(200)) { it / 4 } + fadeOut(tween(140)))
+                    }
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                label = "SheetPortionTransition",
+            ) { selectedFood ->
+                if (selectedFood != null) {
+                    PortionPickerContent(
+                        food = selectedFood,
+                        mealType = activeMeal,
+                        onBack = onClosePortionPicker,
+                        onToggleFavorite = { onToggleFavorite(selectedFood) },
+                        onConfirm = { unitLabel, unitGrams, multiplier ->
+                            onConfirmLogFood(selectedFood, unitLabel, unitGrams, multiplier)
+                        },
+                        modifier = Modifier.fillMaxSize(),
                     )
-                }
+                } else {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = NutraTheme.spacing.screen, vertical = 4.dp),
+                        ) {
+                            NutraSegmentedControl(
+                                items = LoggingTabMode.entries,
+                                selectedItem = state.loggingTabMode,
+                                onItemSelected = onSelectTab,
+                                labelProvider = { it.title },
+                            )
+                        }
 
-                Spacer(Modifier.height(8.dp))
+                        Spacer(Modifier.height(8.dp))
 
-                AnimatedContent(
-                    targetState = state.loggingTabMode,
-                    transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(120)) },
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth(),
-                    label = "LoggingTabTransition",
-                ) { tabMode ->
-                    when (tabMode) {
-                        LoggingTabMode.CATALOG -> CatalogAndSmartComboTab(
-                            state = state,
-                            searchQuery = searchQuery,
-                            activeMeal = activeMeal,
-                            listState = catalogListState,
-                            onSearchQueryChange = onSearchQueryChange,
-                            onSelectCategory = onSelectCategory,
-                            onSelectFood = onSelectFoodForPortion,
-                            onToggleFavorite = onToggleFavorite,
-                            onLogSmartCombo = onLogSmartCombo,
-                        )
-                        LoggingTabMode.AI_ANALYZE -> AiAnalyzeTab(
-                            state = state,
-                            mealType = activeMeal,
-                            onAiPromptChange = onAiPromptChange,
-                            onRunAiAnalysis = onRunAiAnalysis,
-                            onAnalyzePhotoUri = onAnalyzePhotoUri,
-                            onUpdateMultiplier = onUpdateAiItemMultiplier,
-                            onToggleIncluded = onToggleAiItemIncluded,
-                            onCommitItems = onCommitAiItems,
-                        )
-                        LoggingTabMode.BARCODE -> BarcodeLookupTab(
-                            state = state,
-                            onBarcodeChange = onBarcodeInputChange,
-                            onLookup = onLookupBarcode,
-                        )
-                        LoggingTabMode.CUSTOM -> CustomFoodCreatorTab(
-                            mealType = activeMeal,
-                            onCreateAndLog = onCreateAndLogCustomFood,
-                        )
+                        AnimatedContent(
+                            targetState = state.loggingTabMode,
+                            transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(120)) },
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth(),
+                            label = "LoggingTabTransition",
+                        ) { tabMode ->
+                            when (tabMode) {
+                                LoggingTabMode.CATALOG -> CatalogAndSmartComboTab(
+                                    state = state,
+                                    searchQuery = searchQuery,
+                                    activeMeal = activeMeal,
+                                    listState = catalogListState,
+                                    onSearchQueryChange = onSearchQueryChange,
+                                    onSelectCategory = onSelectCategory,
+                                    onSelectFood = onSelectFoodForPortion,
+                                    onToggleFavorite = onToggleFavorite,
+                                    onLogSmartCombo = onLogSmartCombo,
+                                )
+                                LoggingTabMode.AI_ANALYZE -> AiAnalyzeTab(
+                                    state = state,
+                                    mealType = activeMeal,
+                                    onAiPromptChange = onAiPromptChange,
+                                    onRunAiAnalysis = onRunAiAnalysis,
+                                    onAnalyzePhotoUri = onAnalyzePhotoUri,
+                                    onUpdateMultiplier = onUpdateAiItemMultiplier,
+                                    onToggleIncluded = onToggleAiItemIncluded,
+                                    onCommitItems = onCommitAiItems,
+                                )
+                                LoggingTabMode.BARCODE -> BarcodeLookupTab(
+                                    state = state,
+                                    onBarcodeChange = onBarcodeInputChange,
+                                    onLookup = onLookupBarcode,
+                                )
+                                LoggingTabMode.CUSTOM -> CustomFoodCreatorTab(
+                                    mealType = activeMeal,
+                                    onCreateAndLog = onCreateAndLogCustomFood,
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -302,7 +346,7 @@ private fun MealSelectorDropdownPill(
         Row(
             modifier = Modifier
                 .height(40.dp)
-                .widthIn(max = 160.dp)
+                .widthIn(max = 148.dp)
                 .clip(NutraTheme.shapes.pill)
                 .background(NutraTheme.colors.surfaceMuted)
                 .clickable(
@@ -312,7 +356,7 @@ private fun MealSelectorDropdownPill(
                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     expanded = true
                 }
-                .padding(start = 10.dp, end = 12.dp),
+                .padding(start = 8.dp, end = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
@@ -446,7 +490,7 @@ private fun CatalogSearchField(
                     icon = Icons.Rounded.Close,
                     contentDescription = "Temizle",
                     onClick = { onSearchQueryChange("") },
-                    size = 32.dp,
+                    size = 40.dp,
                     iconSize = 16.dp,
                     containerColor = NutraTheme.colors.surfaceElevated,
                 )
@@ -709,16 +753,18 @@ private fun PortionPickerContent(
     modifier: Modifier = Modifier,
 ) {
     val haptic = LocalHapticFeedback.current
-    val units = remember(food) { food.allUnits }
-    var selectedUnitIndex by remember(food) { mutableIntStateOf(0) }
-    var multiplier by remember(food) { mutableFloatStateOf(1f) }
-    var customGramInput by remember(food) { mutableStateOf("") }
+    val units = remember(food.id) { food.allUnits }
+    var selectedUnitIndex by remember(food.id) { mutableIntStateOf(0) }
+    var multiplier by remember(food.id) { mutableFloatStateOf(1f) }
+    var customGramInput by remember(food.id) { mutableStateOf("") }
 
     val selectedUnit = units.getOrElse(selectedUnitIndex) { units.first() }
     val isRawGramMode = selectedUnit.label == "1 Gram"
+    val parsedCustomGrams = NutraFormatters.parseLocalizedFloat(customGramInput)
+    val isCustomGramValid = !isRawGramMode || (parsedCustomGrams != null && parsedCustomGrams >= 1f)
 
-    val effectiveGrams = if (isRawGramMode && customGramInput.isNotBlank()) {
-        customGramInput.toFloatOrNull()?.coerceIn(1f, 3000f) ?: (selectedUnit.grams * multiplier)
+    val effectiveGrams = if (isRawGramMode) {
+        parsedCustomGrams?.coerceIn(1f, 3000f) ?: food.defaultUnitGrams
     } else {
         (selectedUnit.grams * multiplier).coerceAtLeast(1f)
     }
@@ -889,11 +935,14 @@ private fun PortionPickerContent(
             if (isRawGramMode) {
                 NutraTextField(
                     value = customGramInput,
-                    onValueChange = { customGramInput = it.filter { ch -> ch.isDigit() || ch == '.' } },
+                    onValueChange = {
+                        customGramInput = NutraFormatters.sanitizeNumericInput(it, allowDecimal = true)
+                    },
                     label = "Gramaj",
                     placeholder = "100",
                     suffix = "g",
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    isError = customGramInput.isNotEmpty() && !isCustomGramValid,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 )
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -947,11 +996,7 @@ private fun PortionPickerContent(
                             )
 
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                val multLabel = if (multiplier % 1f == 0f) {
-                                    "${multiplier.toInt()}"
-                                } else {
-                                    String.format(Locale.US, "%.2f", multiplier).trimEnd('0').trimEnd('.')
-                                }
+                                val multLabel = NutraFormatters.formatMultiplier(multiplier)
                                 Text(
                                     text = "$multLabel × ${selectedUnit.label}",
                                     style = NutraTheme.typography.titleSmall,
@@ -1009,6 +1054,7 @@ private fun PortionPickerContent(
                 style = NutraButtonStyle.Primary,
                 size = NutraButtonSize.Medium,
                 leadingIcon = Icons.Rounded.Check,
+                enabled = isCustomGramValid,
                 modifier = Modifier.weight(0.68f),
             )
         }
@@ -1059,7 +1105,7 @@ private fun CompactMultiplierPill(
     )
     Box(
         modifier = modifier
-            .height(36.dp)
+            .height(40.dp)
             .clip(NutraTheme.shapes.pill)
             .drawBehind { drawRect(bgState.value) }
             .clickable(role = Role.Tab) {
@@ -1379,7 +1425,7 @@ private fun BarcodeLookupTab(
                         icon = Icons.Rounded.Close,
                         contentDescription = "Temizle",
                         onClick = { onBarcodeChange("") },
-                        size = 32.dp,
+                        size = 40.dp,
                         iconSize = 16.dp,
                         containerColor = NutraTheme.colors.surfaceElevated,
                     )
@@ -1502,6 +1548,18 @@ private fun CustomFoodCreatorTab(
     var carbs by remember { mutableStateOf("") }
     var fat by remember { mutableStateOf("") }
 
+    val parsedGrams = NutraFormatters.parseLocalizedFloat(unitGrams)
+    val parsedCalories = calories.toIntOrNull()
+    val parsedProtein = NutraFormatters.parseLocalizedFloat(protein) ?: 0f
+    val parsedCarbs = NutraFormatters.parseLocalizedFloat(carbs) ?: 0f
+    val parsedFat = NutraFormatters.parseLocalizedFloat(fat) ?: 0f
+    val isGramsInvalid = unitGrams.isNotEmpty() && (parsedGrams == null || parsedGrams < 1f)
+    val isFormValid = name.isNotBlank() &&
+        parsedCalories != null &&
+        parsedCalories >= 0 &&
+        parsedGrams != null &&
+        parsedGrams >= 1f
+
     Column(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
@@ -1536,18 +1594,21 @@ private fun CustomFoodCreatorTab(
                 )
                 NutraTextField(
                     value = unitGrams,
-                    onValueChange = { unitGrams = it.filter { ch -> ch.isDigit() || ch == '.' } },
+                    onValueChange = {
+                        unitGrams = NutraFormatters.sanitizeNumericInput(it, allowDecimal = true)
+                    },
                     label = "Gramaj",
                     placeholder = "100",
                     suffix = "g",
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    isError = isGramsInvalid,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.weight(0.8f),
                 )
             }
 
             NutraTextField(
                 value = calories,
-                onValueChange = { calories = it.filter { ch -> ch.isDigit() } },
+                onValueChange = { calories = NutraFormatters.sanitizeNumericInput(it, allowDecimal = false) },
                 label = "Kalori",
                 placeholder = "240",
                 suffix = "kcal",
@@ -1560,29 +1621,35 @@ private fun CustomFoodCreatorTab(
             ) {
                 NutraTextField(
                     value = protein,
-                    onValueChange = { protein = it.filter { ch -> ch.isDigit() || ch == '.' } },
+                    onValueChange = {
+                        protein = NutraFormatters.sanitizeNumericInput(it, allowDecimal = true)
+                    },
                     label = "Protein",
                     placeholder = "0",
                     suffix = "g",
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.weight(1f),
                 )
                 NutraTextField(
                     value = carbs,
-                    onValueChange = { carbs = it.filter { ch -> ch.isDigit() || ch == '.' } },
+                    onValueChange = {
+                        carbs = NutraFormatters.sanitizeNumericInput(it, allowDecimal = true)
+                    },
                     label = "Karb",
                     placeholder = "0",
                     suffix = "g",
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.weight(1f),
                 )
                 NutraTextField(
                     value = fat,
-                    onValueChange = { fat = it.filter { ch -> ch.isDigit() || ch == '.' } },
+                    onValueChange = {
+                        fat = NutraFormatters.sanitizeNumericInput(it, allowDecimal = true)
+                    },
                     label = "Yağ",
                     placeholder = "0",
                     suffix = "g",
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -1600,20 +1667,22 @@ private fun CustomFoodCreatorTab(
             NutraButton(
                 text = "Kaydet ve ${mealType.title} öğününe ekle",
                 onClick = {
+                    val safeGrams = parsedGrams ?: return@NutraButton
+                    val safeCalories = parsedCalories ?: return@NutraButton
                     haptic.performHapticFeedback(HapticFeedbackType.Confirm)
                     onCreateAndLog(
                         name,
                         unitLabel,
-                        unitGrams.toFloatOrNull() ?: 100f,
-                        calories.toIntOrNull() ?: 0,
-                        protein.toFloatOrNull() ?: 0f,
-                        carbs.toFloatOrNull() ?: 0f,
-                        fat.toFloatOrNull() ?: 0f,
+                        safeGrams,
+                        safeCalories,
+                        parsedProtein,
+                        parsedCarbs,
+                        parsedFat,
                     )
                 },
                 style = NutraButtonStyle.Primary,
                 size = NutraButtonSize.Medium,
-                enabled = name.isNotBlank() && calories.isNotBlank(),
+                enabled = isFormValid,
                 modifier = Modifier.fillMaxWidth(),
             )
         }

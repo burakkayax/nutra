@@ -13,6 +13,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.roundToInt
@@ -25,8 +26,8 @@ class OpenFoodFactsService @Inject constructor(
 
     suspend fun lookupBarcode(barcode: String): AppResult<FoodItem> = withContext(Dispatchers.IO) {
         val cleaned = barcode.trim()
-        if (cleaned.length < 8) {
-            return@withContext AppResult.Error("Geçersiz barkod numarası (En az 8 haneli EAN/UPC giriniz).")
+        if (cleaned.length !in 8..14 || !cleaned.all { it.isDigit() }) {
+            return@withContext AppResult.Error("Geçersiz barkod numarası (8–14 haneli EAN/UPC giriniz).")
         }
 
         try {
@@ -59,15 +60,19 @@ class OpenFoodFactsService @Inject constructor(
                     ?: "Paketli Ürün"
 
                 val nutriments = product["nutriments"]?.jsonObject
-                val kcal100 = nutriments?.get("energy-kcal_100g")?.jsonPrimitive?.floatOrNull?.roundToInt()
-                    ?: nutriments?.get("energy-kcal")?.jsonPrimitive?.floatOrNull?.roundToInt()
-                    ?: 150
+                val energyKcal = nutriments?.get("energy-kcal_100g")?.jsonPrimitive?.floatOrNull?.takeIf { it.isFinite() }
+                    ?: nutriments?.get("energy-kcal")?.jsonPrimitive?.floatOrNull?.takeIf { it.isFinite() }
+                    ?: nutriments?.get("energy_100g")?.jsonPrimitive?.floatOrNull?.takeIf { it.isFinite() }?.div(4.184f)
+                val kcal100 = energyKcal?.roundToInt() ?: 150
 
-                val protein100 = nutriments?.get("proteins_100g")?.jsonPrimitive?.floatOrNull ?: 5f
-                val carbs100 = nutriments?.get("carbohydrates_100g")?.jsonPrimitive?.floatOrNull ?: 20f
-                val fat100 = nutriments?.get("fat_100g")?.jsonPrimitive?.floatOrNull ?: 5f
+                val protein100 = nutriments?.get("proteins_100g")?.jsonPrimitive?.floatOrNull?.takeIf { it.isFinite() } ?: 5f
+                val carbs100 = nutriments?.get("carbohydrates_100g")?.jsonPrimitive?.floatOrNull?.takeIf { it.isFinite() } ?: 20f
+                val fat100 = nutriments?.get("fat_100g")?.jsonPrimitive?.floatOrNull?.takeIf { it.isFinite() } ?: 5f
 
-                val servingGrams = product["serving_quantity"]?.jsonPrimitive?.floatOrNull?.coerceIn(10f, 500f) ?: 100f
+                val servingGrams = product["serving_quantity"]?.jsonPrimitive?.floatOrNull
+                    ?.takeIf { it.isFinite() }
+                    ?.coerceIn(10f, 500f)
+                    ?: 100f
 
                 val item = FoodItem(
                     name = name,
@@ -85,8 +90,10 @@ class OpenFoodFactsService @Inject constructor(
                 )
                 AppResult.Success(item)
             }
-        } catch (e: Exception) {
+        } catch (e: IOException) {
             AppResult.Error("Barkod sorgulanırken internet bağlantısı kurulamadı. Yerel barkodları (örn. 8690526011012) çevrimdışı kullanabilirsiniz.", e)
+        } catch (e: Exception) {
+            AppResult.Error("Barkod verisi işlenirken hata oluştu. Lütfen tekrar deneyin.", e)
         }
     }
 }

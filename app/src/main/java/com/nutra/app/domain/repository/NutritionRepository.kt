@@ -1,8 +1,10 @@
 package com.nutra.app.domain.repository
 
+import androidx.room.withTransaction
 import com.nutra.app.core.database.FoodItemEntity
 import com.nutra.app.core.database.MealLogEntity
 import com.nutra.app.core.database.NutraDao
+import com.nutra.app.core.database.NutraDatabase
 import com.nutra.app.core.database.TurkishFoodSeedCatalog
 import com.nutra.app.core.database.WaterLogEntity
 import com.nutra.app.core.database.WeightLogEntity
@@ -27,10 +29,11 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -38,6 +41,7 @@ import kotlinx.serialization.json.Json
 import java.time.LocalDate
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.math.roundToInt
 
 @Serializable
 data class NutraBackupPayload(
@@ -52,11 +56,15 @@ data class NutraBackupPayload(
 
 @Singleton
 class NutritionRepository @Inject constructor(
+    private val database: NutraDatabase,
     private val nutraDao: NutraDao,
     private val preferencesDataStore: UserPreferencesDataStore,
     private val openFoodFactsService: dagger.Lazy<OpenFoodFactsService>,
 ) {
     private val repoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val seedMutex = Mutex()
+    private val waterMutex = Mutex()
+    private val barcodeMutex = Mutex()
     private val backupJson by lazy {
         Json {
             prettyPrint = true
@@ -74,8 +82,10 @@ class NutritionRepository @Inject constructor(
     }
 
     suspend fun ensureCatalogSeeded() = withContext(Dispatchers.IO) {
-        if (nutraDao.getFoodCount() == 0) {
-            nutraDao.insertFoods(TurkishFoodSeedCatalog.toEntities())
+        seedMutex.withLock {
+            if (nutraDao.getFoodCount() == 0) {
+                nutraDao.insertFoods(TurkishFoodSeedCatalog.toEntities())
+            }
         }
     }
 
@@ -187,8 +197,17 @@ class NutritionRepository @Inject constructor(
         unitGrams: Float,
         multiplier: Float,
     ): MealLogItem = withContext(Dispatchers.IO) {
-        val safeMultiplier = multiplier.coerceIn(0.1f, 50f)
-        val totalGrams = (unitGrams * safeMultiplier).coerceAtLeast(1f)
+        val isRawGramMode = unitLabel == "1 Gram"
+        val safeMultiplier = if (isRawGramMode) {
+            multiplier.coerceIn(1f, 3000f)
+        } else {
+            multiplier.coerceIn(0.1f, 50f)
+        }
+        val totalGrams = if (isRawGramMode) {
+            safeMultiplier
+        } else {
+            (unitGrams * safeMultiplier).coerceAtLeast(1f)
+        }
         val now = System.currentTimeMillis()
         val item = MealLogItem(
             dateIso = dateIso,
@@ -241,16 +260,46 @@ class NutritionRepository @Inject constructor(
         logItem: MealLogItem,
         newMultiplier: Float,
     ) = withContext(Dispatchers.IO) {
+        val isRawGramMode = logItem.unitLabel == "1 Gram"
+        val safeNewMult = if (isRawGramMode) {
+            newMultiplier.coerceIn(1f, 3000f)
+        } else {
+            newMultiplier.coerceIn(0.25f, 20f)
+        }
         val safeOldMult = logItem.multiplier.coerceAtLeast(0.05f)
-        val ratio = newMultiplier.coerceIn(0.25f, 20f) / safeOldMult
-        val updated = logItem.copy(
-            multiplier = newMultiplier,
-            totalGrams = logItem.totalGrams * ratio,
-            calories = (logItem.calories * ratio).toInt().coerceAtLeast(0),
-            proteinGrams = ((logItem.proteinGrams * ratio) * 10f).toInt() / 10f,
-            carbsGrams = ((logItem.carbsGrams * ratio) * 10f).toInt() / 10f,
-            fatGrams = ((logItem.fatGrams * ratio) * 10f).toInt() / 10f,
-        )
+        val sourceFood = logItem.foodId?.let { nutraDao.findFoodById(it)?.toDomain() }
+
+        val updated = if (sourceFood != null) {
+            val newTotalGrams = if (isRawGramMode) {
+                safeNewMult
+            } else {
+                val unitGrams = (logItem.totalGrams / safeOldMult).coerceAtLeast(1f)
+                (unitGrams * safeNewMult).coerceAtLeast(1f)
+            }
+            logItem.copy(
+                multiplier = safeNewMult,
+                totalGrams = newTotalGrams,
+                calories = sourceFood.caloriesForGrams(newTotalGrams),
+                proteinGrams = sourceFood.proteinForGrams(newTotalGrams),
+                carbsGrams = sourceFood.carbsForGrams(newTotalGrams),
+                fatGrams = sourceFood.fatForGrams(newTotalGrams),
+            )
+        } else {
+            val ratio = safeNewMult / safeOldMult
+            val newTotalGrams = if (isRawGramMode) {
+                safeNewMult
+            } else {
+                (logItem.totalGrams * ratio).coerceAtLeast(1f)
+            }
+            logItem.copy(
+                multiplier = safeNewMult,
+                totalGrams = newTotalGrams,
+                calories = (logItem.calories * ratio).roundToInt().coerceAtLeast(0),
+                proteinGrams = ((logItem.proteinGrams * ratio) * 10f).roundToInt() / 10f,
+                carbsGrams = ((logItem.carbsGrams * ratio) * 10f).roundToInt() / 10f,
+                fatGrams = ((logItem.fatGrams * ratio) * 10f).roundToInt() / 10f,
+            )
+        }
         nutraDao.updateMealLog(MealLogEntity.fromDomain(updated))
     }
 
@@ -263,35 +312,47 @@ class NutritionRepository @Inject constructor(
     }
 
     suspend fun createCustomFood(food: FoodItem): FoodItem = withContext(Dispatchers.IO) {
-        val norm = TurkishTextNormalizer.normalize("${food.name} ${food.subtitle}")
+        ensureCatalogSeeded()
+        val normName = TurkishTextNormalizer.normalize(food.name)
+        val norm = TurkishTextNormalizer.normalize("${food.name} ${food.subtitle} ${food.category.title}")
         val id = nutraDao.insertFood(FoodItemEntity.fromDomain(food.copy(isCustom = true), norm))
-        food.copy(id = id, isCustom = true)
+        food.copy(
+            id = id,
+            isCustom = true,
+            normalizedName = normName,
+            normalizedSearchText = norm,
+        )
     }
 
     suspend fun findOrLookupBarcode(barcode: String): AppResult<FoodItem> = withContext(Dispatchers.IO) {
+        ensureCatalogSeeded()
         val cleaned = barcode.trim()
-        val localMatch = nutraDao.findFoodByBarcode(cleaned)
-        if (localMatch != null) {
-            return@withContext AppResult.Success(localMatch.toDomain())
+        barcodeMutex.withLock {
+            val localMatch = nutraDao.findFoodByBarcode(cleaned)
+            if (localMatch != null) {
+                return@withLock AppResult.Success(localMatch.toDomain())
+            }
+            val remoteResult = openFoodFactsService.get().lookupBarcode(cleaned)
+            if (remoteResult is AppResult.Success) {
+                val saved = createCustomFood(remoteResult.data)
+                return@withLock AppResult.Success(saved)
+            }
+            remoteResult
         }
-        val remoteResult = openFoodFactsService.get().lookupBarcode(cleaned)
-        if (remoteResult is AppResult.Success) {
-            val saved = createCustomFood(remoteResult.data)
-            return@withContext AppResult.Success(saved)
-        }
-        remoteResult
     }
 
     suspend fun addWaterMl(dateIso: String, deltaMl: Int) = withContext(Dispatchers.IO) {
-        val current = nutraDao.observeWaterForDate(dateIso).first()?.waterMl ?: 0
-        val next = (current + deltaMl).coerceIn(0, 10000)
-        nutraDao.upsertWaterLog(
-            WaterLogEntity(
-                dateIso = dateIso,
-                waterMl = next,
-                updatedAtMillis = System.currentTimeMillis(),
-            ),
-        )
+        waterMutex.withLock {
+            val current = nutraDao.getWaterForDate(dateIso)?.waterMl ?: 0
+            val next = (current + deltaMl).coerceIn(0, 10000)
+            nutraDao.upsertWaterLog(
+                WaterLogEntity(
+                    dateIso = dateIso,
+                    waterMl = next,
+                    updatedAtMillis = System.currentTimeMillis(),
+                ),
+            )
+        }
     }
 
     suspend fun logWeight(dateIso: String, weightKg: Float) = withContext(Dispatchers.IO) {
@@ -309,7 +370,7 @@ class NutritionRepository @Inject constructor(
     suspend fun exportBackupJson(): AppResult<String> = withContext(Dispatchers.IO) {
         try {
             val profile = preferencesDataStore.getSnapshot()
-            val allFoods = nutraDao.observeAllFoods().first().map { it.toDomain() }
+            val allFoods = nutraDao.getAllFoodsSnapshot().map { it.toDomain() }
             val customFoods = allFoods.filter { it.isCustom || it.isFavorite }
             val mealLogs = nutraDao.getAllMealLogsSnapshot().map { it.toDomain() }
             val waterLogs = nutraDao.getAllWaterLogsSnapshot().associate { it.dateIso to it.waterMl }
@@ -333,47 +394,141 @@ class NutritionRepository @Inject constructor(
     suspend fun importBackupJson(rawJson: String): AppResult<Unit> = withContext(Dispatchers.IO) {
         try {
             val payload = backupJson.decodeFromString<NutraBackupPayload>(rawJson)
-            preferencesDataStore.saveOnboardingProfile(payload.userProfile)
-            preferencesDataStore.updateAppearance(
-                payload.userProfile.themePreference,
-                payload.userProfile.useDynamicColor,
-            )
+            ensureCatalogSeeded()
 
-            val customEntities = payload.customFoods.map { item ->
-                val norm = TurkishTextNormalizer.normalize("${item.name} ${item.subtitle}")
-                FoodItemEntity.fromDomain(item.copy(id = 0L), norm)
-            }
-            if (customEntities.isNotEmpty()) {
-                nutraDao.insertFoods(customEntities)
+            database.withTransaction {
+                val existingFoods = nutraDao.getAllFoodsSnapshot()
+                val existingById = existingFoods.associateBy { it.id }
+                val existingByBarcode = existingFoods
+                    .filter { !it.barcode.isNullOrBlank() }
+                    .associateBy { it.barcode!! }
+                    .toMutableMap()
+                val existingSeedByName = existingFoods
+                    .filter { !it.isCustom }
+                    .associateBy { TurkishTextNormalizer.normalize(it.name) }
+                val existingCustomByName = existingFoods
+                    .filter { it.isCustom }
+                    .associateBy { TurkishTextNormalizer.normalize(it.name) }
+                    .toMutableMap()
+                val nameToTargetId = existingFoods
+                    .associate { TurkishTextNormalizer.normalize(it.name) to it.id }
+                    .toMutableMap()
+                val importedFoodIdMap = HashMap<Long, Long>()
+
+                for (item in payload.customFoods) {
+                    val normName = TurkishTextNormalizer.normalize(item.name)
+                    if (normName.isBlank()) continue
+                    val normSearch = TurkishTextNormalizer.normalize("${item.name} ${item.subtitle} ${item.category.title}")
+                    val barcodeMatch = item.barcode?.takeIf { it.isNotBlank() }?.let { existingByBarcode[it] }
+                    val match = barcodeMatch
+                        ?: (if (!item.isCustom) existingSeedByName[normName] else null)
+                        ?: existingCustomByName[normName]
+                        ?: existingSeedByName[normName]
+
+                    if (match != null) {
+                        if (!match.isCustom) {
+                            if (match.isFavorite != item.isFavorite) {
+                                nutraDao.updateFavorite(match.id, item.isFavorite)
+                            }
+                        } else {
+                            val updatedEntity = FoodItemEntity.fromDomain(
+                                item = item.copy(id = match.id, isCustom = true),
+                                normalizedText = normSearch,
+                            )
+                            nutraDao.updateFood(updatedEntity)
+                            existingCustomByName[normName] = updatedEntity
+                            if (!updatedEntity.barcode.isNullOrBlank()) {
+                                existingByBarcode[updatedEntity.barcode] = updatedEntity
+                            }
+                        }
+                        if (item.id > 0L) importedFoodIdMap[item.id] = match.id
+                        nameToTargetId[normName] = match.id
+                    } else {
+                        val entity = FoodItemEntity.fromDomain(item.copy(id = 0L), normSearch)
+                        val newId = nutraDao.insertFood(entity)
+                        val inserted = entity.copy(id = newId)
+                        if (inserted.isCustom) {
+                            existingCustomByName[normName] = inserted
+                        }
+                        if (!inserted.barcode.isNullOrBlank()) {
+                            existingByBarcode[inserted.barcode] = inserted
+                        }
+                        if (item.id > 0L) importedFoodIdMap[item.id] = newId
+                        nameToTargetId[normName] = newId
+                    }
+                }
+
+                nutraDao.deleteAllMealLogs()
+                val mealEntities = payload.mealLogs
+                    .filter { isValidIsoDate(it.dateIso) }
+                    .map { log ->
+                        val normFoodName = TurkishTextNormalizer.normalize(log.foodName)
+                        val mappedId = log.foodId?.let { oldId ->
+                            importedFoodIdMap[oldId] ?: existingById[oldId]
+                                ?.takeIf { TurkishTextNormalizer.normalize(it.name) == normFoodName }
+                                ?.id
+                        } ?: nameToTargetId[normFoodName]
+
+                        val safeMultiplier = if (log.multiplier.isFinite()) log.multiplier.coerceAtLeast(0.1f) else 1f
+                        val safeGrams = if (log.totalGrams.isFinite()) log.totalGrams.coerceAtLeast(1f) else 100f
+                        val safeProtein = if (log.proteinGrams.isFinite()) log.proteinGrams.coerceAtLeast(0f) else 0f
+                        val safeCarbs = if (log.carbsGrams.isFinite()) log.carbsGrams.coerceAtLeast(0f) else 0f
+                        val safeFat = if (log.fatGrams.isFinite()) log.fatGrams.coerceAtLeast(0f) else 0f
+
+                        MealLogEntity.fromDomain(
+                            log.copy(
+                                id = 0L,
+                                foodId = mappedId,
+                                multiplier = safeMultiplier,
+                                totalGrams = safeGrams,
+                                calories = log.calories.coerceAtLeast(0),
+                                proteinGrams = safeProtein,
+                                carbsGrams = safeCarbs,
+                                fatGrams = safeFat,
+                            ),
+                        )
+                    }
+                if (mealEntities.isNotEmpty()) {
+                    nutraDao.insertMealLogs(mealEntities)
+                }
+
+                nutraDao.deleteAllWaterLogs()
+                val now = System.currentTimeMillis()
+                val waterEntities = payload.waterLogs
+                    .filterKeys { isValidIsoDate(it) }
+                    .map { (dateIso, ml) ->
+                        WaterLogEntity(
+                            dateIso = dateIso,
+                            waterMl = ml.coerceIn(0, 10000),
+                            updatedAtMillis = now,
+                        )
+                    }
+                if (waterEntities.isNotEmpty()) {
+                    nutraDao.upsertWaterLogs(waterEntities)
+                }
+
+                nutraDao.deleteAllWeightLogs()
+                val weightEntities = payload.weightEntries
+                    .filter { isValidIsoDate(it.dateIso) && it.weightKg.isFinite() }
+                    .map {
+                        WeightLogEntity(
+                            dateIso = it.dateIso,
+                            weightKg = it.weightKg.coerceIn(30f, 300f),
+                            timestampMillis = it.timestampMillis,
+                        )
+                    }
+                if (weightEntities.isNotEmpty()) {
+                    nutraDao.insertWeightLogs(weightEntities)
+                }
             }
 
-            val mealEntities = payload.mealLogs.map { MealLogEntity.fromDomain(it.copy(id = 0L)) }
-            if (mealEntities.isNotEmpty()) {
-                nutraDao.insertMealLogs(mealEntities)
-            }
-
-            val now = System.currentTimeMillis()
-            val waterEntities = payload.waterLogs.map { (dateIso, ml) ->
-                WaterLogEntity(dateIso = dateIso, waterMl = ml, updatedAtMillis = now)
-            }
-            if (waterEntities.isNotEmpty()) {
-                nutraDao.upsertWaterLogs(waterEntities)
-            }
-
-            val weightEntities = payload.weightEntries.map {
-                WeightLogEntity(
-                    dateIso = it.dateIso,
-                    weightKg = it.weightKg,
-                    timestampMillis = it.timestampMillis,
-                )
-            }
-            if (weightEntities.isNotEmpty()) {
-                nutraDao.insertWeightLogs(weightEntities)
-            }
-
+            preferencesDataStore.restoreProfile(payload.userProfile)
             AppResult.Success(Unit)
         } catch (e: Exception) {
             AppResult.Error("Yedek dosyası geçersiz veya okunamadı: ${e.localizedMessage}", e)
         }
     }
+
+    private fun isValidIsoDate(dateIso: String): Boolean =
+        runCatching { LocalDate.parse(dateIso) }.isSuccess
 }

@@ -195,6 +195,36 @@ class UserPreferencesDataStore @Inject constructor(
         applySystemNightMode(themePreference)
     }
 
+    suspend fun restoreProfile(profile: UserProfile) {
+        val safeGoals = MacroGoals(
+            calories = profile.goals.calories.coerceIn(1000, 6000),
+            proteinGrams = profile.goals.proteinGrams.coerceIn(30, 400),
+            carbsGrams = profile.goals.carbsGrams.coerceIn(20, 600),
+            fatGrams = profile.goals.fatGrams.coerceIn(20, 250),
+            waterMl = profile.goals.waterMl.coerceIn(1000, 7000),
+        )
+        context.nutraDataStore.edit { prefs ->
+            prefs[Keys.SEX] = profile.sex.name
+            prefs[Keys.AGE] = profile.age.coerceIn(14, 100)
+            prefs[Keys.HEIGHT_CM] = profile.heightCm.coerceIn(120, 230)
+            prefs[Keys.CURRENT_WEIGHT_KG] = profile.currentWeightKg.coerceIn(30f, 300f)
+            prefs[Keys.TARGET_WEIGHT_KG] = profile.targetWeightKg.coerceIn(30f, 300f)
+            prefs[Keys.ACTIVITY_LEVEL] = profile.activityLevel.name
+            prefs[Keys.GOAL_TYPE] = profile.goalType.name
+            prefs[Keys.GOAL_CALORIES] = safeGoals.calories
+            prefs[Keys.GOAL_PROTEIN] = safeGoals.proteinGrams
+            prefs[Keys.GOAL_CARBS] = safeGoals.carbsGrams
+            prefs[Keys.GOAL_FAT] = safeGoals.fatGrams
+            prefs[Keys.GOAL_WATER_ML] = safeGoals.waterMl
+            prefs[Keys.ONBOARDING_COMPLETED] = true
+            prefs[Keys.THEME_PREFERENCE] = profile.themePreference.name
+            prefs[Keys.USE_DYNAMIC_COLOR] = profile.useDynamicColor
+            prefs[Keys.GEMINI_API_KEY] = profile.geminiApiKey.trim()
+            prefs[Keys.GEMINI_MODEL] = profile.geminiModel.trim().ifEmpty { "gemini-2.5-flash" }
+        }
+        applySystemNightMode(profile.themePreference)
+    }
+
     suspend fun updateGeminiConfig(apiKey: String, model: String) {
         context.nutraDataStore.edit { prefs ->
             prefs[Keys.GEMINI_API_KEY] = apiKey.trim()
