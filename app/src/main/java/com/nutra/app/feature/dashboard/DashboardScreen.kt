@@ -189,10 +189,8 @@ fun DashboardScreen(
             }
 
             item(key = "meals_header") {
-                val totalEntries = state.dailySummary.meals.sumOf { it.items.size }
                 NutraSectionHeader(
                     title = "Öğünler",
-                    supportingText = if (totalEntries > 0) "$totalEntries kayıt" else null,
                     modifier = Modifier.padding(top = NutraTheme.spacing.xs),
                 )
             }
