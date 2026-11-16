@@ -34,6 +34,7 @@ import com.nutra.app.core.designsystem.NutraButtonSize
 import com.nutra.app.core.designsystem.NutraButtonStyle
 import com.nutra.app.core.designsystem.NutraCard
 import com.nutra.app.core.designsystem.NutraDivider
+import com.nutra.app.core.designsystem.NutraFormatters
 import com.nutra.app.core.designsystem.NutraIconButton
 import com.nutra.app.core.designsystem.NutraMetricStepperRow
 import com.nutra.app.core.designsystem.NutraNumericInputDialog
@@ -46,13 +47,9 @@ import com.nutra.app.domain.model.ActivityLevel
 import com.nutra.app.domain.model.BiologicalSex
 import com.nutra.app.domain.model.GoalType
 import com.nutra.app.domain.model.UserProfile
-import java.util.Locale
 import kotlin.math.roundToInt
 
-private val TR_LOCALE = Locale.forLanguageTag("tr-TR")
-
-private fun formatKg(value: Float): String =
-    String.format(TR_LOCALE, "%.1f", value)
+private fun formatKg(value: Float): String = NutraFormatters.formatKg(value)
 
 private enum class BodyMetricField(
     val dialogTitle: String,
@@ -86,13 +83,13 @@ fun EditBodyProfileScreen(
     val colors = NutraTheme.colors
     val haptic = LocalHapticFeedback.current
 
-    var sex by rememberSaveable(profile) { mutableStateOf(profile.sex) }
-    var age by rememberSaveable(profile) { mutableIntStateOf(profile.age) }
-    var heightCm by rememberSaveable(profile) { mutableIntStateOf(profile.heightCm) }
-    var currentWeight by rememberSaveable(profile) { mutableFloatStateOf(profile.currentWeightKg) }
-    var targetWeight by rememberSaveable(profile) { mutableFloatStateOf(profile.targetWeightKg) }
-    var activity by rememberSaveable(profile) { mutableStateOf(profile.activityLevel) }
-    var goalType by rememberSaveable(profile) { mutableStateOf(profile.goalType) }
+    var sex by rememberSaveable { mutableStateOf(profile.sex) }
+    var age by rememberSaveable { mutableIntStateOf(profile.age) }
+    var heightCm by rememberSaveable { mutableIntStateOf(profile.heightCm) }
+    var currentWeight by rememberSaveable { mutableFloatStateOf(profile.currentWeightKg) }
+    var targetWeight by rememberSaveable { mutableFloatStateOf(profile.targetWeightKg) }
+    var activity by rememberSaveable { mutableStateOf(profile.activityLevel) }
+    var goalType by rememberSaveable { mutableStateOf(profile.goalType) }
     var recalculateGoals by rememberSaveable { mutableStateOf(true) }
     var activeBodyField by remember { mutableStateOf<BodyMetricField?>(null) }
 

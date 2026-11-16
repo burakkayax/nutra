@@ -1,0 +1,11 @@
+HSPLcom/nutra/app/NutraApplication;-><init>()V
+HSPLcom/nutra/app/MainActivity;->**(**)**
+HSPLcom/nutra/app/MainActivityKt;->**(**)**
+HSPLcom/nutra/app/core/datastore/UserPreferencesDataStore;->**(**)**
+HSPLcom/nutra/app/core/datastore/UserPreferencesDataStore$**;->**(**)**
+HSPLcom/nutra/app/core/database/**;->**(**)**
+HSPLcom/nutra/app/core/designsystem/**;->**(**)**
+HSPLcom/nutra/app/domain/model/**;->**(**)**
+HSPLcom/nutra/app/domain/repository/NutritionRepository;->**(**)**
+HSPLcom/nutra/app/domain/repository/NutritionRepository$**;->**(**)**
+HSPLcom/nutra/app/feature/dashboard/**;->**(**)**

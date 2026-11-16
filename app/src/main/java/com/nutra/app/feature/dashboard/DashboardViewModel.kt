@@ -1,5 +1,8 @@
 package com.nutra.app.feature.dashboard
 
+import android.content.ContentResolver
+import android.net.Uri
+import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nutra.app.core.datastore.UserPreferencesDataStore
@@ -19,12 +22,21 @@ import com.nutra.app.domain.model.SmartComboSuggestion
 import com.nutra.app.domain.repository.NutritionRepository
 import com.nutra.app.domain.usecase.ContextualMealRankerAndComboEngine
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -40,6 +52,7 @@ enum class LoggingTabMode(val title: String) {
     CUSTOM("Özel"),
 }
 
+@Immutable
 data class DashboardUiState(
     val isLoading: Boolean = true,
     val selectedDate: LocalDate = LocalDate.now(),
@@ -54,14 +67,21 @@ data class DashboardUiState(
     ),
     val expandedMeals: Set<MealType> = emptySet(),
     val activeLoggingMealType: MealType? = null,
+    val editingLogItem: MealLogItem? = null,
+    val lastDeletedItem: MealLogItem? = null,
+    val statusBannerMessage: String? = null,
+)
+
+@Immutable
+data class LoggingSheetUiState(
+    val activeLoggingMealType: MealType = MealType.BREAKFAST,
     val loggingTabMode: LoggingTabMode = LoggingTabMode.CATALOG,
-    val searchQuery: String = "",
     val selectedCategory: FoodCategory = FoodCategory.ALL,
+    val isSearchActive: Boolean = false,
+    val isCatalogLoading: Boolean = true,
     val rankedFoods: List<FoodItem> = emptyList(),
     val smartCombos: List<SmartComboSuggestion> = emptyList(),
     val selectedFoodForPortion: FoodItem? = null,
-    val editingLogItem: MealLogItem? = null,
-    val lastDeletedItem: MealLogItem? = null,
     val aiPromptText: String = "",
     val aiAnalyzing: Boolean = false,
     val aiAnalyzedItems: List<AiAnalyzedFoodItem> = emptyList(),
@@ -70,17 +90,19 @@ data class DashboardUiState(
     val barcodeInput: String = "",
     val barcodeLoading: Boolean = false,
     val barcodeErrorMessage: String? = null,
+)
+
+private data class DashboardBannerState(
+    val editingLogItem: MealLogItem? = null,
+    val lastDeletedItem: MealLogItem? = null,
     val statusBannerMessage: String? = null,
 )
 
 private data class LoggingModalInternalState(
     val activeLoggingMealType: MealType? = null,
     val loggingTabMode: LoggingTabMode = LoggingTabMode.CATALOG,
-    val searchQuery: String = "",
     val selectedCategory: FoodCategory = FoodCategory.ALL,
     val selectedFoodForPortion: FoodItem? = null,
-    val editingLogItem: MealLogItem? = null,
-    val lastDeletedItem: MealLogItem? = null,
     val aiPromptText: String = "",
     val aiAnalyzing: Boolean = false,
     val aiAnalyzedItems: List<AiAnalyzedFoodItem> = emptyList(),
@@ -88,99 +110,224 @@ private data class LoggingModalInternalState(
     val barcodeInput: String = "",
     val barcodeLoading: Boolean = false,
     val barcodeErrorMessage: String? = null,
-    val statusBannerMessage: String? = null,
 )
 
-@OptIn(ExperimentalCoroutinesApi::class)
+@OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
 @HiltViewModel
 class DashboardViewModel @Inject constructor(
     private val nutritionRepository: NutritionRepository,
     private val preferencesDataStore: UserPreferencesDataStore,
     private val rankerAndComboEngine: ContextualMealRankerAndComboEngine,
-    private val geminiAiService: GeminiAiService,
+    private val geminiAiService: dagger.Lazy<GeminiAiService>,
 ) : ViewModel() {
 
     private val selectedDateFlow = MutableStateFlow(LocalDate.now())
     private val isWeekCalendarVisibleFlow = MutableStateFlow(false)
     private val expandedMealsFlow = MutableStateFlow<Set<MealType>>(emptySet())
+    private val bannerStateFlow = MutableStateFlow(DashboardBannerState())
     private val modalStateFlow = MutableStateFlow(LoggingModalInternalState())
-
-    private val allFoodsFlow = nutritionRepository.observeAllFoods()
-    private val recentLogsFlow = nutritionRepository.observeRecentHistoricalMealLogs()
+    private val searchQueryFlow = MutableStateFlow("")
+    val searchQueryState: StateFlow<String> = searchQueryFlow
 
     private val dateDependentSummaryFlow = selectedDateFlow.flatMapLatest { date ->
         val monday = date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
         val sunday = monday.plusDays(6)
+        val weekDays = (0L..6L).map { monday.plusDays(it) }
         combine(
             nutritionRepository.observeDailySummary(date.toString()),
             nutritionRepository.observeWeekStatusIndicators(monday.toString(), sunday.toString()),
         ) { summary, weekStatus ->
-            Triple(date, summary, weekStatus)
+            Triple(date to weekDays, summary, weekStatus)
         }
     }
 
+    private val activeLoggingMealTypeFlow = modalStateFlow
+        .map { it.activeLoggingMealType }
+        .distinctUntilChanged()
+
     val uiState: StateFlow<DashboardUiState> = combine(
         dateDependentSummaryFlow,
-        combine(
-            expandedMealsFlow,
-            isWeekCalendarVisibleFlow,
-        ) { expandedMeals, isWeekCalendarVisible ->
-            expandedMeals to isWeekCalendarVisible
-        },
-        modalStateFlow,
-        combine(allFoodsFlow, recentLogsFlow, preferencesDataStore.userProfileFlow) { f, l, p -> Triple(f, l, p) },
-    ) { (date, summary, weekStatus), (expandedMeals, isWeekCalendarVisible), modal, (allFoods, recentLogs, profile) ->
-        val monday = date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
-        val weekDays = (0L..6L).map { monday.plusDays(it) }
-
-        val activeMeal = modal.activeLoggingMealType ?: MealType.BREAKFAST
-        val rankedFoods = rankerAndComboEngine.rankFoodsForMeal(
-            allFoods = allFoods,
-            historicalLogs = recentLogs,
-            mealType = activeMeal,
-            query = modal.searchQuery,
-            selectedCategory = modal.selectedCategory,
-        )
-
-        val currentMealItems = summary.meals.flatMap { it.items }
-        val smartCombos = rankerAndComboEngine.buildSmartComboSuggestions(
-            mealType = activeMeal,
-            currentDateMealItems = currentMealItems,
-            historicalLogs = recentLogs,
-            catalogFoods = allFoods,
-        )
-
+        combine(expandedMealsFlow, isWeekCalendarVisibleFlow) { e, w -> e to w },
+        activeLoggingMealTypeFlow,
+        bannerStateFlow,
+    ) { (dateAndDays, summary, weekStatus), (expandedMeals, isWeekCalendarVisible), activeLoggingMeal, banner ->
         DashboardUiState(
             isLoading = false,
-            selectedDate = date,
+            selectedDate = dateAndDays.first,
             isWeekCalendarVisible = isWeekCalendarVisible,
-            weekDays = weekDays,
+            weekDays = dateAndDays.second,
             weekStatusMap = weekStatus,
             dailySummary = summary,
             expandedMeals = expandedMeals,
-            activeLoggingMealType = modal.activeLoggingMealType,
+            activeLoggingMealType = activeLoggingMeal,
+            editingLogItem = banner.editingLogItem,
+            lastDeletedItem = banner.lastDeletedItem,
+            statusBannerMessage = banner.statusBannerMessage,
+        )
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(30_000),
+        initialValue = DashboardUiState(),
+    )
+
+    val isReady: StateFlow<Boolean> = uiState
+        .map { !it.isLoading }
+        .distinctUntilChanged()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = false,
+        )
+
+    private val isModalOpenFlow = activeLoggingMealTypeFlow
+        .map { it != null }
+        .distinctUntilChanged()
+
+    private val catalogPrewarmTrigger = MutableStateFlow(false)
+
+    init {
+        viewModelScope.launch {
+            isReady.first { it }
+            delay(350)
+            catalogPrewarmTrigger.value = true
+        }
+    }
+
+    private val shouldKeepCatalogWarmFlow = combine(
+        isModalOpenFlow,
+        catalogPrewarmTrigger,
+    ) { isOpen, prewarm -> isOpen || prewarm }.distinctUntilChanged()
+
+    private val cachedFoodsFlow: StateFlow<List<FoodItem>?> = shouldKeepCatalogWarmFlow
+        .flatMapLatest { shouldLoad ->
+            if (shouldLoad) {
+                nutritionRepository.observeAllFoods().map<List<FoodItem>, List<FoodItem>?> { it }
+            } else {
+                flowOf(null)
+            }
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = null,
+        )
+
+    private val cachedRecentLogsFlow: StateFlow<List<MealLogItem>> = shouldKeepCatalogWarmFlow
+        .flatMapLatest { shouldLoad ->
+            if (shouldLoad) nutritionRepository.observeRecentHistoricalMealLogs() else flowOf(emptyList())
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = emptyList(),
+        )
+
+    private val debouncedSearchQueryFlow = searchQueryFlow
+        .debounce { query -> if (query.isBlank()) 0L else 45L }
+        .distinctUntilChanged()
+
+    private val selectedCategoryFlow = modalStateFlow
+        .map { it.selectedCategory }
+        .distinctUntilChanged()
+
+    private val rankedFoodsWithQueryFlow = isModalOpenFlow.flatMapLatest { isOpen ->
+        if (!isOpen) {
+            flowOf(Triple(false, true, emptyList<FoodItem>()))
+        } else {
+            combine(
+                cachedFoodsFlow,
+                cachedRecentLogsFlow,
+                activeLoggingMealTypeFlow.map { it ?: MealType.BREAKFAST }.distinctUntilChanged(),
+                debouncedSearchQueryFlow,
+                selectedCategoryFlow,
+            ) { foods, logs, mealType, query, category ->
+                val isSearchActive = query.isNotBlank()
+                if (foods == null) {
+                    Triple(isSearchActive, true, emptyList())
+                } else if (foods.isEmpty()) {
+                    Triple(isSearchActive, false, emptyList())
+                } else {
+                    val ranked = rankerAndComboEngine.rankFoodsForMeal(
+                        allFoods = foods,
+                        historicalLogs = logs,
+                        mealType = mealType,
+                        query = query,
+                        selectedCategory = category,
+                    )
+                    Triple(isSearchActive, false, ranked)
+                }
+            }.flowOn(Dispatchers.Default)
+        }
+    }
+
+    private val currentMealItemsFlow = combine(
+        isModalOpenFlow,
+        activeLoggingMealTypeFlow,
+        uiState.map { it.dailySummary.meals }.distinctUntilChanged(),
+    ) { isOpen, mealType, meals ->
+        if (!isOpen || mealType == null) {
+            emptyList()
+        } else {
+            meals.firstOrNull { it.mealType == mealType }?.items.orEmpty()
+        }
+    }.distinctUntilChanged()
+
+    private val smartCombosFlow = isModalOpenFlow.flatMapLatest { isOpen ->
+        if (!isOpen) {
+            flowOf(emptyList())
+        } else {
+            combine(
+                activeLoggingMealTypeFlow.map { it ?: MealType.BREAKFAST }.distinctUntilChanged(),
+                currentMealItemsFlow,
+                cachedRecentLogsFlow,
+                cachedFoodsFlow,
+            ) { mealType, currentMealItems, logs, foods ->
+                if (foods.isNullOrEmpty()) {
+                    emptyList()
+                } else {
+                    rankerAndComboEngine.buildSmartComboSuggestions(
+                        mealType = mealType,
+                        currentDateMealItems = currentMealItems,
+                        historicalLogs = logs,
+                        catalogFoods = foods,
+                    )
+                }
+            }.flowOn(Dispatchers.Default)
+        }
+    }
+
+    private val isGeminiKeyConfiguredFlow = preferencesDataStore.userProfileFlow
+        .map { it.geminiApiKey.isNotBlank() }
+        .distinctUntilChanged()
+
+    val loggingUiState: StateFlow<LoggingSheetUiState> = combine(
+        modalStateFlow,
+        rankedFoodsWithQueryFlow,
+        smartCombosFlow,
+        isGeminiKeyConfiguredFlow,
+    ) { modal, (isSearchActive, isCatalogLoading, rankedFoods), smartCombos, isGeminiConfigured ->
+        LoggingSheetUiState(
+            activeLoggingMealType = modal.activeLoggingMealType ?: MealType.BREAKFAST,
             loggingTabMode = modal.loggingTabMode,
-            searchQuery = modal.searchQuery,
             selectedCategory = modal.selectedCategory,
+            isSearchActive = isSearchActive,
+            isCatalogLoading = isCatalogLoading,
             rankedFoods = rankedFoods,
             smartCombos = smartCombos,
             selectedFoodForPortion = modal.selectedFoodForPortion,
-            editingLogItem = modal.editingLogItem,
-            lastDeletedItem = modal.lastDeletedItem,
             aiPromptText = modal.aiPromptText,
             aiAnalyzing = modal.aiAnalyzing,
             aiAnalyzedItems = modal.aiAnalyzedItems,
             aiErrorMessage = modal.aiErrorMessage,
-            isGeminiKeyConfigured = profile.geminiApiKey.isNotBlank(),
+            isGeminiKeyConfigured = isGeminiConfigured,
             barcodeInput = modal.barcodeInput,
             barcodeLoading = modal.barcodeLoading,
             barcodeErrorMessage = modal.barcodeErrorMessage,
-            statusBannerMessage = modal.statusBannerMessage,
         )
     }.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = DashboardUiState(),
+        started = SharingStarted.WhileSubscribed(10_000),
+        initialValue = LoggingSheetUiState(),
     )
 
     fun selectDate(date: LocalDate) {
@@ -213,11 +360,11 @@ class DashboardViewModel @Inject constructor(
     }
 
     fun openAddFoodModal(mealType: MealType, initialTab: LoggingTabMode = LoggingTabMode.CATALOG) {
+        searchQueryFlow.value = ""
         modalStateFlow.update {
             it.copy(
                 activeLoggingMealType = mealType,
                 loggingTabMode = initialTab,
-                searchQuery = "",
                 selectedCategory = FoodCategory.ALL,
                 selectedFoodForPortion = null,
                 aiErrorMessage = null,
@@ -227,6 +374,7 @@ class DashboardViewModel @Inject constructor(
     }
 
     fun closeAddFoodModal() {
+        searchQueryFlow.value = ""
         modalStateFlow.update {
             it.copy(
                 activeLoggingMealType = null,
@@ -253,7 +401,7 @@ class DashboardViewModel @Inject constructor(
     }
 
     fun updateSearchQuery(query: String) {
-        modalStateFlow.update { it.copy(searchQuery = query) }
+        searchQueryFlow.value = query
     }
 
     fun selectCategory(category: FoodCategory) {
@@ -271,6 +419,14 @@ class DashboardViewModel @Inject constructor(
     fun toggleFavorite(food: FoodItem) {
         viewModelScope.launch {
             nutritionRepository.toggleFavoriteFood(food.id, !food.isFavorite)
+            modalStateFlow.update { state ->
+                val currentPortion = state.selectedFoodForPortion
+                if (currentPortion != null && currentPortion.id == food.id) {
+                    state.copy(selectedFoodForPortion = currentPortion.copy(isFavorite = !food.isFavorite))
+                } else {
+                    state
+                }
+            }
         }
     }
 
@@ -291,11 +447,9 @@ class DashboardViewModel @Inject constructor(
                 unitGrams = unitGrams,
                 multiplier = multiplier,
             )
-            modalStateFlow.update {
-                it.copy(
-                    selectedFoodForPortion = null,
-                    statusBannerMessage = "${food.name} (${mealType.title}) eklendi",
-                )
+            modalStateFlow.update { it.copy(selectedFoodForPortion = null) }
+            bannerStateFlow.update {
+                it.copy(statusBannerMessage = "${food.name} (${mealType.title}) eklendi")
             }
         }
     }
@@ -309,34 +463,32 @@ class DashboardViewModel @Inject constructor(
                 mealType = mealType,
                 entries = combo.items,
             )
-            modalStateFlow.update {
-                it.copy(
-                    activeLoggingMealType = null,
-                    statusBannerMessage = "${combo.title} (${combo.totalCalories} kcal) eklendi",
-                )
+            modalStateFlow.update { it.copy(activeLoggingMealType = null) }
+            bannerStateFlow.update {
+                it.copy(statusBannerMessage = "${combo.title} (${combo.totalCalories} kcal) eklendi")
             }
         }
     }
 
     fun openEditLoggedItem(item: MealLogItem) {
-        modalStateFlow.update { it.copy(editingLogItem = item) }
+        bannerStateFlow.update { it.copy(editingLogItem = item) }
     }
 
     fun closeEditLoggedItem() {
-        modalStateFlow.update { it.copy(editingLogItem = null) }
+        bannerStateFlow.update { it.copy(editingLogItem = null) }
     }
 
     fun updateLoggedItemMultiplier(item: MealLogItem, newMultiplier: Float) {
         viewModelScope.launch {
             nutritionRepository.updateMealLogMultiplier(item, newMultiplier)
-            modalStateFlow.update { it.copy(editingLogItem = null) }
+            bannerStateFlow.update { it.copy(editingLogItem = null) }
         }
     }
 
     fun deleteLoggedItem(item: MealLogItem) {
         viewModelScope.launch {
             nutritionRepository.deleteMealLog(item.id)
-            modalStateFlow.update {
+            bannerStateFlow.update {
                 it.copy(
                     editingLogItem = null,
                     lastDeletedItem = item,
@@ -346,15 +498,15 @@ class DashboardViewModel @Inject constructor(
     }
 
     fun undoDeleteLoggedItem() {
-        val deleted = modalStateFlow.value.lastDeletedItem ?: return
+        val deleted = bannerStateFlow.value.lastDeletedItem ?: return
         viewModelScope.launch {
             nutritionRepository.restoreMealLogItem(deleted)
-            modalStateFlow.update { it.copy(lastDeletedItem = null) }
+            bannerStateFlow.update { it.copy(lastDeletedItem = null) }
         }
     }
 
     fun dismissUndoBanner() {
-        modalStateFlow.update { it.copy(lastDeletedItem = null, statusBannerMessage = null) }
+        bannerStateFlow.update { it.copy(lastDeletedItem = null, statusBannerMessage = null) }
     }
 
     // --- AI Food Analysis ---
@@ -362,36 +514,55 @@ class DashboardViewModel @Inject constructor(
         modalStateFlow.update { it.copy(aiPromptText = text, aiErrorMessage = null) }
     }
 
-    fun analyzeWithAi(imageBytes: ByteArray? = null) {
-        val prompt = modalStateFlow.value.aiPromptText
+    fun analyzePhotoWithAi(contentResolver: ContentResolver, uri: Uri) {
         viewModelScope.launch {
             modalStateFlow.update { it.copy(aiAnalyzing = true, aiErrorMessage = null) }
-            val profile = preferencesDataStore.getSnapshot()
-            val catalog = uiState.value.rankedFoods
-            val result = geminiAiService.analyzeFoodInput(
-                promptText = prompt,
-                imageBytes = imageBytes,
-                apiKey = profile.geminiApiKey,
-                modelName = profile.geminiModel,
-                catalogFoods = catalog,
-            )
-            when (result) {
-                is AppResult.Success -> {
-                    modalStateFlow.update {
-                        it.copy(
-                            aiAnalyzing = false,
-                            aiAnalyzedItems = result.data,
-                            aiErrorMessage = null,
-                        )
-                    }
+            val aiService = geminiAiService.get()
+            val bytes = aiService.loadCompressedImageBytes(contentResolver, uri)
+            if (bytes == null) {
+                modalStateFlow.update {
+                    it.copy(aiAnalyzing = false, aiErrorMessage = "Fotoğraf okunamadı.")
                 }
-                is AppResult.Error -> {
-                    modalStateFlow.update {
-                        it.copy(
-                            aiAnalyzing = false,
-                            aiErrorMessage = result.message,
-                        )
-                    }
+                return@launch
+            }
+            runAiAnalysisInternal(bytes)
+        }
+    }
+
+    fun analyzeWithAi(imageBytes: ByteArray? = null) {
+        viewModelScope.launch {
+            modalStateFlow.update { it.copy(aiAnalyzing = true, aiErrorMessage = null) }
+            runAiAnalysisInternal(imageBytes)
+        }
+    }
+
+    private suspend fun runAiAnalysisInternal(imageBytes: ByteArray?) {
+        val prompt = modalStateFlow.value.aiPromptText
+        val profile = preferencesDataStore.getSnapshot()
+        val catalog = loggingUiState.value.rankedFoods
+        val result = geminiAiService.get().analyzeFoodInput(
+            promptText = prompt,
+            imageBytes = imageBytes,
+            apiKey = profile.geminiApiKey,
+            modelName = profile.geminiModel,
+            catalogFoods = catalog,
+        )
+        when (result) {
+            is AppResult.Success -> {
+                modalStateFlow.update {
+                    it.copy(
+                        aiAnalyzing = false,
+                        aiAnalyzedItems = result.data,
+                        aiErrorMessage = null,
+                    )
+                }
+            }
+            is AppResult.Error -> {
+                modalStateFlow.update {
+                    it.copy(
+                        aiAnalyzing = false,
+                        aiErrorMessage = result.message,
+                    )
                 }
             }
         }
@@ -443,8 +614,10 @@ class DashboardViewModel @Inject constructor(
                     activeLoggingMealType = null,
                     aiPromptText = "",
                     aiAnalyzedItems = emptyList(),
-                    statusBannerMessage = "${entries.size} AI besin kalemi eklendi",
                 )
+            }
+            bannerStateFlow.update {
+                it.copy(statusBannerMessage = "${entries.size} AI besin kalemi eklendi")
             }
         }
     }
@@ -519,11 +692,9 @@ class DashboardViewModel @Inject constructor(
                 unitGrams = savedFood.defaultUnitGrams,
                 multiplier = 1f,
             )
-            modalStateFlow.update {
-                it.copy(
-                    activeLoggingMealType = null,
-                    statusBannerMessage = "${savedFood.name} oluşturuldu ve öğüne eklendi",
-                )
+            modalStateFlow.update { it.copy(activeLoggingMealType = null) }
+            bannerStateFlow.update {
+                it.copy(statusBannerMessage = "${savedFood.name} oluşturuldu ve öğüne eklendi")
             }
         }
     }

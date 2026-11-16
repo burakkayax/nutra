@@ -16,11 +16,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
-import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Edit
-import androidx.compose.material.icons.rounded.FileDownload
-import androidx.compose.material.icons.rounded.FileUpload
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -46,7 +43,9 @@ import com.nutra.app.core.designsystem.NutraButtonStyle
 import com.nutra.app.core.designsystem.NutraCard
 import com.nutra.app.core.designsystem.NutraDialog
 import com.nutra.app.core.designsystem.NutraDivider
+import com.nutra.app.core.designsystem.NutraFormatters
 import com.nutra.app.core.designsystem.NutraIconBadge
+import com.nutra.app.core.designsystem.NutraIcons
 import com.nutra.app.core.designsystem.NutraListRow
 import com.nutra.app.core.designsystem.NutraMetricStepperRow
 import com.nutra.app.core.designsystem.NutraNumericInputDialog
@@ -59,18 +58,12 @@ import com.nutra.app.core.designsystem.NutraTextField
 import com.nutra.app.core.designsystem.NutraTheme
 import com.nutra.app.domain.model.ThemePreference
 import kotlinx.coroutines.delay
-import java.text.NumberFormat
 import java.time.LocalDate
-import java.util.Locale
 import kotlin.math.roundToInt
 
-private val TR_LOCALE = Locale.forLanguageTag("tr-TR")
+private fun formatInt(value: Int): String = NutraFormatters.formatInt(value)
 
-private fun formatInt(value: Int): String =
-    NumberFormat.getIntegerInstance(TR_LOCALE).format(value)
-
-private fun formatKg(value: Float): String =
-    String.format(TR_LOCALE, "%.1f", value)
+private fun formatKg(value: Float): String = NutraFormatters.formatKg(value)
 
 private enum class ProfileGoalField(
     val dialogTitle: String,
@@ -100,21 +93,14 @@ fun ProfileScreen(
     val haptic = LocalHapticFeedback.current
     val layoutDirection = LocalLayoutDirection.current
 
-    var pendingExportJson by remember { mutableStateOf<String?>(null) }
     var showGeminiDialog by remember { mutableStateOf(false) }
     var activeGoalField by remember { mutableStateOf<ProfileGoalField?>(null) }
 
     val exportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json"),
     ) { uri ->
-        val jsonContent = pendingExportJson
-        if (uri != null && jsonContent != null) {
-            runCatching {
-                context.contentResolver.openOutputStream(uri)?.use { out ->
-                    out.write(jsonContent.toByteArray(Charsets.UTF_8))
-                }
-            }
-            pendingExportJson = null
+        if (uri != null) {
+            viewModel.exportBackupToUri(context.contentResolver, uri)
         }
     }
 
@@ -122,12 +108,7 @@ fun ProfileScreen(
         contract = ActivityResultContracts.OpenDocument(),
     ) { uri ->
         if (uri != null) {
-            val raw = runCatching {
-                context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-            }.getOrNull()
-            if (!raw.isNullOrBlank()) {
-                viewModel.importBackupJson(raw)
-            }
+            viewModel.importBackupFromUri(context.contentResolver, uri)
         }
     }
 
@@ -392,7 +373,7 @@ fun ProfileScreen(
                             },
                             leading = {
                                 NutraIconBadge(
-                                    icon = Icons.Rounded.AutoAwesome,
+                                    icon = NutraIcons.AutoAwesome,
                                     tint = colors.textPrimary,
                                     container = colors.surfaceMuted,
                                 )
@@ -414,7 +395,7 @@ fun ProfileScreen(
                             subtitle = "Kayıtları JSON yedeği olarak indir",
                             leading = {
                                 NutraIconBadge(
-                                    icon = Icons.Rounded.FileDownload,
+                                    icon = NutraIcons.FileDownload,
                                     tint = colors.textPrimary,
                                     container = colors.surfaceMuted,
                                 )
@@ -427,10 +408,7 @@ fun ProfileScreen(
                                 )
                             },
                             onClick = {
-                                viewModel.exportBackupToCallback { json ->
-                                    pendingExportJson = json
-                                    exportLauncher.launch("nutra_yedek_${LocalDate.now()}.json")
-                                }
+                                exportLauncher.launch("nutra_yedek_${LocalDate.now()}.json")
                             },
                         )
 
@@ -441,7 +419,7 @@ fun ProfileScreen(
                             subtitle = "JSON dosyasından içe aktar",
                             leading = {
                                 NutraIconBadge(
-                                    icon = Icons.Rounded.FileUpload,
+                                    icon = NutraIcons.FileUpload,
                                     tint = colors.textPrimary,
                                     container = colors.surfaceMuted,
                                 )

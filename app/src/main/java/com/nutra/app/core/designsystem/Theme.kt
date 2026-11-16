@@ -15,6 +15,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -59,6 +60,9 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
     else -> null
 }
 
+private val DefaultNutraSpacing = NutraSpacing()
+private val DefaultNutraShapes = NutraShapes()
+
 @Composable
 fun ThemePreference.resolveIsDark(): Boolean = when (this) {
     ThemePreference.SYSTEM -> isSystemInDarkTheme()
@@ -78,16 +82,19 @@ fun NutraTheme(
     val baseColors = if (isDark) DarkNutraColors else LightNutraColors
 
     // Dynamic color only re-tints the brand accent; neutrals stay calm.
-    val colors = if (useDynamicColor) {
-        val dynamic = if (isDark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        baseColors.copy(
-            accent = dynamic.primary,
-            accentSoft = dynamic.primaryContainer,
-            onAccent = dynamic.onPrimary,
-        )
-    } else {
-        baseColors
+    val colors = remember(isDark, useDynamicColor, context) {
+        if (useDynamicColor) {
+            val dynamic = if (isDark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+            baseColors.copy(
+                accent = dynamic.primary,
+                accentSoft = dynamic.primaryContainer,
+                onAccent = dynamic.onPrimary,
+            )
+        } else {
+            baseColors
+        }
     }
+    val materialScheme = remember(colors) { colors.toMaterialScheme() }
 
     val view = LocalView.current
     val backgroundArgb = colors.background.toArgb()
@@ -101,11 +108,11 @@ fun NutraTheme(
     CompositionLocalProvider(
         LocalNutraColors provides colors,
         LocalNutraTypography provides DefaultNutraTypography,
-        LocalNutraSpacing provides NutraSpacing(),
-        LocalNutraShapes provides NutraShapes(),
+        LocalNutraSpacing provides DefaultNutraSpacing,
+        LocalNutraShapes provides DefaultNutraShapes,
     ) {
         MaterialTheme(
-            colorScheme = colors.toMaterialScheme(),
+            colorScheme = materialScheme,
             typography = Material3Typography,
             content = content,
         )

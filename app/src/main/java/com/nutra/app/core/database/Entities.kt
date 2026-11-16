@@ -9,6 +9,7 @@ import com.nutra.app.domain.model.MealLogItem
 import com.nutra.app.domain.model.MealType
 import com.nutra.app.domain.model.ServingUnit
 import com.nutra.app.domain.model.WeightEntry
+import com.nutra.app.domain.usecase.TurkishTextNormalizer
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -42,18 +43,26 @@ data class FoodItemEntity(
     val isCustom: Boolean = false,
 ) {
     fun toDomain(): FoodItem {
-        val units = runCatching {
-            entityJson.decodeFromString<List<ServingUnit>>(alternateUnitsJson)
-        }.getOrDefault(emptyList())
+        val units = if (alternateUnitsJson.isBlank() || alternateUnitsJson == "[]") {
+            emptyList()
+        } else {
+            runCatching {
+                entityJson.decodeFromString<List<ServingUnit>>(alternateUnitsJson)
+            }.getOrDefault(emptyList())
+        }
 
-        val preferredMeals = preferredMealTypesCsv
-            .split(',')
-            .mapNotNull { token ->
-                token.trim().takeIf { it.isNotEmpty() }?.let {
-                    runCatching { MealType.valueOf(it) }.getOrNull()
+        val preferredMeals = if (preferredMealTypesCsv.isBlank()) {
+            emptySet()
+        } else {
+            preferredMealTypesCsv
+                .split(',')
+                .mapNotNull { token ->
+                    token.trim().takeIf { it.isNotEmpty() }?.let {
+                        runCatching { MealType.valueOf(it) }.getOrNull()
+                    }
                 }
-            }
-            .toSet()
+                .toSet()
+        }
 
         val cat = runCatching { FoodCategory.valueOf(category) }.getOrDefault(FoodCategory.HOME_COOKED)
 
@@ -73,6 +82,10 @@ data class FoodItemEntity(
             barcode = barcode,
             isFavorite = isFavorite,
             isCustom = isCustom,
+            normalizedName = TurkishTextNormalizer.normalize(name),
+            normalizedSearchText = normalizedSearchText.ifBlank {
+                TurkishTextNormalizer.normalize("$name $subtitle")
+            },
         )
     }
 
@@ -104,6 +117,7 @@ data class FoodItemEntity(
         Index(value = ["dateIso"]),
         Index(value = ["mealType"]),
         Index(value = ["foodId"]),
+        Index(value = ["timestampMillis"]),
     ],
 )
 data class MealLogEntity(

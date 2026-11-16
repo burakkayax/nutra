@@ -1,5 +1,9 @@
 package com.nutra.app.core.network
 
+import android.content.ContentResolver
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
 import android.util.Base64
 import com.nutra.app.domain.model.AiAnalyzedFoodItem
 import com.nutra.app.domain.model.AppResult
@@ -10,7 +14,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -22,9 +25,11 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.ByteArrayOutputStream
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.math.max
 import kotlin.math.roundToInt
 
 @Serializable
@@ -52,6 +57,68 @@ class GeminiAiService @Inject constructor(
         ignoreUnknownKeys = true
         isLenient = true
         coerceInputValues = true
+    }
+
+    private companion object {
+        val SEGMENT_SPLIT_REGEX = Regex("[,;\\n]|\\bve\\b|\\bile\\b|\\bartı\\b|\\+")
+        val GRAM_REGEX = Regex("(\\d+(?:[.,]\\d+)?)\\s*(?:gr|gram|g|ml)\\b", RegexOption.IGNORE_CASE)
+        val COUNT_REGEX = Regex("^(\\d+(?:[.,]\\d+)?)\\s*(adet|dilim|kase|porsiyon|bardak|kaşık|kasik|avuç|avuc|tane|ölçek|olcek)?\\b", RegexOption.IGNORE_CASE)
+        val UNIT_WORD_STRIP_REGEX = Regex("\\b(yarim|tam|orta|buyuk|kucuk|ince|kalin|adet|tane|dilim|kase|porsiyon|su|bardagi|bardak|yemek|tatli|kasigi|kasik|avuc|olcek|paket)\\b")
+        val NUMBER_STRIP_REGEX = Regex("\\d+(?:[.,]\\d+)?")
+        val WHITESPACE_REGEX = Regex("\\s+")
+        const val MAX_IMAGE_DIMENSION_PX = 1024
+        const val JPEG_QUALITY = 82
+    }
+
+    suspend fun loadCompressedImageBytes(
+        contentResolver: ContentResolver,
+        uri: Uri,
+    ): ByteArray? = withContext(Dispatchers.IO) {
+        runCatching {
+            val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            contentResolver.openInputStream(uri)?.use { stream ->
+                BitmapFactory.decodeStream(stream, null, boundsOpts)
+            }
+            val srcWidth = boundsOpts.outWidth
+            val srcHeight = boundsOpts.outHeight
+            if (srcWidth <= 0 || srcHeight <= 0) {
+                return@runCatching contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            }
+
+            var sampleSize = 1
+            val longestSide = max(srcWidth, srcHeight)
+            while (longestSide / sampleSize > MAX_IMAGE_DIMENSION_PX * 2) {
+                sampleSize *= 2
+            }
+
+            val decodeOpts = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+            val decoded = contentResolver.openInputStream(uri)?.use { stream ->
+                BitmapFactory.decodeStream(stream, null, decodeOpts)
+            } ?: return@runCatching null
+
+            val scale = MAX_IMAGE_DIMENSION_PX.toFloat() / max(decoded.width, decoded.height).toFloat()
+            val finalBitmap = if (scale < 1f) {
+                Bitmap.createScaledBitmap(
+                    decoded,
+                    (decoded.width * scale).roundToInt().coerceAtLeast(1),
+                    (decoded.height * scale).roundToInt().coerceAtLeast(1),
+                    true,
+                ).also {
+                    if (it !== decoded) decoded.recycle()
+                }
+            } else {
+                decoded
+            }
+
+            try {
+                ByteArrayOutputStream(64 * 1024).use { out ->
+                    finalBitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)
+                    out.toByteArray()
+                }
+            } finally {
+                finalBitmap.recycle()
+            }
+        }.getOrNull()
     }
 
     /**
@@ -268,22 +335,20 @@ class GeminiAiService @Inject constructor(
         catalogFoods: List<FoodItem>,
     ): List<AiAnalyzedFoodItem> {
         val segments = text
-            .split(Regex("[,;\\n]|\\bve\\b|\\bile\\b|\\bartı\\b|\\+"))
+            .split(SEGMENT_SPLIT_REGEX)
             .map { it.trim() }
             .filter { it.length >= 2 }
 
         val results = mutableListOf<AiAnalyzedFoodItem>()
-        val gramRegex = Regex("(\\d+(?:[.,]\\d+)?)\\s*(?:gr|gram|g|ml)\\b", RegexOption.IGNORE_CASE)
-        val countRegex = Regex("^(\\d+(?:[.,]\\d+)?)\\s*(adet|dilim|kase|porsiyon|bardak|kaşık|kasik|avuç|avuc|tane|ölçek|olcek)?\\b", RegexOption.IGNORE_CASE)
 
         for (segment in segments) {
             val normSegment = TurkishTextNormalizer.normalize(segment)
             val isHalf = normSegment.contains("yarim")
 
-            val explicitGrams = gramRegex.find(normSegment)?.groupValues?.getOrNull(1)
+            val explicitGrams = GRAM_REGEX.find(normSegment)?.groupValues?.getOrNull(1)
                 ?.replace(',', '.')?.toFloatOrNull()
 
-            val countMatch = if (explicitGrams == null) countRegex.find(normSegment) else null
+            val countMatch = if (explicitGrams == null) COUNT_REGEX.find(normSegment) else null
             val quantity = when {
                 isHalf -> 0.5f
                 countMatch != null -> countMatch.groupValues[1].replace(',', '.').toFloatOrNull() ?: 1f
@@ -292,14 +357,11 @@ class GeminiAiService @Inject constructor(
 
             // Strip numbers and unit words to match the food name
             val cleanedFoodQuery = normSegment
-                .replace(gramRegex, " ")
-                .replace(
-                    Regex("\\b(yarim|tam|orta|buyuk|kucuk|ince|kalin|adet|tane|dilim|kase|porsiyon|su|bardagi|bardak|yemek|tatli|kasigi|kasik|avuc|olcek|paket)\\b"),
-                    " ",
-                )
-                .replace(Regex("\\d+(?:[.,]\\d+)?"), " ")
+                .replace(GRAM_REGEX, " ")
+                .replace(UNIT_WORD_STRIP_REGEX, " ")
+                .replace(NUMBER_STRIP_REGEX, " ")
                 .trim()
-                .replace(Regex("\\s+"), " ")
+                .replace(WHITESPACE_REGEX, " ")
 
             if (cleanedFoodQuery.isBlank()) continue
 
@@ -359,29 +421,37 @@ class GeminiAiService @Inject constructor(
         val tokens = query.split(' ').filter { it.length >= 2 }
         if (tokens.isEmpty()) return null
 
-        return catalogFoods
-            .map { food ->
-                val normName = TurkishTextNormalizer.normalize(food.name)
-                val normSub = TurkishTextNormalizer.normalize(food.subtitle)
-                var score = 0
-                if (normName == query) score += 100
-                if (normName.contains(query)) score += 60
-                for (token in tokens) {
-                    if (normName.split(' ').any { it == token }) score += 30
-                    else if (normName.contains(token)) score += 18
-                    else if (normSub.contains(token)) score += 6
-                }
-                food to score
+        var bestFood: FoodItem? = null
+        var bestScore = 17
+        for (food in catalogFoods) {
+            val normName = food.normalizedName.ifBlank { TurkishTextNormalizer.normalize(food.name) }
+            val normSub = food.normalizedSearchText.ifBlank { TurkishTextNormalizer.normalize(food.subtitle) }
+            var score = 0
+            if (normName == query) score += 100
+            if (normName.contains(query)) score += 60
+            for (token in tokens) {
+                if (normName.split(' ').any { it == token }) score += 30
+                else if (normName.contains(token)) score += 18
+                else if (normSub.contains(token)) score += 6
             }
-            .filter { it.second >= 18 }
-            .maxByOrNull { it.second }
-            ?.first
+            if (score > bestScore) {
+                bestScore = score
+                bestFood = food
+            }
+        }
+        return bestFood
     }
 
     private fun buildSamplePlateForOfflinePhoto(catalogFoods: List<FoodItem>): List<AiAnalyzedFoodItem> {
-        val chicken = catalogFoods.firstOrNull { TurkishTextNormalizer.normalize(it.name).contains("tavuk") }
-        val bulgur = catalogFoods.firstOrNull { TurkishTextNormalizer.normalize(it.name).contains("bulgur") }
-        val salad = catalogFoods.firstOrNull { TurkishTextNormalizer.normalize(it.name).contains("salata") }
+        val chicken = catalogFoods.firstOrNull {
+            (it.normalizedName.ifBlank { TurkishTextNormalizer.normalize(it.name) }).contains("tavuk")
+        }
+        val bulgur = catalogFoods.firstOrNull {
+            (it.normalizedName.ifBlank { TurkishTextNormalizer.normalize(it.name) }).contains("bulgur")
+        }
+        val salad = catalogFoods.firstOrNull {
+            (it.normalizedName.ifBlank { TurkishTextNormalizer.normalize(it.name) }).contains("salata")
+        }
 
         return listOfNotNull(chicken, bulgur, salad).map { food ->
             AiAnalyzedFoodItem(

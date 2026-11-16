@@ -1,6 +1,8 @@
 package com.nutra.app.domain.model
 
+import androidx.compose.runtime.Immutable
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import kotlin.math.roundToInt
 
 enum class ThemePreference(val title: String) {
@@ -81,12 +83,14 @@ enum class FoodCategory(val title: String) {
     CUSTOM("Özel"),
 }
 
+@Immutable
 @Serializable
 data class ServingUnit(
     val label: String,
     val grams: Float,
 )
 
+@Immutable
 @Serializable
 data class FoodItem(
     val id: Long = 0L,
@@ -104,6 +108,8 @@ data class FoodItem(
     val barcode: String? = null,
     val isFavorite: Boolean = false,
     val isCustom: Boolean = false,
+    @Transient val normalizedName: String = "",
+    @Transient val normalizedSearchText: String = "",
 ) {
     val allUnits: List<ServingUnit>
         get() {
@@ -135,6 +141,7 @@ data class FoodItem(
         ((fatPer100g * grams) / 100f * 10f).roundToInt() / 10f
 }
 
+@Immutable
 @Serializable
 data class MealLogItem(
     val id: Long = 0L,
@@ -166,6 +173,7 @@ data class MealLogItem(
         }
 }
 
+@Immutable
 @Serializable
 data class MacroGoals(
     val calories: Int = 2100,
@@ -175,6 +183,7 @@ data class MacroGoals(
     val waterMl: Int = 2500,
 )
 
+@Immutable
 @Serializable
 data class UserProfile(
     val sex: BiologicalSex = BiologicalSex.MALE,
@@ -192,6 +201,7 @@ data class UserProfile(
     val geminiModel: String = "gemini-2.5-flash",
 )
 
+@Immutable
 data class MealSummary(
     val mealType: MealType,
     val items: List<MealLogItem>,
@@ -202,6 +212,7 @@ data class MealSummary(
     val totalFat: Float get() = items.sumOf { it.fatGrams.toDouble() }.toFloat()
 }
 
+@Immutable
 data class DailyNutritionSummary(
     val dateIso: String,
     val goals: MacroGoals,
@@ -221,6 +232,7 @@ enum class DayGoalStatus {
     OVER_BUDGET,
 }
 
+@Immutable
 data class DayStatusIndicator(
     val dateIso: String,
     val consumedCalories: Int,
@@ -228,6 +240,7 @@ data class DayStatusIndicator(
     val status: DayGoalStatus,
 )
 
+@Immutable
 @Serializable
 data class ComboFoodEntry(
     val foodId: Long?,
@@ -241,6 +254,7 @@ data class ComboFoodEntry(
     val fatGrams: Float,
 )
 
+@Immutable
 data class SmartComboSuggestion(
     val id: String,
     val title: String,
@@ -254,6 +268,7 @@ data class SmartComboSuggestion(
     val totalFat: Float get() = items.sumOf { it.fatGrams.toDouble() }.toFloat()
 }
 
+@Immutable
 data class AiAnalyzedFoodItem(
     val id: String,
     val name: String,
@@ -274,6 +289,7 @@ data class AiAnalyzedFoodItem(
     val effectiveFat: Float get() = ((baseFat * multiplier) * 10f).roundToInt() / 10f
 }
 
+@Immutable
 @Serializable
 data class WeightEntry(
     val id: Long = 0L,
@@ -282,12 +298,14 @@ data class WeightEntry(
     val timestampMillis: Long,
 )
 
+@Immutable
 data class WeightTrendPoint(
     val dateIso: String,
     val rawWeightKg: Float,
     val emaTrendKg: Float,
 )
 
+@Immutable
 data class DailyAnalyticsPoint(
     val dateIso: String,
     val calories: Int,

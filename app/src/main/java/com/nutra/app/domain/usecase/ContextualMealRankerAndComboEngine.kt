@@ -8,6 +8,11 @@ import com.nutra.app.domain.model.MealType
 import com.nutra.app.domain.model.SmartComboSuggestion
 import javax.inject.Inject
 
+private data class ScoredFood(
+    val food: FoodItem,
+    val score: Double,
+)
+
 class ContextualMealRankerAndComboEngine @Inject constructor() {
 
     /**
@@ -24,18 +29,13 @@ class ContextualMealRankerAndComboEngine @Inject constructor() {
         query: String,
         selectedCategory: FoodCategory,
     ): List<FoodItem> {
-        val filtered = allFoods.filter { food ->
-            val categoryMatch = selectedCategory == FoodCategory.ALL ||
-                (selectedCategory == FoodCategory.CUSTOM && (food.isCustom || food.isFavorite)) ||
-                food.category == selectedCategory
-            val queryMatch = query.isBlank() ||
-                TurkishTextNormalizer.matchesQuery("${food.name} ${food.subtitle}", query)
-            categoryMatch && queryMatch
-        }
+        val normQuery = TurkishTextNormalizer.normalize(query)
+        val queryTokens = TurkishTextNormalizer.tokenizeNormalized(normQuery)
 
         val mealSpecificCounts = HashMap<Long, Int>()
         val mealSpecificLatestTime = HashMap<Long, Long>()
         val globalCounts = HashMap<Long, Int>()
+        var maxTimestamp = 1L
 
         for (log in historicalLogs) {
             val fid = log.foodId ?: continue
@@ -45,37 +45,58 @@ class ContextualMealRankerAndComboEngine @Inject constructor() {
                 val prevLatest = mealSpecificLatestTime[fid] ?: 0L
                 if (log.timestampMillis > prevLatest) {
                     mealSpecificLatestTime[fid] = log.timestampMillis
+                    if (log.timestampMillis > maxTimestamp) {
+                        maxTimestamp = log.timestampMillis
+                    }
                 }
             }
         }
 
-        val maxTimestamp = mealSpecificLatestTime.values.maxOrNull() ?: 1L
+        val scored = ArrayList<ScoredFood>(allFoods.size)
+        for (food in allFoods) {
+            val categoryMatch = selectedCategory == FoodCategory.ALL ||
+                (selectedCategory == FoodCategory.CUSTOM && (food.isCustom || food.isFavorite)) ||
+                food.category == selectedCategory
+            if (!categoryMatch) continue
 
-        return filtered.sortedWith(
-            compareByDescending<FoodItem> { food ->
-                val mealFreq = mealSpecificCounts[food.id] ?: 0
-                val globalFreq = globalCounts[food.id] ?: 0
-                val latestTs = mealSpecificLatestTime[food.id] ?: 0L
-                val recencyRatio = if (latestTs > 0L && maxTimestamp > 0L) {
-                    (latestTs.toDouble() / maxTimestamp.toDouble())
-                } else {
-                    0.0
+            if (queryTokens.isNotEmpty()) {
+                val normSearch = food.normalizedSearchText.ifBlank {
+                    TurkishTextNormalizer.normalize("${food.name} ${food.subtitle}")
                 }
+                if (!TurkishTextNormalizer.matchesNormalizedTokens(normSearch, queryTokens)) continue
+            }
 
-                var score = 0.0
-                score += mealFreq * 28.0
-                score += recencyRatio * 18.0
-                score += globalFreq * 5.0
-                if (food.isFavorite) score += 22.0
-                if (food.preferredMealTypes.contains(mealType)) score += 14.0
-                if (query.isNotBlank() && TurkishTextNormalizer.normalize(food.name)
-                        .startsWith(TurkishTextNormalizer.normalize(query))
-                ) {
+            val mealFreq = mealSpecificCounts[food.id] ?: 0
+            val globalFreq = globalCounts[food.id] ?: 0
+            val latestTs = mealSpecificLatestTime[food.id] ?: 0L
+            val recencyRatio = if (latestTs > 0L && maxTimestamp > 0L) {
+                latestTs.toDouble() / maxTimestamp.toDouble()
+            } else {
+                0.0
+            }
+
+            var score = 0.0
+            score += mealFreq * 28.0
+            score += recencyRatio * 18.0
+            score += globalFreq * 5.0
+            if (food.isFavorite) score += 22.0
+            if (food.preferredMealTypes.contains(mealType)) score += 14.0
+            if (normQuery.isNotEmpty()) {
+                val normName = food.normalizedName.ifBlank {
+                    TurkishTextNormalizer.normalize(food.name)
+                }
+                if (normName.startsWith(normQuery)) {
                     score += 35.0
                 }
-                score
-            }.thenBy { it.name },
-        )
+            }
+            scored.add(ScoredFood(food, score))
+        }
+
+        scored.sortWith { a, b ->
+            val cmp = b.score.compareTo(a.score)
+            if (cmp != 0) cmp else a.food.name.compareTo(b.food.name)
+        }
+        return scored.map { it.food }
     }
 
     /**
@@ -88,29 +109,36 @@ class ContextualMealRankerAndComboEngine @Inject constructor() {
         historicalLogs: List<MealLogItem>,
         catalogFoods: List<FoodItem>,
     ): List<SmartComboSuggestion> {
-        val currentFoodNames = currentDateMealItems
-            .filter { it.mealType == mealType }
-            .map { TurkishTextNormalizer.normalize(it.foodName) }
-            .toSet()
+        val normCache = HashMap<String, String>(64)
+        fun cachedNorm(text: String): String =
+            normCache.getOrPut(text) { TurkishTextNormalizer.normalize(text) }
+
+        val currentFoodNames = HashSet<String>()
+        for (item in currentDateMealItems) {
+            if (item.mealType == mealType) {
+                currentFoodNames.add(cachedNorm(item.foodName))
+            }
+        }
 
         val suggestions = mutableListOf<SmartComboSuggestion>()
 
         // 1. Mine historical baskets for this MealType grouped by dateIso
-        val basketsByDate = historicalLogs
-            .filter { it.mealType == mealType }
-            .groupBy { it.dateIso }
-            .values
-            .filter { it.size >= 2 }
+        val basketsByDate = LinkedHashMap<String, MutableList<MealLogItem>>()
+        for (log in historicalLogs) {
+            if (log.mealType == mealType) {
+                basketsByDate.getOrPut(log.dateIso) { mutableListOf() }.add(log)
+            }
+        }
 
         if (basketsByDate.isNotEmpty()) {
-            // Find the most frequent multi-item combination or companion items
             val signatureMap = LinkedHashMap<String, MutableList<List<MealLogItem>>>()
-            for (basket in basketsByDate) {
+            for (basket in basketsByDate.values) {
+                if (basket.size < 2) continue
                 val distinctItems = basket
-                    .distinctBy { TurkishTextNormalizer.normalize(it.foodName) }
+                    .distinctBy { cachedNorm(it.foodName) }
                     .sortedBy { it.foodName }
                 if (distinctItems.size >= 2) {
-                    val key = distinctItems.joinToString("|") { TurkishTextNormalizer.normalize(it.foodName) }
+                    val key = distinctItems.joinToString("|") { cachedNorm(it.foodName) }
                     signatureMap.getOrPut(key) { mutableListOf() }.add(distinctItems)
                 }
             }
@@ -125,7 +153,7 @@ class ContextualMealRankerAndComboEngine @Inject constructor() {
             for ((index, entry) in topHistoricalBaskets.withIndex()) {
                 val sampleBasket = entry.value.first()
                 val missingItems = sampleBasket.filter {
-                    TurkishTextNormalizer.normalize(it.foodName) !in currentFoodNames
+                    cachedNorm(it.foodName) !in currentFoodNames
                 }
                 if (missingItems.size >= 2) {
                     val count = entry.value.size
@@ -160,88 +188,74 @@ class ContextualMealRankerAndComboEngine @Inject constructor() {
             }
         }
 
-        // 2. Contextual Companion Pairing (if user already added an anchor food or needs curated smart combos)
-        val foodByNormName = catalogFoods.associateBy { TurkishTextNormalizer.normalize(it.name) }
+        if (suggestions.size >= 2) return suggestions.take(2)
 
-        fun findCatalogFood(keyword: String): FoodItem? =
-            catalogFoods.firstOrNull { TurkishTextNormalizer.normalize(it.name).contains(keyword) }
-
-        val curatedBlueprints: List<Triple<String, String, List<FoodItem?>>> = when (mealType) {
+        // 2. Contextual Companion Pairing (single-pass keyword match over pre-normalized food names)
+        val blueprintSpecs: List<Triple<String, String, List<String>>> = when (mealType) {
             MealType.BREAKFAST -> listOf(
                 Triple(
                     "Klasik Dengeli Kahvaltı Kombini",
                     "Birlikte sık tüketilen yüksek proteinli kahvaltı üçlüsü",
-                    listOf(
-                        findCatalogFood("haslanmis yumurta"),
-                        findCatalogFood("ezine beyaz peynir"),
-                        findCatalogFood("tam bugday ekmegi"),
-                    ),
+                    listOf("haslanmis yumurta", "ezine beyaz peynir", "tam bugday ekmegi"),
                 ),
                 Triple(
                     "Yulaf & Yoğurt Enerji Kasesi",
                     "Pratik sabah kombinasyonu",
-                    listOf(
-                        findCatalogFood("yulaf ezmesi"),
-                        findCatalogFood("suzme yogurt"),
-                        findCatalogFood("ceviz ici"),
-                    ),
+                    listOf("yulaf ezmesi", "suzme yogurt", "ceviz ici"),
                 ),
             )
             MealType.LUNCH -> listOf(
                 Triple(
                     "Izgara Tavuk & Bulgur Menü",
                     "Öğle öğününde sıkça beraber tercih edilen dengeli tabak",
-                    listOf(
-                        findCatalogFood("izgara tavuk gogsu"),
-                        findCatalogFood("bulgur pilavi"),
-                        findCatalogFood("ayran"),
-                    ),
+                    listOf("izgara tavuk gogsu", "bulgur pilavi", "ayran"),
                 ),
                 Triple(
                     "Mercimek Çorbası & Mevsim Salata",
                     "Hafif ve doyurucu öğle ikilisi",
-                    listOf(
-                        findCatalogFood("mercimek corbasi"),
-                        findCatalogFood("coban salata"),
-                    ),
+                    listOf("mercimek corbasi", "coban salata"),
                 ),
             )
             MealType.DINNER -> listOf(
                 Triple(
                     "Izgara Köfte & Piyaz / Salata",
                     "Akşam öğününde sıkça birlikte tüketilen klasik kombin",
-                    listOf(
-                        findCatalogFood("izgara kofte"),
-                        findCatalogFood("coban salata"),
-                        findCatalogFood("ayran"),
-                    ),
+                    listOf("izgara kofte", "coban salata", "ayran"),
                 ),
                 Triple(
                     "Zeytinyağlı Ev Yemeği & Yoğurt",
                     "Dengeli akşam yemeği ikilisi",
-                    listOf(
-                        findCatalogFood("kuru fasulye"),
-                        findCatalogFood("pirinc pilavi"),
-                        findCatalogFood("suzme yogurt"),
-                    ),
+                    listOf("kuru fasulye", "pirinc pilavi", "suzme yogurt"),
                 ),
             )
             MealType.SNACK -> listOf(
                 Triple(
                     "Meyve & Çiğ Badem Ara Öğünü",
                     "Kan şekerini dengeleyen sık tüketilen ikili",
-                    listOf(
-                        findCatalogFood("yesil elma"),
-                        findCatalogFood("cig badem"),
-                    ),
+                    listOf("yesil elma", "cig badem"),
                 ),
             )
         }
 
-        for ((idx, blueprint) in curatedBlueprints.withIndex()) {
+        val keywordsNeeded = HashSet<String>(8)
+        for (spec in blueprintSpecs) keywordsNeeded.addAll(spec.third)
+        val matchedByKeyword = HashMap<String, FoodItem>(keywordsNeeded.size)
+        for (food in catalogFoods) {
+            if (matchedByKeyword.size == keywordsNeeded.size) break
+            val normName = food.normalizedName.ifBlank { cachedNorm(food.name) }
+            for (kw in keywordsNeeded) {
+                if (!matchedByKeyword.containsKey(kw) && normName.contains(kw)) {
+                    matchedByKeyword[kw] = food
+                }
+            }
+        }
+
+        for ((idx, blueprint) in blueprintSpecs.withIndex()) {
             if (suggestions.size >= 2) break
-            val validFoods = blueprint.third.filterNotNull().filter {
-                TurkishTextNormalizer.normalize(it.name) !in currentFoodNames
+            val validFoods = blueprint.third.mapNotNull { kw ->
+                val food = matchedByKeyword[kw] ?: return@mapNotNull null
+                val normName = food.normalizedName.ifBlank { cachedNorm(food.name) }
+                if (normName in currentFoodNames) null else food
             }
             if (validFoods.size >= 2) {
                 val comboEntries = validFoods.map { food ->

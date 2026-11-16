@@ -33,7 +33,6 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Refresh
-import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -56,7 +55,9 @@ import com.nutra.app.core.designsystem.NutraButtonStyle
 import com.nutra.app.core.designsystem.NutraCard
 import com.nutra.app.core.designsystem.NutraDivider
 import com.nutra.app.core.designsystem.NutraDot
+import com.nutra.app.core.designsystem.NutraFormatters
 import com.nutra.app.core.designsystem.NutraIconButton
+import com.nutra.app.core.designsystem.NutraIcons
 import com.nutra.app.core.designsystem.NutraMetricStepperRow
 import com.nutra.app.core.designsystem.NutraNumericInputDialog
 import com.nutra.app.core.designsystem.NutraSectionHeader
@@ -67,17 +68,11 @@ import com.nutra.app.core.designsystem.NutraTheme
 import com.nutra.app.domain.model.ActivityLevel
 import com.nutra.app.domain.model.BiologicalSex
 import com.nutra.app.domain.model.GoalType
-import java.text.NumberFormat
-import java.util.Locale
 import kotlin.math.roundToInt
 
-private val TR_LOCALE = Locale.forLanguageTag("tr-TR")
+private fun formatInt(value: Int): String = NutraFormatters.formatInt(value)
 
-private fun formatInt(value: Int): String =
-    NumberFormat.getIntegerInstance(TR_LOCALE).format(value)
-
-private fun formatKg(value: Float): String =
-    String.format(TR_LOCALE, "%.1f", value)
+private fun formatKg(value: Float): String = NutraFormatters.formatKg(value)
 
 private enum class OnboardingNumericField(
     val dialogTitle: String,
@@ -559,7 +554,7 @@ private fun DailyPlanReviewStep(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 NutraStepperButton(
-                    icon = Icons.Rounded.Remove,
+                    icon = NutraIcons.Remove,
                     contentDescription = "50 kcal azalt",
                     onClick = {
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)

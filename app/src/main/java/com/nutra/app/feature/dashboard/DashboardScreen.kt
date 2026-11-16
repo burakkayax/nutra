@@ -29,17 +29,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.Check
-import androidx.compose.material.icons.rounded.DeleteOutline
-import androidx.compose.material.icons.rounded.DinnerDining
-import androidx.compose.material.icons.rounded.ExpandLess
-import androidx.compose.material.icons.rounded.ExpandMore
-import androidx.compose.material.icons.rounded.LocalCafe
-import androidx.compose.material.icons.rounded.Remove
-import androidx.compose.material.icons.rounded.Restaurant
-import androidx.compose.material.icons.rounded.WaterDrop
-import androidx.compose.material.icons.rounded.WbSunny
 import androidx.compose.material3.Icon
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
@@ -55,8 +45,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.Role
@@ -71,8 +63,10 @@ import com.nutra.app.core.designsystem.NutraCard
 import com.nutra.app.core.designsystem.NutraDialog
 import com.nutra.app.core.designsystem.NutraDivider
 import com.nutra.app.core.designsystem.NutraDot
+import com.nutra.app.core.designsystem.NutraFormatters
 import com.nutra.app.core.designsystem.NutraIconBadge
 import com.nutra.app.core.designsystem.NutraIconButton
+import com.nutra.app.core.designsystem.NutraIcons
 import com.nutra.app.core.designsystem.NutraLinearProgress
 import com.nutra.app.core.designsystem.NutraMacroStat
 import com.nutra.app.core.designsystem.NutraScreenHeader
@@ -86,16 +80,12 @@ import com.nutra.app.domain.model.MealSummary
 import com.nutra.app.domain.model.MealType
 import com.nutra.app.feature.logging.AddFoodModalSheet
 import kotlinx.coroutines.delay
-import java.text.NumberFormat
 import java.time.LocalDate
 import java.time.format.TextStyle
 import java.util.Locale
 import kotlin.math.roundToInt
 
-private val TR_LOCALE = Locale.forLanguageTag("tr-TR")
-
-private fun formatInt(value: Int): String =
-    NumberFormat.getIntegerInstance(TR_LOCALE).format(value)
+private fun formatInt(value: Int): String = NutraFormatters.formatInt(value)
 
 @Composable
 fun DashboardScreen(
@@ -266,8 +256,12 @@ fun DashboardScreen(
     }
 
     if (state.activeLoggingMealType != null) {
+        val context = LocalContext.current
+        val loggingState by viewModel.loggingUiState.collectAsStateWithLifecycle()
+        val searchQuery by viewModel.searchQueryState.collectAsStateWithLifecycle()
         AddFoodModalSheet(
-            state = state,
+            state = loggingState,
+            searchQuery = searchQuery,
             onDismiss = viewModel::closeAddFoodModal,
             onSelectMealType = viewModel::selectLoggingMealType,
             onSelectTab = viewModel::selectLoggingTab,
@@ -279,7 +273,8 @@ fun DashboardScreen(
             onConfirmLogFood = viewModel::logFoodWithPortion,
             onLogSmartCombo = viewModel::logSmartCombo,
             onAiPromptChange = viewModel::updateAiPromptText,
-            onRunAiAnalysis = viewModel::analyzeWithAi,
+            onRunAiAnalysis = { viewModel.analyzeWithAi(null) },
+            onAnalyzePhotoUri = { uri -> viewModel.analyzePhotoWithAi(context.contentResolver, uri) },
             onUpdateAiItemMultiplier = viewModel::updateAiItemMultiplier,
             onToggleAiItemIncluded = viewModel::toggleAiItemIncluded,
             onCommitAiItems = viewModel::commitAiAnalyzedItems,
@@ -296,21 +291,24 @@ private fun DashboardHeader(
     isWeekCalendarVisible: Boolean,
     onToggleWeekCalendar: () -> Unit,
 ) {
-    val today = LocalDate.now()
+    val today = remember(selectedDate) { LocalDate.now() }
     val isToday = selectedDate == today
-    val dayOfWeek = selectedDate.dayOfWeek.getDisplayName(TextStyle.FULL, TR_LOCALE)
-        .replaceFirstChar { it.uppercaseChar() }
-    val monthName = selectedDate.month.getDisplayName(TextStyle.FULL, TR_LOCALE)
-    val eyebrow = if (selectedDate.year == today.year) {
-        "$dayOfWeek, ${selectedDate.dayOfMonth} $monthName"
-    } else {
-        "$dayOfWeek, ${selectedDate.dayOfMonth} $monthName ${selectedDate.year}"
-    }
-    val title = when (selectedDate) {
-        today -> "Bugün"
-        today.minusDays(1) -> "Dün"
-        today.plusDays(1) -> "Yarın"
-        else -> "${selectedDate.dayOfMonth} $monthName"
+    val (eyebrow, title) = remember(selectedDate, today) {
+        val dayOfWeek = selectedDate.dayOfWeek.getDisplayName(TextStyle.FULL, NutraFormatters.TR_LOCALE)
+            .replaceFirstChar { it.uppercaseChar() }
+        val monthName = selectedDate.month.getDisplayName(TextStyle.FULL, NutraFormatters.TR_LOCALE)
+        val eyebrowText = if (selectedDate.year == today.year) {
+            "$dayOfWeek, ${selectedDate.dayOfMonth} $monthName"
+        } else {
+            "$dayOfWeek, ${selectedDate.dayOfMonth} $monthName ${selectedDate.year}"
+        }
+        val titleText = when (selectedDate) {
+            today -> "Bugün"
+            today.minusDays(1) -> "Dün"
+            today.plusDays(1) -> "Yarın"
+            else -> "${selectedDate.dayOfMonth} $monthName"
+        }
+        eyebrowText to titleText
     }
 
     val calendarContainerColor by animateColorAsState(
@@ -338,7 +336,7 @@ private fun DashboardHeader(
         eyebrowColor = if (isToday) NutraTheme.colors.accent else NutraTheme.colors.textSecondary,
         actions = {
             NutraIconButton(
-                icon = Icons.Rounded.CalendarMonth,
+                icon = NutraIcons.CalendarMonth,
                 contentDescription = if (isWeekCalendarVisible) {
                     "Hafta takvimini gizle"
                 } else {
@@ -365,11 +363,13 @@ private fun WeekDateStrip(
     onJumpToToday: () -> Unit,
 ) {
     val haptic = LocalHapticFeedback.current
-    val today = LocalDate.now()
-    val monthLabel = "${
-        selectedDate.month.getDisplayName(TextStyle.FULL, TR_LOCALE)
-            .replaceFirstChar { it.uppercaseChar() }
-    } ${selectedDate.year}"
+    val today = remember(selectedDate) { LocalDate.now() }
+    val monthLabel = remember(selectedDate) {
+        "${
+            selectedDate.month.getDisplayName(TextStyle.FULL, NutraFormatters.TR_LOCALE)
+                .replaceFirstChar { it.uppercaseChar() }
+        } ${selectedDate.year}"
+    }
     val isToday = selectedDate == today
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -436,7 +436,7 @@ private fun WeekDateStrip(
                 val isDayToday = day == today
                 val status = statusMap[day.toString()]?.status ?: DayGoalStatus.EMPTY
 
-                val circleBg by animateColorAsState(
+                val circleBgState = animateColorAsState(
                     targetValue = when {
                         isSelected -> NutraTheme.colors.ink
                         isDayToday -> NutraTheme.colors.accentSoft
@@ -455,10 +455,12 @@ private fun WeekDateStrip(
                     label = "dayText",
                 )
 
-                val dayShort = day.dayOfWeek.getDisplayName(TextStyle.SHORT, TR_LOCALE)
-                    .trimEnd('.')
-                    .take(3)
-                    .replaceFirstChar { it.uppercaseChar() }
+                val dayShort = remember(day) {
+                    day.dayOfWeek.getDisplayName(TextStyle.SHORT, NutraFormatters.TR_LOCALE)
+                        .trimEnd('.')
+                        .take(3)
+                        .replaceFirstChar { it.uppercaseChar() }
+                }
 
                 val dotColor = if (isDayToday) {
                     Color.Transparent
@@ -497,7 +499,7 @@ private fun WeekDateStrip(
                         modifier = Modifier
                             .size(36.dp)
                             .clip(CircleShape)
-                            .background(circleBg),
+                            .drawBehind { drawRect(circleBgState.value) },
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
@@ -674,7 +676,7 @@ private fun WaterTrackerCard(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 NutraIconBadge(
-                    icon = Icons.Rounded.WaterDrop,
+                    icon = NutraIcons.WaterDrop,
                     tint = NutraTheme.colors.water,
                     container = NutraTheme.colors.waterSoft,
                 )
@@ -737,7 +739,7 @@ private fun WaterTrackerCard(
                 modifier = Modifier.weight(1f),
             )
             NutraIconButton(
-                icon = Icons.Rounded.Remove,
+                icon = NutraIcons.Remove,
                 contentDescription = "200 ml azalt",
                 onClick = { onAddWater(-200) },
                 size = 44.dp,
@@ -789,10 +791,10 @@ private fun MealCard(
 ) {
     val hasItems = mealSummary.items.isNotEmpty()
     val mealIcon = when (mealSummary.mealType) {
-        MealType.BREAKFAST -> Icons.Rounded.WbSunny
-        MealType.LUNCH -> Icons.Rounded.Restaurant
-        MealType.DINNER -> Icons.Rounded.DinnerDining
-        MealType.SNACK -> Icons.Rounded.LocalCafe
+        MealType.BREAKFAST -> NutraIcons.WbSunny
+        MealType.LUNCH -> NutraIcons.Restaurant
+        MealType.DINNER -> NutraIcons.DinnerDining
+        MealType.SNACK -> NutraIcons.LocalCafe
     }
 
     NutraCard(
@@ -842,7 +844,7 @@ private fun MealCard(
                         )
                         if (hasItems) {
                             Icon(
-                                imageVector = if (isExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                                imageVector = if (isExpanded) NutraIcons.ExpandLess else NutraIcons.ExpandMore,
                                 contentDescription = if (isExpanded) "Daralt" else "Genişlet",
                                 tint = NutraTheme.colors.textTertiary,
                                 modifier = Modifier.size(18.dp),
@@ -916,7 +918,7 @@ private fun MealCard(
                                     contentAlignment = Alignment.CenterEnd,
                                 ) {
                                     Icon(
-                                        imageVector = Icons.Rounded.DeleteOutline,
+                                        imageVector = NutraIcons.DeleteOutline,
                                         contentDescription = "Sil",
                                         tint = NutraTheme.colors.danger,
                                     )
@@ -1042,7 +1044,7 @@ private fun EditLoggedFoodPortionDialog(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 NutraStepperButton(
-                    icon = Icons.Rounded.Remove,
+                    icon = NutraIcons.Remove,
                     contentDescription = "Porsiyon azalt",
                     onClick = { multiplier = (multiplier - 0.25f).coerceAtLeast(0.25f) },
                     containerColorOverride = NutraTheme.colors.surfaceElevated,

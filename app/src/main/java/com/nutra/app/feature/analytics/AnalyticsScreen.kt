@@ -10,21 +10,17 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.MonitorWeight
-import androidx.compose.material.icons.rounded.Remove
-import androidx.compose.material.icons.rounded.WaterDrop
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -35,6 +31,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -62,7 +60,9 @@ import com.nutra.app.core.designsystem.NutraDialog
 import com.nutra.app.core.designsystem.NutraDivider
 import com.nutra.app.core.designsystem.NutraDot
 import com.nutra.app.core.designsystem.NutraEmptyState
+import com.nutra.app.core.designsystem.NutraFormatters
 import com.nutra.app.core.designsystem.NutraIconButton
+import com.nutra.app.core.designsystem.NutraIcons
 import com.nutra.app.core.designsystem.NutraScreenHeader
 import com.nutra.app.core.designsystem.NutraSegmentedControl
 import com.nutra.app.core.designsystem.NutraTheme
@@ -70,45 +70,19 @@ import com.nutra.app.domain.model.DailyAnalyticsPoint
 import com.nutra.app.domain.model.MacroGoals
 import com.nutra.app.domain.model.UserProfile
 import com.nutra.app.domain.model.WeightTrendPoint
-import java.text.NumberFormat
 import java.time.LocalDate
-import java.time.format.DateTimeFormatter
-import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-private val TR_LOCALE = Locale.forLanguageTag("tr-TR")
-private val DATE_LABEL_FORMATTER = DateTimeFormatter.ofPattern("d MMM", TR_LOCALE)
-private val SHORT_WEEKDAY_FORMATTER = DateTimeFormatter.ofPattern("EEE", TR_LOCALE)
+private fun formatInt(value: Int): String = NutraFormatters.formatInt(value)
 
-private fun formatInt(value: Int): String =
-    NumberFormat.getIntegerInstance(TR_LOCALE).format(value)
+private fun formatKg(value: Float): String = NutraFormatters.formatKg(value)
 
-private fun formatKg(value: Float): String =
-    String.format(TR_LOCALE, "%.1f", value)
+private fun formatWaterLitres(ml: Int): String = NutraFormatters.formatWaterLitres(ml)
 
-private fun formatWaterLitres(ml: Int): String =
-    if (ml >= 1000) {
-        String.format(TR_LOCALE, "%.1f L", ml / 1000f)
-    } else {
-        "${formatInt(ml)} ml"
-    }
+private fun formatShortDate(dateIso: String?): String = NutraFormatters.formatShortDate(dateIso)
 
-private fun formatShortDate(dateIso: String?): String {
-    if (dateIso.isNullOrBlank()) return ""
-    return runCatching {
-        val date = LocalDate.parse(dateIso)
-        if (date == LocalDate.now()) "Bugün" else date.format(DATE_LABEL_FORMATTER)
-    }.getOrDefault(dateIso)
-}
-
-private fun formatShortWeekday(dateIso: String): String =
-    runCatching {
-        LocalDate.parse(dateIso)
-            .format(SHORT_WEEKDAY_FORMATTER)
-            .replace(".", "")
-            .replaceFirstChar { it.uppercase(TR_LOCALE) }
-    }.getOrDefault("")
+private fun formatShortWeekday(dateIso: String): String = NutraFormatters.formatShortWeekday(dateIso)
 
 @Composable
 fun AnalyticsScreen(
@@ -117,6 +91,15 @@ fun AnalyticsScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val layoutDirection = LocalLayoutDirection.current
+
+    if (uiState.isLoading) {
+        AnalyticsLoadingSkeleton(
+            selectedRange = uiState.selectedRange,
+            contentPadding = contentPadding,
+            onSelectRange = viewModel::selectRange,
+        )
+        return
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -200,6 +183,72 @@ fun AnalyticsScreen(
 }
 
 @Composable
+private fun AnalyticsLoadingSkeleton(
+    selectedRange: AnalyticsRangeOption,
+    contentPadding: PaddingValues,
+    onSelectRange: (AnalyticsRangeOption) -> Unit,
+) {
+    val colors = NutraTheme.colors
+    val layoutDirection = LocalLayoutDirection.current
+    val placeholderHeights = listOf(180.dp, 112.dp, 180.dp)
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(colors.background)
+            .padding(
+                start = contentPadding.calculateStartPadding(layoutDirection) + NutraTheme.spacing.screen,
+                end = contentPadding.calculateEndPadding(layoutDirection) + NutraTheme.spacing.screen,
+                top = contentPadding.calculateTopPadding() + 28.dp,
+                bottom = contentPadding.calculateBottomPadding() + 16.dp,
+            ),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            NutraScreenHeader(
+                title = "İlerleme",
+                eyebrow = "Beslenme ve kilo özeti",
+            )
+
+            NutraSegmentedControl(
+                items = AnalyticsRangeOption.entries,
+                selectedItem = selectedRange,
+                onItemSelected = onSelectRange,
+                labelProvider = { it.title },
+            )
+        }
+
+        placeholderHeights.forEach { chartHeight ->
+            NutraCard {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(0.38f)
+                        .height(14.dp)
+                        .clip(NutraTheme.shapes.pill)
+                        .background(colors.surfaceMuted),
+                )
+                Spacer(Modifier.height(10.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(0.54f)
+                        .height(26.dp)
+                        .clip(NutraTheme.shapes.sm)
+                        .background(colors.surfaceMuted),
+                )
+                Spacer(Modifier.height(16.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(chartHeight)
+                        .clip(NutraTheme.shapes.md)
+                        .background(colors.surfaceMuted),
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun HapticScrubbingCalorieChartCard(
     points: List<DailyAnalyticsPoint>,
     scrubbedIndex: Int?,
@@ -257,7 +306,7 @@ private fun HapticScrubbingCalorieChartCard(
 
         if (points.isEmpty()) {
             NutraEmptyState(
-                icon = Icons.Rounded.MonitorWeight,
+                icon = NutraIcons.MonitorWeight,
                 title = "Henüz kalori kaydı yok",
                 message = "Bugün sekmesinden öğün eklediğinde grafik oluşur.",
                 modifier = Modifier.padding(top = 16.dp),
@@ -350,7 +399,7 @@ private fun HapticScrubbingWaterChartCard(
 
         if (points.isEmpty()) {
             NutraEmptyState(
-                icon = Icons.Rounded.WaterDrop,
+                icon = NutraIcons.WaterDrop,
                 title = "Henüz su kaydı yok",
                 message = "Bugün sekmesinden su eklediğinde grafik oluşur.",
                 modifier = Modifier.padding(top = 16.dp),
@@ -398,6 +447,8 @@ private fun HapticScrubbingBarChart(
     val colors = NutraTheme.colors
     val haptic = LocalHapticFeedback.current
     val currentScrub by rememberUpdatedState(scrubbedIndex)
+    val dashEffect = remember { PathEffect.dashPathEffect(floatArrayOf(10f, 8f)) }
+    val subtleTertiary = remember(colors.textTertiary) { colors.textTertiary.copy(alpha = 0.45f) }
 
     Box(
         modifier = Modifier
@@ -456,11 +507,11 @@ private fun HapticScrubbingBarChart(
         ) {
             val targetY = size.height * (1f - (targetValue / maxChartValue).coerceIn(0f, 1f))
             drawLine(
-                color = colors.textTertiary.copy(alpha = 0.45f),
+                color = subtleTertiary,
                 start = Offset(0f, targetY),
                 end = Offset(size.width, targetY),
                 strokeWidth = 1.dp.toPx(),
-                pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f)),
+                pathEffect = dashEffect,
             )
 
             val count = points.size
@@ -473,10 +524,12 @@ private fun HapticScrubbingBarChart(
             val barWidth = (slotWidth * 0.56f).coerceIn(3.dp.toPx(), maxBarWidth)
             val minStubHeight = 6.dp.toPx()
             val corner = CornerRadius(barWidth / 2f, barWidth / 2f)
+            val activeIdx = currentScrub
 
-            points.forEachIndexed { index, pt ->
+            for (index in 0 until count) {
+                val pt = points[index]
                 val value = valueProvider(pt)
-                val isSelected = scrubbedIndex == null || scrubbedIndex == index
+                val isSelected = activeIdx == null || activeIdx == index
                 val x = index * slotWidth + (slotWidth - barWidth) / 2f
                 val rawHeight = if (value > 0) {
                     (size.height * (value / maxChartValue).coerceIn(0f, 1f))
@@ -678,49 +731,47 @@ private fun StackedRatioBar(
     alpha: Float,
 ) {
     val colors = NutraTheme.colors
-    if (!hasData) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(height)
-                .clip(NutraTheme.shapes.pill)
-                .background(colors.surfaceMuted),
-        )
-        return
-    }
+    val pColor = colors.protein.copy(alpha = alpha)
+    val cColor = colors.carbs.copy(alpha = alpha)
+    val fColor = colors.fat.copy(alpha = alpha)
+    val trackColor = colors.surfaceMuted
 
-    Row(
+    Spacer(
         modifier = Modifier
             .fillMaxWidth()
             .height(height)
-            .clip(NutraTheme.shapes.pill),
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
-    ) {
-        if (proteinRatio > 0.005f) {
-            Box(
-                modifier = Modifier
-                    .weight(proteinRatio.coerceAtLeast(0.01f))
-                    .fillMaxHeight()
-                    .background(colors.protein.copy(alpha = alpha)),
-            )
-        }
-        if (carbsRatio > 0.005f) {
-            Box(
-                modifier = Modifier
-                    .weight(carbsRatio.coerceAtLeast(0.01f))
-                    .fillMaxHeight()
-                    .background(colors.carbs.copy(alpha = alpha)),
-            )
-        }
-        if (fatRatio > 0.005f) {
-            Box(
-                modifier = Modifier
-                    .weight(fatRatio.coerceAtLeast(0.01f))
-                    .fillMaxHeight()
-                    .background(colors.fat.copy(alpha = alpha)),
-            )
-        }
-    }
+            .clip(NutraTheme.shapes.pill)
+            .drawBehind {
+                if (!hasData) {
+                    drawRect(color = trackColor)
+                    return@drawBehind
+                }
+                val pVal = if (proteinRatio > 0.005f) proteinRatio.coerceAtLeast(0.01f) else 0f
+                val cVal = if (carbsRatio > 0.005f) carbsRatio.coerceAtLeast(0.01f) else 0f
+                val fVal = if (fatRatio > 0.005f) fatRatio.coerceAtLeast(0.01f) else 0f
+                val total = (pVal + cVal + fVal).coerceAtLeast(0.001f)
+
+                val gapPx = 2.dp.toPx()
+                val activeCount = (if (pVal > 0f) 1 else 0) + (if (cVal > 0f) 1 else 0) + (if (fVal > 0f) 1 else 0)
+                val usableWidth = (size.width - gapPx * (activeCount - 1).coerceAtLeast(0)).coerceAtLeast(0f)
+                var x = 0f
+
+                if (pVal > 0f) {
+                    val w = usableWidth * (pVal / total)
+                    drawRect(color = pColor, topLeft = Offset(x, 0f), size = Size(w, size.height))
+                    x += w + gapPx
+                }
+                if (cVal > 0f) {
+                    val w = usableWidth * (cVal / total)
+                    drawRect(color = cColor, topLeft = Offset(x, 0f), size = Size(w, size.height))
+                    x += w + gapPx
+                }
+                if (fVal > 0f) {
+                    val w = (size.width - x).coerceAtLeast(0f)
+                    drawRect(color = fColor, topLeft = Offset(x, 0f), size = Size(w, size.height))
+                }
+            },
+    )
 }
 
 @Composable
@@ -811,7 +862,7 @@ private fun WeightTrendBezierCard(
 
         if (points.isEmpty()) {
             NutraEmptyState(
-                icon = Icons.Rounded.MonitorWeight,
+                icon = NutraIcons.MonitorWeight,
                 title = "Henüz kilo kaydı yok",
                 message = "Günlük tartını eklediğinde dalgalanmaları yumuşatan 7 günlük trend eğrisi çizilir.",
                 modifier = Modifier.padding(top = 18.dp),
@@ -935,8 +986,9 @@ private fun WeightTrendBezierCard(
                 .height(172.dp),
         ) {
             var lastDraggedIndex = remember(points.size) { -1 }
+            val currentScrubState = rememberUpdatedState(scrubbedIndex)
 
-            Canvas(
+            Spacer(
                 modifier = Modifier
                     .fillMaxSize()
                     .pointerInput(points.size) {
@@ -946,7 +998,7 @@ private fun WeightTrendBezierCard(
                                 .roundToInt()
                                 .coerceIn(0, points.lastIndex)
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onScrub(if (currentScrub == idx) null else idx)
+                            onScrub(if (currentScrubState.value == idx) null else idx)
                         }
                     }
                     .pointerInput(points.size) {
@@ -981,112 +1033,128 @@ private fun WeightTrendBezierCard(
                                 onScrub(null)
                             },
                         )
-                    },
-            ) {
-                val range = (maxY - minY).coerceAtLeast(0.5f)
-                val padX = 8.dp.toPx()
-                val usableWidth = (size.width - padX * 2f).coerceAtLeast(1f)
-                val padTop = 8.dp.toPx()
-                val usableHeight = (size.height - padTop * 2f).coerceAtLeast(1f)
-
-                fun yFor(weight: Float): Float {
-                    val norm = ((weight - minY) / range).coerceIn(0f, 1f)
-                    return padTop + usableHeight * (1f - norm)
-                }
-
-                fun xFor(index: Int): Float {
-                    val frac = index.toFloat() / points.lastIndex.coerceAtLeast(1)
-                    return padX + usableWidth * frac
-                }
-
-                // Target weight dashed line when in visible bounds
-                if (targetWeight in minY..maxY) {
-                    val targetLineY = yFor(targetWeight)
-                    drawLine(
-                        color = colors.accent.copy(alpha = 0.45f),
-                        start = Offset(padX, targetLineY),
-                        end = Offset(size.width - padX, targetLineY),
-                        strokeWidth = 1.dp.toPx(),
-                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f)),
-                    )
-                }
-
-                // Smooth cubic Bezier path for EMA curve
-                val emaPoints = points.mapIndexed { idx, pt ->
-                    Offset(xFor(idx), yFor(pt.emaTrendKg))
-                }
-                val curvePath = Path().apply {
-                    moveTo(emaPoints.first().x, emaPoints.first().y)
-                    for (i in 0 until emaPoints.lastIndex) {
-                        val p0 = emaPoints[i]
-                        val p1 = emaPoints[i + 1]
-                        val midX = (p0.x + p1.x) / 2f
-                        cubicTo(midX, p0.y, midX, p1.y, p1.x, p1.y)
                     }
-                }
+                    .drawWithCache {
+                        val range = (maxY - minY).coerceAtLeast(0.5f)
+                        val padX = 8.dp.toPx()
+                        val usableWidth = (size.width - padX * 2f).coerceAtLeast(1f)
+                        val padTop = 8.dp.toPx()
+                        val usableHeight = (size.height - padTop * 2f).coerceAtLeast(1f)
 
-                val fillPath = Path().apply {
-                    addPath(curvePath)
-                    lineTo(emaPoints.last().x, size.height)
-                    lineTo(emaPoints.first().x, size.height)
-                    close()
-                }
-                drawPath(
-                    path = fillPath,
-                    brush = Brush.verticalGradient(
-                        colors = listOf(
-                            colors.accent.copy(alpha = 0.16f),
-                            Color.Transparent,
-                        ),
-                        startY = 0f,
-                        endY = size.height,
-                    ),
-                )
+                        fun yFor(weight: Float): Float {
+                            val norm = ((weight - minY) / range).coerceIn(0f, 1f)
+                            return padTop + usableHeight * (1f - norm)
+                        }
 
-                drawPath(
-                    path = curvePath,
-                    color = colors.accent,
-                    style = Stroke(
-                        width = 2.5.dp.toPx(),
-                        cap = StrokeCap.Round,
-                        join = StrokeJoin.Round,
-                    ),
-                )
+                        fun xFor(index: Int): Float {
+                            val frac = index.toFloat() / points.lastIndex.coerceAtLeast(1)
+                            return padX + usableWidth * frac
+                        }
 
-                // Raw daily measurements as quiet dots
-                points.forEachIndexed { idx, pt ->
-                    drawCircle(
-                        color = colors.textTertiary.copy(alpha = 0.5f),
-                        radius = 3.dp.toPx(),
-                        center = Offset(xFor(idx), yFor(pt.rawWeightKg)),
-                    )
-                }
+                        val hasTargetLine = targetWeight in minY..maxY
+                        val targetLineY = if (hasTargetLine) yFor(targetWeight) else 0f
+                        val targetDashEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f))
+                        val cursorDashEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f))
 
-                // Highlight indicator on scrubbed or latest EMA node
-                val focusIdx = scrubbedIndex ?: points.lastIndex
-                val focusOffset = emaPoints[focusIdx]
+                        val emaPoints = ArrayList<Offset>(points.size)
+                        val rawOffsets = ArrayList<Offset>(points.size)
+                        for (idx in points.indices) {
+                            val pt = points[idx]
+                            val x = xFor(idx)
+                            emaPoints.add(Offset(x, yFor(pt.emaTrendKg)))
+                            rawOffsets.add(Offset(x, yFor(pt.rawWeightKg)))
+                        }
 
-                if (scrubbedIndex != null) {
-                    drawLine(
-                        color = colors.divider,
-                        start = Offset(focusOffset.x, 0f),
-                        end = Offset(focusOffset.x, size.height),
-                        strokeWidth = 1.dp.toPx(),
-                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f)),
-                    )
-                }
+                        val curvePath = Path().apply {
+                            moveTo(emaPoints.first().x, emaPoints.first().y)
+                            for (i in 0 until emaPoints.lastIndex) {
+                                val p0 = emaPoints[i]
+                                val p1 = emaPoints[i + 1]
+                                val midX = (p0.x + p1.x) / 2f
+                                cubicTo(midX, p0.y, midX, p1.y, p1.x, p1.y)
+                            }
+                        }
 
-                drawCircle(
-                    color = colors.surface,
-                    radius = 6.dp.toPx(),
-                    center = focusOffset,
-                )
-                drawCircle(
-                    color = colors.accent,
-                    radius = 4.dp.toPx(),
-                    center = focusOffset,
-                )
-            }
+                        val fillPath = Path().apply {
+                            addPath(curvePath)
+                            lineTo(emaPoints.last().x, size.height)
+                            lineTo(emaPoints.first().x, size.height)
+                            close()
+                        }
+
+                        val fillBrush = Brush.verticalGradient(
+                            colors = listOf(
+                                colors.accent.copy(alpha = 0.16f),
+                                Color.Transparent,
+                            ),
+                            startY = 0f,
+                            endY = size.height,
+                        )
+
+                        val curveStroke = Stroke(
+                            width = 2.5.dp.toPx(),
+                            cap = StrokeCap.Round,
+                            join = StrokeJoin.Round,
+                        )
+                        val targetStrokePx = 1.dp.toPx()
+                        val rawDotRadiusPx = 3.dp.toPx()
+                        val focusOuterRadiusPx = 6.dp.toPx()
+                        val focusInnerRadiusPx = 4.dp.toPx()
+                        val targetLineColor = colors.accent.copy(alpha = 0.45f)
+                        val rawDotColor = colors.textTertiary.copy(alpha = 0.5f)
+                        val accentColor = colors.accent
+                        val surfaceColor = colors.surface
+                        val dividerColor = colors.divider
+
+                        onDrawBehind {
+                            if (hasTargetLine) {
+                                drawLine(
+                                    color = targetLineColor,
+                                    start = Offset(padX, targetLineY),
+                                    end = Offset(size.width - padX, targetLineY),
+                                    strokeWidth = targetStrokePx,
+                                    pathEffect = targetDashEffect,
+                                )
+                            }
+
+                            drawPath(path = fillPath, brush = fillBrush)
+                            drawPath(path = curvePath, color = accentColor, style = curveStroke)
+
+                            for (i in rawOffsets.indices) {
+                                drawCircle(
+                                    color = rawDotColor,
+                                    radius = rawDotRadiusPx,
+                                    center = rawOffsets[i],
+                                )
+                            }
+
+                            val activeScrub = currentScrubState.value
+                            val focusIdx = (activeScrub ?: emaPoints.lastIndex).coerceIn(0, emaPoints.lastIndex)
+                            val focusOffset = emaPoints[focusIdx]
+
+                            if (activeScrub != null) {
+                                drawLine(
+                                    color = dividerColor,
+                                    start = Offset(focusOffset.x, 0f),
+                                    end = Offset(focusOffset.x, size.height),
+                                    strokeWidth = targetStrokePx,
+                                    pathEffect = cursorDashEffect,
+                                )
+                            }
+
+                            drawCircle(
+                                color = surfaceColor,
+                                radius = focusOuterRadiusPx,
+                                center = focusOffset,
+                            )
+                            drawCircle(
+                                color = accentColor,
+                                radius = focusInnerRadiusPx,
+                                center = focusOffset,
+                            )
+                        }
+                    },
+            )
         }
 
         // Bottom range dates + compact legend
@@ -1229,7 +1297,7 @@ private fun LogWeightDialog(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 NutraIconButton(
-                    icon = Icons.Rounded.Remove,
+                    icon = NutraIcons.Remove,
                     contentDescription = "0.1 kg azalt",
                     onClick = {
                         weight = (((weight - 0.1f) * 10f).roundToInt() / 10f).coerceIn(35f, 250f)

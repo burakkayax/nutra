@@ -64,38 +64,31 @@ class OnboardingViewModel @Inject constructor(
         recalculateGoals()
     }
 
-    fun selectGoalType(goalType: GoalType) {
-        _uiState.update { it.copy(goalType = goalType) }
-        recalculateGoals()
+    fun selectGoalType(goalType: GoalType) = updateAndRecalculate {
+        it.copy(goalType = goalType)
     }
 
-    fun selectSex(sex: BiologicalSex) {
-        _uiState.update { it.copy(sex = sex) }
-        recalculateGoals()
+    fun selectSex(sex: BiologicalSex) = updateAndRecalculate {
+        it.copy(sex = sex)
     }
 
     fun adjustAge(delta: Int) = setAge(_uiState.value.age + delta)
 
-    fun setAge(age: Int) {
-        _uiState.update { it.copy(age = age.coerceIn(14, 95)) }
-        recalculateGoals()
+    fun setAge(age: Int) = updateAndRecalculate {
+        it.copy(age = age.coerceIn(14, 95))
     }
 
     fun adjustHeight(delta: Int) = setHeight(_uiState.value.heightCm + delta)
 
-    fun setHeight(heightCm: Int) {
-        _uiState.update { it.copy(heightCm = heightCm.coerceIn(130, 225)) }
-        recalculateGoals()
+    fun setHeight(heightCm: Int) = updateAndRecalculate {
+        it.copy(heightCm = heightCm.coerceIn(130, 225))
     }
 
     fun adjustCurrentWeight(delta: Float) = setCurrentWeight(_uiState.value.currentWeightKg + delta)
 
-    fun setCurrentWeight(weightKg: Float) {
-        _uiState.update {
-            val next = (weightKg * 10f).roundToInt() / 10f
-            it.copy(currentWeightKg = next.coerceIn(38f, 220f))
-        }
-        recalculateGoals()
+    fun setCurrentWeight(weightKg: Float) = updateAndRecalculate {
+        val next = (weightKg * 10f).roundToInt() / 10f
+        it.copy(currentWeightKg = next.coerceIn(38f, 220f))
     }
 
     fun adjustTargetWeight(delta: Float) = setTargetWeight(_uiState.value.targetWeightKg + delta)
@@ -107,9 +100,8 @@ class OnboardingViewModel @Inject constructor(
         }
     }
 
-    fun selectActivityLevel(level: ActivityLevel) {
-        _uiState.update { it.copy(activityLevel = level) }
-        recalculateGoals()
+    fun selectActivityLevel(level: ActivityLevel) = updateAndRecalculate {
+        it.copy(activityLevel = level)
     }
 
     fun nextStep() {
@@ -203,21 +195,25 @@ class OnboardingViewModel @Inject constructor(
         }
     }
 
-    private fun recalculateGoals() {
-        val s = _uiState.value
-        val calc = calculatorUseCase.calculateGoals(
-            sex = s.sex,
-            age = s.age,
-            heightCm = s.heightCm,
-            weightKg = s.currentWeightKg,
-            activityLevel = s.activityLevel,
-            goalType = s.goalType,
-        )
-        _uiState.update {
-            it.copy(
+    private inline fun updateAndRecalculate(transform: (OnboardingUiState) -> OnboardingUiState) {
+        _uiState.update { current ->
+            val updated = transform(current)
+            val calc = calculatorUseCase.calculateGoals(
+                sex = updated.sex,
+                age = updated.age,
+                heightCm = updated.heightCm,
+                weightKg = updated.currentWeightKg,
+                activityLevel = updated.activityLevel,
+                goalType = updated.goalType,
+            )
+            updated.copy(
                 calculatedGoals = calc,
-                customGoals = if (it.isCustomized) it.customGoals else calc,
+                customGoals = if (updated.isCustomized) updated.customGoals else calc,
             )
         }
+    }
+
+    private fun recalculateGoals() {
+        updateAndRecalculate { it }
     }
 }

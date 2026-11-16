@@ -2,6 +2,8 @@ package com.nutra.app.core.di
 
 import android.content.Context
 import androidx.room.Room
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.nutra.app.core.database.NutraDao
 import com.nutra.app.core.database.NutraDatabase
 import dagger.Module
@@ -17,6 +19,12 @@ import javax.inject.Singleton
 @InstallIn(SingletonComponent::class)
 object AppModule {
 
+    val MIGRATION_1_2 = object : Migration(1, 2) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_meal_logs_timestampMillis` ON `meal_logs` (`timestampMillis`)")
+        }
+    }
+
     @Provides
     @Singleton
     fun provideNutraDatabase(
@@ -26,6 +34,7 @@ object AppModule {
         NutraDatabase::class.java,
         "nutra_database.db",
     )
+        .addMigrations(MIGRATION_1_2)
         .fallbackToDestructiveMigration(dropAllTables = true)
         .build()
 

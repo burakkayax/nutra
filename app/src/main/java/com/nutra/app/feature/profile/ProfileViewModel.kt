@@ -1,8 +1,11 @@
 package com.nutra.app.feature.profile
 
+import android.content.ContentResolver
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nutra.app.core.datastore.UserPreferencesDataStore
+import com.nutra.app.core.designsystem.NutraFormatters
 import com.nutra.app.domain.model.ActivityLevel
 import com.nutra.app.domain.model.AppResult
 import com.nutra.app.domain.model.BiologicalSex
@@ -14,6 +17,7 @@ import com.nutra.app.domain.repository.NutritionRepository
 import com.nutra.app.domain.usecase.MacroGoalBounds
 import com.nutra.app.domain.usecase.NutritionCalculatorUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -22,8 +26,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import java.text.NumberFormat
-import java.util.Locale
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 data class ProfileUiState(
@@ -55,7 +58,7 @@ class ProfileViewModel @Inject constructor(
         )
     }.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
+        started = SharingStarted.WhileSubscribed(30_000),
         initialValue = ProfileUiState(),
     )
 
@@ -226,8 +229,7 @@ class ProfileViewModel @Inject constructor(
         }
     }
 
-    private fun formatTrInt(value: Int): String =
-        NumberFormat.getIntegerInstance(Locale.forLanguageTag("tr-TR")).format(value)
+    private fun formatTrInt(value: Int): String = NutraFormatters.formatInt(value)
 
     fun updateAppearance(themePreference: ThemePreference, useDynamicColor: Boolean) {
         viewModelScope.launch {
@@ -242,17 +244,42 @@ class ProfileViewModel @Inject constructor(
         }
     }
 
-    fun exportBackupToCallback(onJsonReady: (String) -> Unit) {
+    fun exportBackupToUri(contentResolver: ContentResolver, uri: Uri) {
         viewModelScope.launch {
             when (val res = nutritionRepository.exportBackupJson()) {
                 is AppResult.Success -> {
-                    onJsonReady(res.data)
-                    feedbackFlow.value = "Yedek verisi hazırlandı"
+                    val writeResult = withContext(Dispatchers.IO) {
+                        runCatching {
+                            contentResolver.openOutputStream(uri)?.use { out ->
+                                out.write(res.data.toByteArray(Charsets.UTF_8))
+                            } ?: error("Dosya açılamadı")
+                        }
+                    }
+                    feedbackFlow.value = if (writeResult.isSuccess) {
+                        "Yedek dosyası kaydedildi"
+                    } else {
+                        "Yedek dosyası yazılamadı"
+                    }
                 }
                 is AppResult.Error -> {
                     feedbackFlow.value = res.message
                 }
             }
+        }
+    }
+
+    fun importBackupFromUri(contentResolver: ContentResolver, uri: Uri) {
+        viewModelScope.launch {
+            val raw = withContext(Dispatchers.IO) {
+                runCatching {
+                    contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                }.getOrNull()
+            }
+            if (raw.isNullOrBlank()) {
+                feedbackFlow.value = "Yedek dosyası okunamadı"
+                return@launch
+            }
+            importBackupJson(raw)
         }
     }
 

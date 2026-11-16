@@ -26,7 +26,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -52,13 +54,18 @@ data class NutraBackupPayload(
 class NutritionRepository @Inject constructor(
     private val nutraDao: NutraDao,
     private val preferencesDataStore: UserPreferencesDataStore,
-    private val openFoodFactsService: OpenFoodFactsService,
+    private val openFoodFactsService: dagger.Lazy<OpenFoodFactsService>,
 ) {
     private val repoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val backupJson = Json {
-        prettyPrint = true
-        ignoreUnknownKeys = true
+    private val backupJson by lazy {
+        Json {
+            prettyPrint = true
+            ignoreUnknownKeys = true
+        }
     }
+    private val goalsFlow = preferencesDataStore.userProfileFlow
+        .map { it.goals }
+        .distinctUntilChanged()
 
     init {
         repoScope.launch {
@@ -73,17 +80,21 @@ class NutritionRepository @Inject constructor(
     }
 
     fun observeAllFoods(): Flow<List<FoodItem>> =
-        nutraDao.observeAllFoods().map { list -> list.map { it.toDomain() } }
+        nutraDao.observeAllFoods()
+            .map { list -> list.map { it.toDomain() } }
+            .flowOn(Dispatchers.Default)
 
     fun observeRecentHistoricalMealLogs(): Flow<List<MealLogItem>> =
-        nutraDao.observeRecentHistoricalMealLogs().map { list -> list.map { it.toDomain() } }
+        nutraDao.observeRecentHistoricalMealLogs()
+            .map { list -> list.map { it.toDomain() } }
+            .flowOn(Dispatchers.Default)
 
     fun observeDailySummary(dateIso: String): Flow<DailyNutritionSummary> =
         combine(
-            preferencesDataStore.userProfileFlow,
+            goalsFlow,
             nutraDao.observeMealLogsForDate(dateIso),
             nutraDao.observeWaterForDate(dateIso),
-        ) { profile, mealEntities, waterEntity ->
+        ) { goals, mealEntities, waterEntity ->
             val domainLogs = mealEntities.map { it.toDomain() }
             val mealsByType = MealType.entries.map { type ->
                 MealSummary(
@@ -93,21 +104,21 @@ class NutritionRepository @Inject constructor(
             }
             DailyNutritionSummary(
                 dateIso = dateIso,
-                goals = profile.goals,
+                goals = goals,
                 meals = mealsByType,
                 waterMl = waterEntity?.waterMl ?: 0,
             )
-        }
+        }.flowOn(Dispatchers.Default)
 
     fun observeWeekStatusIndicators(
         startDateIso: String,
         endDateIso: String,
     ): Flow<Map<String, DayStatusIndicator>> =
         combine(
-            preferencesDataStore.userProfileFlow,
+            goalsFlow,
             nutraDao.observeMealLogsInRange(startDateIso, endDateIso),
-        ) { profile, logs ->
-            val targetCal = profile.goals.calories.coerceAtLeast(1)
+        ) { goals, logs ->
+            val targetCal = goals.calories.coerceAtLeast(1)
             val grouped = logs.groupBy { it.dateIso }
             grouped.mapValues { (dateIso, dayLogs) ->
                 val consumed = dayLogs.sumOf { it.calories }
@@ -124,7 +135,7 @@ class NutritionRepository @Inject constructor(
                     status = status,
                 )
             }
-        }
+        }.flowOn(Dispatchers.Default)
 
     fun observeAnalyticsRange(
         startDate: LocalDate,
@@ -133,10 +144,10 @@ class NutritionRepository @Inject constructor(
         val startIso = startDate.toString()
         val endIso = endDate.toString()
         return combine(
-            preferencesDataStore.userProfileFlow,
+            goalsFlow,
             nutraDao.observeMealLogsInRange(startIso, endIso),
             nutraDao.observeWaterInRange(startIso, endIso),
-        ) { profile, mealLogs, waterLogs ->
+        ) { goals, mealLogs, waterLogs ->
             val mealsByDate = mealLogs.groupBy { it.dateIso }
             val waterByDate = waterLogs.associateBy { it.dateIso }
 
@@ -150,7 +161,7 @@ class NutritionRepository @Inject constructor(
                     DailyAnalyticsPoint(
                         dateIso = iso,
                         calories = dayMeals.sumOf { it.calories },
-                        targetCalories = profile.goals.calories,
+                        targetCalories = goals.calories,
                         proteinGrams = dayMeals.sumOf { it.proteinGrams.toDouble() }.toFloat(),
                         carbsGrams = dayMeals.sumOf { it.carbsGrams.toDouble() }.toFloat(),
                         fatGrams = dayMeals.sumOf { it.fatGrams.toDouble() }.toFloat(),
@@ -160,11 +171,13 @@ class NutritionRepository @Inject constructor(
                 cursor = cursor.plusDays(1)
             }
             points
-        }
+        }.flowOn(Dispatchers.Default)
     }
 
     fun observeWeightEntries(): Flow<List<WeightEntry>> =
-        nutraDao.observeAllWeightLogs().map { list -> list.map { it.toDomain() } }
+        nutraDao.observeAllWeightLogs()
+            .map { list -> list.map { it.toDomain() } }
+            .flowOn(Dispatchers.Default)
 
     suspend fun logFoodToMeal(
         dateIso: String,
@@ -261,7 +274,7 @@ class NutritionRepository @Inject constructor(
         if (localMatch != null) {
             return@withContext AppResult.Success(localMatch.toDomain())
         }
-        val remoteResult = openFoodFactsService.lookupBarcode(cleaned)
+        val remoteResult = openFoodFactsService.get().lookupBarcode(cleaned)
         if (remoteResult is AppResult.Success) {
             val saved = createCustomFood(remoteResult.data)
             return@withContext AppResult.Success(saved)

@@ -1,6 +1,7 @@
 package com.nutra.app
 
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.View
 import android.view.ViewTreeObserver
 import androidx.activity.ComponentActivity
@@ -8,7 +9,6 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
@@ -19,7 +19,6 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -43,22 +42,23 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.Insights
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.rounded.Home
-import androidx.compose.material.icons.rounded.Insights
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -67,14 +67,20 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.hideFromAccessibility
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nutra.app.core.datastore.UserPreferencesDataStore
+import com.nutra.app.core.designsystem.NutraIcons
 import com.nutra.app.core.designsystem.NutraTheme
 import com.nutra.app.core.designsystem.resolveIsDark
+import com.nutra.app.domain.model.ThemePreference
 import com.nutra.app.feature.analytics.AnalyticsScreen
 import com.nutra.app.feature.analytics.AnalyticsViewModel
 import com.nutra.app.feature.dashboard.DashboardScreen
@@ -85,22 +91,29 @@ import com.nutra.app.feature.profile.EditBodyProfileScreen
 import com.nutra.app.feature.profile.ProfileScreen
 import com.nutra.app.feature.profile.ProfileViewModel
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 
-enum class PrimaryDestination(
-    val title: String,
-    val icon: ImageVector,
-    val selectedIcon: ImageVector,
-) {
-    DASHBOARD("Bugün", Icons.Outlined.Home, Icons.Rounded.Home),
-    ANALYTICS("İlerleme", Icons.Outlined.Insights, Icons.Rounded.Insights),
-    PROFILE("Profil", Icons.Outlined.Person, Icons.Rounded.Person),
+enum class PrimaryDestination(val title: String) {
+    DASHBOARD("Bugün"),
+    ANALYTICS("İlerleme"),
+    PROFILE("Profil");
+
+    @Composable
+    fun iconVector(selected: Boolean): ImageVector = when (this) {
+        DASHBOARD -> if (selected) Icons.Rounded.Home else Icons.Outlined.Home
+        ANALYTICS -> if (selected) NutraIcons.InsightsRounded else NutraIcons.InsightsOutlined
+        PROFILE -> if (selected) Icons.Rounded.Person else Icons.Outlined.Person
+    }
 }
 
-private sealed interface MainContentRoute {
-    data class Tab(val destination: PrimaryDestination) : MainContentRoute
-    data object EditBodyProfile : MainContentRoute
-}
+@Immutable
+private data class RootAppConfig(
+    val onboardingCompleted: Boolean,
+    val themePreference: ThemePreference,
+    val useDynamicColor: Boolean,
+)
 
 /** Height reserved at the bottom of every tab so content can scroll above the floating nav bar. */
 private val BottomBarReservedHeight = 96.dp
@@ -119,10 +132,12 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         val contentView: View = findViewById(android.R.id.content)
+        val preDrawStartMs = SystemClock.uptimeMillis()
         contentView.viewTreeObserver.addOnPreDrawListener(
             object : ViewTreeObserver.OnPreDrawListener {
                 override fun onPreDraw(): Boolean {
-                    return if (isAppReady) {
+                    val timedOut = SystemClock.uptimeMillis() - preDrawStartMs > 1500L
+                    return if (isAppReady || timedOut) {
                         contentView.viewTreeObserver.removeOnPreDrawListener(this)
                         true
                     } else {
@@ -132,22 +147,30 @@ class MainActivity : ComponentActivity() {
             },
         )
 
-        setContent {
-            val profile by preferencesDataStore.userProfileFlow.collectAsStateWithLifecycle(
-                initialValue = null,
-            )
+        val rootConfigFlow = preferencesDataStore.userProfileFlow
+            .map { profile ->
+                RootAppConfig(
+                    onboardingCompleted = profile.onboardingCompleted,
+                    themePreference = profile.themePreference,
+                    useDynamicColor = profile.useDynamicColor,
+                )
+            }
+            .distinctUntilChanged()
 
-            val currentProfile = profile
-            if (currentProfile == null) {
+        setContent {
+            val rootConfig by rootConfigFlow.collectAsStateWithLifecycle(initialValue = null)
+
+            val config = rootConfig
+            if (config == null) {
                 SideEffect { isAppReady = false }
                 return@setContent
             }
 
-            LaunchedEffect(currentProfile.themePreference) {
-                preferencesDataStore.applySystemNightMode(currentProfile.themePreference)
+            LaunchedEffect(config.themePreference) {
+                preferencesDataStore.applySystemNightMode(config.themePreference)
             }
 
-            val isDark = currentProfile.themePreference.resolveIsDark()
+            val isDark = config.themePreference.resolveIsDark()
             SideEffect {
                 if (lastAppliedIsDark != isDark) {
                     lastAppliedIsDark = isDark
@@ -167,11 +190,11 @@ class MainActivity : ComponentActivity() {
             }
 
             NutraTheme(
-                themePreference = currentProfile.themePreference,
-                useDynamicColor = currentProfile.useDynamicColor,
+                themePreference = config.themePreference,
+                useDynamicColor = config.useDynamicColor,
             ) {
                 NutraAppRoot(
-                    onboardingCompleted = currentProfile.onboardingCompleted,
+                    onboardingCompleted = config.onboardingCompleted,
                     onReadyChanged = { ready -> isAppReady = ready },
                 )
             }
@@ -189,7 +212,7 @@ fun NutraAppRoot(
 
     Crossfade(
         targetState = onboardingCompleted,
-        animationSpec = tween(300),
+        animationSpec = tween(240),
         label = "RootOnboardingTransition",
     ) { isCompleted ->
         if (!isCompleted) {
@@ -204,9 +227,9 @@ fun NutraAppRoot(
             )
         } else {
             val dashboardViewModel: DashboardViewModel = hiltViewModel()
-            val dashboardState by dashboardViewModel.uiState.collectAsStateWithLifecycle()
-            SideEffect { onReadyChanged(!dashboardState.isLoading) }
-            if (dashboardState.isLoading) {
+            val isDashboardReady by dashboardViewModel.isReady.collectAsStateWithLifecycle()
+            SideEffect { onReadyChanged(isDashboardReady) }
+            if (!isDashboardReady) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -214,15 +237,35 @@ fun NutraAppRoot(
                 )
                 return@Crossfade
             }
-            val analyticsViewModel: AnalyticsViewModel = hiltViewModel()
-            val profileViewModel: ProfileViewModel = hiltViewModel()
-            val route: MainContentRoute = if (activeTab == PrimaryDestination.PROFILE && isEditingBodyProfile) {
-                MainContentRoute.EditBodyProfile
-            } else {
-                MainContentRoute.Tab(activeTab)
+
+            // Mount Dashboard immediately for first frame, then stagger-warm secondary tabs off-screen.
+            var hasVisitedAnalytics by rememberSaveable { mutableStateOf(false) }
+            var hasVisitedProfile by rememberSaveable { mutableStateOf(false) }
+            var prewarmAnalytics by remember { mutableStateOf(false) }
+            var prewarmProfile by remember { mutableStateOf(false) }
+
+            SideEffect {
+                if (activeTab == PrimaryDestination.ANALYTICS && !hasVisitedAnalytics) {
+                    hasVisitedAnalytics = true
+                }
+                if (activeTab == PrimaryDestination.PROFILE && !hasVisitedProfile) {
+                    hasVisitedProfile = true
+                }
             }
 
-            BackHandler(enabled = route is MainContentRoute.EditBodyProfile) {
+            LaunchedEffect(Unit) {
+                withFrameNanos { }
+                prewarmAnalytics = true
+                withFrameNanos { }
+                prewarmProfile = true
+            }
+
+            val mountAnalytics = hasVisitedAnalytics || prewarmAnalytics || activeTab == PrimaryDestination.ANALYTICS
+            val mountProfile = hasVisitedProfile || prewarmProfile || activeTab == PrimaryDestination.PROFILE
+            val saveableStateHolder = rememberSaveableStateHolder()
+            val showEditBodyProfile = activeTab == PrimaryDestination.PROFILE && isEditingBodyProfile
+
+            BackHandler(enabled = showEditBodyProfile) {
                 isEditingBodyProfile = false
             }
 
@@ -231,67 +274,79 @@ fun NutraAppRoot(
                     .fillMaxSize()
                     .background(NutraTheme.colors.background),
             ) {
-                val contentPadding = PaddingValues(
-                    top = 0.dp,
-                    bottom = BottomBarReservedHeight,
-                )
+                val contentPadding = remember {
+                    PaddingValues(
+                        top = 0.dp,
+                        bottom = BottomBarReservedHeight,
+                    )
+                }
 
-                AnimatedContent(
-                    targetState = route,
-                    transitionSpec = {
-                        when {
-                            initialState is MainContentRoute.Tab && targetState is MainContentRoute.EditBodyProfile -> {
-                                (slideInHorizontally(tween(240)) { it / 4 } + fadeIn(tween(200))) togetherWith
-                                    (slideOutHorizontally(tween(200)) { -it / 6 } + fadeOut(tween(150)))
-                            }
-                            initialState is MainContentRoute.EditBodyProfile && targetState is MainContentRoute.Tab -> {
-                                (slideInHorizontally(tween(240)) { -it / 4 } + fadeIn(tween(200))) togetherWith
-                                    (slideOutHorizontally(tween(200)) { it / 6 } + fadeOut(tween(150)))
-                            }
-                            else -> fadeIn(tween(220)) togetherWith fadeOut(tween(120))
-                        }
-                    },
-                    label = "MainTabTransition",
+                Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .windowInsetsPadding(WindowInsets.statusBars),
-                ) { currentRoute ->
-                    when (currentRoute) {
-                        is MainContentRoute.Tab -> when (currentRoute.destination) {
-                            PrimaryDestination.DASHBOARD -> DashboardScreen(
+                ) {
+                    TabSlotBox(isSelected = activeTab == PrimaryDestination.DASHBOARD && !showEditBodyProfile) {
+                        saveableStateHolder.SaveableStateProvider(PrimaryDestination.DASHBOARD) {
+                            DashboardScreen(
                                 viewModel = dashboardViewModel,
                                 contentPadding = contentPadding,
                             )
-                            PrimaryDestination.ANALYTICS -> AnalyticsScreen(
-                                viewModel = analyticsViewModel,
-                                contentPadding = contentPadding,
-                            )
-                            PrimaryDestination.PROFILE -> ProfileScreen(
-                                viewModel = profileViewModel,
-                                contentPadding = contentPadding,
-                                onEditBodyProfile = { isEditingBodyProfile = true },
-                            )
                         }
-                        MainContentRoute.EditBodyProfile -> {
-                            val profileState by profileViewModel.uiState.collectAsStateWithLifecycle()
-                            EditBodyProfileScreen(
-                                profile = profileState.profile,
-                                onNavigateBack = { isEditingBodyProfile = false },
-                                onSave = { sex, age, heightCm, currentWeight, targetWeight, activity, goalType, recalculate ->
-                                    profileViewModel.updateBodyProfile(
-                                        sex = sex,
-                                        age = age,
-                                        heightCm = heightCm,
-                                        currentWeightKg = currentWeight,
-                                        targetWeightKg = targetWeight,
-                                        activityLevel = activity,
-                                        goalType = goalType,
-                                        recalculateGoals = recalculate,
-                                    )
-                                    isEditingBodyProfile = false
-                                },
-                            )
+                    }
+
+                    if (mountAnalytics) {
+                        TabSlotBox(isSelected = activeTab == PrimaryDestination.ANALYTICS && !showEditBodyProfile) {
+                            saveableStateHolder.SaveableStateProvider(PrimaryDestination.ANALYTICS) {
+                                val analyticsViewModel: AnalyticsViewModel = hiltViewModel()
+                                AnalyticsScreen(
+                                    viewModel = analyticsViewModel,
+                                    contentPadding = contentPadding,
+                                )
+                            }
                         }
+                    }
+
+                    if (mountProfile) {
+                        TabSlotBox(isSelected = activeTab == PrimaryDestination.PROFILE && !showEditBodyProfile) {
+                            saveableStateHolder.SaveableStateProvider(PrimaryDestination.PROFILE) {
+                                val profileViewModel: ProfileViewModel = hiltViewModel()
+                                ProfileScreen(
+                                    viewModel = profileViewModel,
+                                    contentPadding = contentPadding,
+                                    onEditBodyProfile = { isEditingBodyProfile = true },
+                                )
+                            }
+                        }
+                    }
+
+                    AnimatedVisibility(
+                        visible = showEditBodyProfile,
+                        enter = slideInHorizontally(tween(220)) { it / 4 } + fadeIn(tween(180)),
+                        exit = slideOutHorizontally(tween(180)) { it / 4 } + fadeOut(tween(140)),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .zIndex(2f),
+                    ) {
+                        val profileViewModel: ProfileViewModel = hiltViewModel()
+                        val profileState by profileViewModel.uiState.collectAsStateWithLifecycle()
+                        EditBodyProfileScreen(
+                            profile = profileState.profile,
+                            onNavigateBack = { isEditingBodyProfile = false },
+                            onSave = { sex, age, heightCm, currentWeight, targetWeight, activity, goalType, recalculate ->
+                                profileViewModel.updateBodyProfile(
+                                    sex = sex,
+                                    age = age,
+                                    heightCm = heightCm,
+                                    currentWeightKg = currentWeight,
+                                    targetWeightKg = targetWeight,
+                                    activityLevel = activity,
+                                    goalType = goalType,
+                                    recalculateGoals = recalculate,
+                                )
+                                isEditingBodyProfile = false
+                            },
+                        )
                     }
                 }
 
@@ -305,9 +360,9 @@ fun NutraAppRoot(
                 )
 
                 AnimatedVisibility(
-                    visible = route !is MainContentRoute.EditBodyProfile,
-                    enter = fadeIn(tween(200)) + slideInVertically(tween(220)) { it / 2 },
-                    exit = fadeOut(tween(150)) + slideOutVertically(tween(180)) { it / 2 },
+                    visible = !showEditBodyProfile,
+                    enter = fadeIn(tween(180)) + slideInVertically(tween(200)) { it / 2 },
+                    exit = fadeOut(tween(140)) + slideOutVertically(tween(160)) { it / 2 },
                     modifier = Modifier.align(Alignment.BottomCenter),
                 ) {
                     NutraBottomBar(
@@ -324,6 +379,34 @@ fun NutraAppRoot(
 }
 
 /**
+ * Keeps mounted tab state alive off-screen while skipping placement and accessibility when unselected.
+ */
+@Composable
+private fun TabSlotBox(
+    isSelected: Boolean,
+    content: @Composable () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .zIndex(if (isSelected) 1f else 0f)
+            .layout { measurable, constraints ->
+                val placeable = measurable.measure(constraints)
+                layout(placeable.width, placeable.height) {
+                    if (isSelected) {
+                        placeable.place(0, 0)
+                    }
+                }
+            }
+            .semantics {
+                if (!isSelected) hideFromAccessibility()
+            },
+    ) {
+        content()
+    }
+}
+
+/**
  * Centered floating pill bottom bar over a soft vertical fade scrim.
  */
 @Composable
@@ -335,17 +418,18 @@ private fun NutraBottomBar(
     val haptic = LocalHapticFeedback.current
     val colors = NutraTheme.colors
     val shadowElevation = if (colors.isDark) 0.dp else 12.dp
+    val scrimBrush = remember(colors.background) {
+        Brush.verticalGradient(
+            0f to Color.Transparent,
+            0.45f to colors.background.copy(alpha = 0.92f),
+            1f to colors.background,
+        )
+    }
 
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .background(
-                Brush.verticalGradient(
-                    0f to Color.Transparent,
-                    0.45f to colors.background.copy(alpha = 0.92f),
-                    1f to colors.background,
-                ),
-            )
+            .background(scrimBrush)
             .navigationBarsPadding()
             .padding(start = 24.dp, end = 24.dp, top = 20.dp, bottom = 12.dp),
         contentAlignment = Alignment.Center,
@@ -396,7 +480,7 @@ private fun NutraBottomBar(
                         verticalArrangement = Arrangement.Center,
                     ) {
                         Icon(
-                            imageVector = if (selected) dest.selectedIcon else dest.icon,
+                            imageVector = dest.iconVector(selected),
                             contentDescription = dest.title,
                             tint = tint,
                             modifier = Modifier.size(24.dp),
