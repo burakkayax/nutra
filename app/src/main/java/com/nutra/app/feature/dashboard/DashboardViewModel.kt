@@ -248,6 +248,10 @@ class DashboardViewModel @Inject constructor(
         }
     }
 
+    fun selectLoggingMealType(mealType: MealType) {
+        modalStateFlow.update { it.copy(activeLoggingMealType = mealType) }
+    }
+
     fun updateSearchQuery(query: String) {
         modalStateFlow.update { it.copy(searchQuery = query) }
     }

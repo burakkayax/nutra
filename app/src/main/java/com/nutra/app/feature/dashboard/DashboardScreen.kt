@@ -271,7 +271,7 @@ fun DashboardScreen(
         AddFoodModalSheet(
             state = state,
             onDismiss = viewModel::closeAddFoodModal,
-            onSelectMealType = { viewModel.openAddFoodModal(it, state.loggingTabMode) },
+            onSelectMealType = viewModel::selectLoggingMealType,
             onSelectTab = viewModel::selectLoggingTab,
             onSearchQueryChange = viewModel::updateSearchQuery,
             onSelectCategory = viewModel::selectCategory,

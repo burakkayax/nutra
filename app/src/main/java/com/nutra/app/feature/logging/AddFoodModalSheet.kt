@@ -5,10 +5,12 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -28,6 +30,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -46,11 +49,14 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.PhotoCamera
 import androidx.compose.material.icons.rounded.QrCodeScanner
 import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.SearchOff
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -66,6 +72,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -150,7 +157,7 @@ fun AddFoodModalSheet(
                     .fillMaxWidth()
                     .padding(horizontal = NutraTheme.spacing.screen, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 if (portionFood != null) {
                     NutraIconButton(
@@ -170,6 +177,11 @@ fun AddFoodModalSheet(
                     overflow = TextOverflow.Ellipsis,
                 )
 
+                MealSelectorDropdownPill(
+                    activeMeal = activeMeal,
+                    onSelectMealType = onSelectMealType,
+                )
+
                 NutraIconButton(
                     icon = Icons.Rounded.Close,
                     contentDescription = "Kapat",
@@ -178,22 +190,7 @@ fun AddFoodModalSheet(
                 )
             }
 
-            // Meal selector row
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = NutraTheme.spacing.screen, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                MealType.entries.forEach { meal ->
-                    NutraChip(
-                        text = meal.title,
-                        selected = meal == activeMeal,
-                        onClick = { onSelectMealType(meal) },
-                    )
-                }
-            }
+            Spacer(Modifier.height(6.dp))
 
             if (portionFood != null) {
                 PortionPickerContent(
@@ -262,6 +259,106 @@ fun AddFoodModalSheet(
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Header pillbox with a leading downward arrow and active meal label that opens
+ * a dropdown menu to switch the target meal without leaving the current sheet state.
+ */
+@Composable
+private fun MealSelectorDropdownPill(
+    activeMeal: MealType,
+    onSelectMealType: (MealType) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val haptic = LocalHapticFeedback.current
+    var expanded by remember { mutableStateOf(false) }
+    val arrowRotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        animationSpec = tween(180),
+        label = "mealDropdownArrow",
+    )
+
+    Box(modifier = modifier) {
+        Row(
+            modifier = Modifier
+                .height(40.dp)
+                .widthIn(max = 160.dp)
+                .clip(NutraTheme.shapes.pill)
+                .background(NutraTheme.colors.surfaceMuted)
+                .clickable(
+                    role = Role.DropdownList,
+                    onClickLabel = "Öğün seç",
+                ) {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    expanded = true
+                }
+                .padding(start = 10.dp, end = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.KeyboardArrowDown,
+                contentDescription = null,
+                tint = NutraTheme.colors.textPrimary,
+                modifier = Modifier
+                    .size(18.dp)
+                    .graphicsLayer { rotationZ = arrowRotation },
+            )
+            Text(
+                text = activeMeal.title,
+                style = NutraTheme.typography.labelSmall,
+                color = NutraTheme.colors.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            shape = NutraTheme.shapes.md,
+            containerColor = NutraTheme.colors.surfaceElevated,
+            tonalElevation = 0.dp,
+            shadowElevation = 6.dp,
+            border = BorderStroke(1.dp, NutraTheme.colors.divider),
+            modifier = Modifier.widthIn(min = 168.dp),
+        ) {
+            MealType.entries.forEach { meal ->
+                val isSelected = meal == activeMeal
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = meal.title,
+                            style = if (isSelected) NutraTheme.typography.label else NutraTheme.typography.body,
+                            color = if (isSelected) NutraTheme.colors.textPrimary else NutraTheme.colors.textSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    },
+                    trailingIcon = if (isSelected) {
+                        {
+                            Icon(
+                                imageVector = Icons.Rounded.Check,
+                                contentDescription = "Seçili",
+                                tint = NutraTheme.colors.accent,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                    } else {
+                        null
+                    },
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        expanded = false
+                        if (meal != activeMeal) {
+                            onSelectMealType(meal)
+                        }
+                    },
+                )
             }
         }
     }
