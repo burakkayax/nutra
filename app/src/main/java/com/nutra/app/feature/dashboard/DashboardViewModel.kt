@@ -44,6 +44,7 @@ enum class LoggingTabMode(val title: String) {
 data class DashboardUiState(
     val isLoading: Boolean = true,
     val selectedDate: LocalDate = LocalDate.now(),
+    val isWeekCalendarVisible: Boolean = false,
     val weekDays: List<LocalDate> = emptyList(),
     val weekStatusMap: Map<String, DayStatusIndicator> = emptyMap(),
     val dailySummary: DailyNutritionSummary = DailyNutritionSummary(
@@ -102,6 +103,7 @@ class DashboardViewModel @Inject constructor(
 ) : ViewModel() {
 
     private val selectedDateFlow = MutableStateFlow(LocalDate.now())
+    private val isWeekCalendarVisibleFlow = MutableStateFlow(false)
     private val calorieDisplayModeFlow = MutableStateFlow(CalorieDisplayMode.CONSUMED)
     private val expandedMealsFlow = MutableStateFlow<Set<MealType>>(emptySet())
     private val modalStateFlow = MutableStateFlow(LoggingModalInternalState())
@@ -122,11 +124,16 @@ class DashboardViewModel @Inject constructor(
 
     val uiState: StateFlow<DashboardUiState> = combine(
         dateDependentSummaryFlow,
-        calorieDisplayModeFlow,
-        expandedMealsFlow,
+        combine(
+            calorieDisplayModeFlow,
+            expandedMealsFlow,
+            isWeekCalendarVisibleFlow,
+        ) { displayMode, expandedMeals, isWeekCalendarVisible ->
+            Triple(displayMode, expandedMeals, isWeekCalendarVisible)
+        },
         modalStateFlow,
         combine(allFoodsFlow, recentLogsFlow, preferencesDataStore.userProfileFlow) { f, l, p -> Triple(f, l, p) },
-    ) { (date, summary, weekStatus), displayMode, expandedMeals, modal, (allFoods, recentLogs, profile) ->
+    ) { (date, summary, weekStatus), (displayMode, expandedMeals, isWeekCalendarVisible), modal, (allFoods, recentLogs, profile) ->
         val monday = date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
         val weekDays = (0L..6L).map { monday.plusDays(it) }
 
@@ -150,6 +157,7 @@ class DashboardViewModel @Inject constructor(
         DashboardUiState(
             isLoading = false,
             selectedDate = date,
+            isWeekCalendarVisible = isWeekCalendarVisible,
             weekDays = weekDays,
             weekStatusMap = weekStatus,
             dailySummary = summary,
@@ -182,6 +190,10 @@ class DashboardViewModel @Inject constructor(
 
     fun selectDate(date: LocalDate) {
         selectedDateFlow.value = date
+    }
+
+    fun toggleWeekCalendar() {
+        isWeekCalendarVisibleFlow.update { !it }
     }
 
     fun shiftWeek(weeksDelta: Long) {

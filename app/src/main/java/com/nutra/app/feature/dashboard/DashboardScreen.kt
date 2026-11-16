@@ -29,6 +29,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.DinnerDining
@@ -138,19 +139,31 @@ fun DashboardScreen(
             verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.lg),
         ) {
             item(key = "header") {
-                DashboardHeader(selectedDate = state.selectedDate)
-            }
+                Column {
+                    DashboardHeader(
+                        selectedDate = state.selectedDate,
+                        isWeekCalendarVisible = state.isWeekCalendarVisible,
+                        onToggleWeekCalendar = viewModel::toggleWeekCalendar,
+                    )
 
-            item(key = "week_strip") {
-                WeekDateStrip(
-                    weekDays = state.weekDays,
-                    selectedDate = state.selectedDate,
-                    statusMap = state.weekStatusMap,
-                    onSelectDate = viewModel::selectDate,
-                    onPreviousWeek = { viewModel.shiftWeek(-1) },
-                    onNextWeek = { viewModel.shiftWeek(1) },
-                    onJumpToToday = viewModel::jumpToToday,
-                )
+                    AnimatedVisibility(
+                        visible = state.isWeekCalendarVisible,
+                        enter = expandVertically(tween(220)) + fadeIn(tween(180)),
+                        exit = shrinkVertically(tween(180)) + fadeOut(tween(120)),
+                    ) {
+                        Box(modifier = Modifier.padding(top = NutraTheme.spacing.lg)) {
+                            WeekDateStrip(
+                                weekDays = state.weekDays,
+                                selectedDate = state.selectedDate,
+                                statusMap = state.weekStatusMap,
+                                onSelectDate = viewModel::selectDate,
+                                onPreviousWeek = { viewModel.shiftWeek(-1) },
+                                onNextWeek = { viewModel.shiftWeek(1) },
+                                onJumpToToday = viewModel::jumpToToday,
+                            )
+                        }
+                    }
+                }
             }
 
             item(key = "hero_summary") {
@@ -284,7 +297,11 @@ fun DashboardScreen(
 }
 
 @Composable
-private fun DashboardHeader(selectedDate: LocalDate) {
+private fun DashboardHeader(
+    selectedDate: LocalDate,
+    isWeekCalendarVisible: Boolean,
+    onToggleWeekCalendar: () -> Unit,
+) {
     val today = LocalDate.now()
     val isToday = selectedDate == today
     val dayOfWeek = selectedDate.dayOfWeek.getDisplayName(TextStyle.FULL, TR_LOCALE)
@@ -302,10 +319,44 @@ private fun DashboardHeader(selectedDate: LocalDate) {
         else -> "${selectedDate.dayOfMonth} $monthName"
     }
 
+    val calendarContainerColor by animateColorAsState(
+        targetValue = when {
+            isWeekCalendarVisible -> NutraTheme.colors.ink
+            !isToday -> NutraTheme.colors.accentSoft
+            else -> NutraTheme.colors.surfaceMuted
+        },
+        animationSpec = tween(180),
+        label = "calendarButtonBg",
+    )
+    val calendarContentColor by animateColorAsState(
+        targetValue = when {
+            isWeekCalendarVisible -> NutraTheme.colors.onInk
+            !isToday -> NutraTheme.colors.accent
+            else -> NutraTheme.colors.textPrimary
+        },
+        animationSpec = tween(180),
+        label = "calendarButtonFg",
+    )
+
     NutraScreenHeader(
         title = title,
         eyebrow = eyebrow,
         eyebrowColor = if (isToday) NutraTheme.colors.accent else NutraTheme.colors.textSecondary,
+        actions = {
+            NutraIconButton(
+                icon = Icons.Rounded.CalendarMonth,
+                contentDescription = if (isWeekCalendarVisible) {
+                    "Hafta takvimini gizle"
+                } else {
+                    "Hafta takvimini göster"
+                },
+                onClick = onToggleWeekCalendar,
+                size = 40.dp,
+                iconSize = 20.dp,
+                containerColor = calendarContainerColor,
+                contentColor = calendarContentColor,
+            )
+        },
     )
 }
 
@@ -415,11 +466,15 @@ private fun WeekDateStrip(
                     .take(3)
                     .replaceFirstChar { it.uppercaseChar() }
 
-                val dotColor = when (status) {
-                    DayGoalStatus.ON_TARGET -> NutraTheme.colors.accent
-                    DayGoalStatus.OVER_BUDGET -> NutraTheme.colors.warning
-                    DayGoalStatus.PARTIAL -> NutraTheme.colors.textTertiary
-                    DayGoalStatus.EMPTY -> Color.Transparent
+                val dotColor = if (isDayToday) {
+                    Color.Transparent
+                } else {
+                    when (status) {
+                        DayGoalStatus.ON_TARGET -> NutraTheme.colors.accent
+                        DayGoalStatus.OVER_BUDGET -> NutraTheme.colors.warning
+                        DayGoalStatus.PARTIAL -> NutraTheme.colors.textTertiary
+                        DayGoalStatus.EMPTY -> Color.Transparent
+                    }
                 }
 
                 Column(
