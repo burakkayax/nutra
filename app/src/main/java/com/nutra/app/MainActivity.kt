@@ -5,14 +5,20 @@ import android.view.View
 import android.view.ViewTreeObserver
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -75,6 +81,7 @@ import com.nutra.app.feature.dashboard.DashboardScreen
 import com.nutra.app.feature.dashboard.DashboardViewModel
 import com.nutra.app.feature.onboarding.OnboardingScreen
 import com.nutra.app.feature.onboarding.OnboardingViewModel
+import com.nutra.app.feature.profile.EditBodyProfileScreen
 import com.nutra.app.feature.profile.ProfileScreen
 import com.nutra.app.feature.profile.ProfileViewModel
 import dagger.hilt.android.AndroidEntryPoint
@@ -88,6 +95,11 @@ enum class PrimaryDestination(
     DASHBOARD("Bugün", Icons.Outlined.Home, Icons.Rounded.Home),
     ANALYTICS("İlerleme", Icons.Outlined.Insights, Icons.Rounded.Insights),
     PROFILE("Profil", Icons.Outlined.Person, Icons.Rounded.Person),
+}
+
+private sealed interface MainContentRoute {
+    data class Tab(val destination: PrimaryDestination) : MainContentRoute
+    data object EditBodyProfile : MainContentRoute
 }
 
 /** Height reserved at the bottom of every tab so content can scroll above the floating nav bar. */
@@ -173,6 +185,7 @@ fun NutraAppRoot(
     onReadyChanged: (Boolean) -> Unit = {},
 ) {
     var activeTab by rememberSaveable { mutableStateOf(PrimaryDestination.DASHBOARD) }
+    var isEditingBodyProfile by rememberSaveable { mutableStateOf(false) }
 
     Crossfade(
         targetState = onboardingCompleted,
@@ -184,7 +197,10 @@ fun NutraAppRoot(
             val onboardingViewModel: OnboardingViewModel = hiltViewModel()
             OnboardingScreen(
                 viewModel = onboardingViewModel,
-                onOnboardingFinished = { activeTab = PrimaryDestination.DASHBOARD },
+                onOnboardingFinished = {
+                    activeTab = PrimaryDestination.DASHBOARD
+                    isEditingBodyProfile = false
+                },
             )
         } else {
             val dashboardViewModel: DashboardViewModel = hiltViewModel()
@@ -200,6 +216,15 @@ fun NutraAppRoot(
             }
             val analyticsViewModel: AnalyticsViewModel = hiltViewModel()
             val profileViewModel: ProfileViewModel = hiltViewModel()
+            val route: MainContentRoute = if (activeTab == PrimaryDestination.PROFILE && isEditingBodyProfile) {
+                MainContentRoute.EditBodyProfile
+            } else {
+                MainContentRoute.Tab(activeTab)
+            }
+
+            BackHandler(enabled = route is MainContentRoute.EditBodyProfile) {
+                isEditingBodyProfile = false
+            }
 
             Box(
                 modifier = Modifier
@@ -212,26 +237,61 @@ fun NutraAppRoot(
                 )
 
                 AnimatedContent(
-                    targetState = activeTab,
-                    transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(120)) },
+                    targetState = route,
+                    transitionSpec = {
+                        when {
+                            initialState is MainContentRoute.Tab && targetState is MainContentRoute.EditBodyProfile -> {
+                                (slideInHorizontally(tween(240)) { it / 4 } + fadeIn(tween(200))) togetherWith
+                                    (slideOutHorizontally(tween(200)) { -it / 6 } + fadeOut(tween(150)))
+                            }
+                            initialState is MainContentRoute.EditBodyProfile && targetState is MainContentRoute.Tab -> {
+                                (slideInHorizontally(tween(240)) { -it / 4 } + fadeIn(tween(200))) togetherWith
+                                    (slideOutHorizontally(tween(200)) { it / 6 } + fadeOut(tween(150)))
+                            }
+                            else -> fadeIn(tween(220)) togetherWith fadeOut(tween(120))
+                        }
+                    },
                     label = "MainTabTransition",
                     modifier = Modifier
                         .fillMaxSize()
                         .windowInsetsPadding(WindowInsets.statusBars),
-                ) { destination ->
-                    when (destination) {
-                        PrimaryDestination.DASHBOARD -> DashboardScreen(
-                            viewModel = dashboardViewModel,
-                            contentPadding = contentPadding,
-                        )
-                        PrimaryDestination.ANALYTICS -> AnalyticsScreen(
-                            viewModel = analyticsViewModel,
-                            contentPadding = contentPadding,
-                        )
-                        PrimaryDestination.PROFILE -> ProfileScreen(
-                            viewModel = profileViewModel,
-                            contentPadding = contentPadding,
-                        )
+                ) { currentRoute ->
+                    when (currentRoute) {
+                        is MainContentRoute.Tab -> when (currentRoute.destination) {
+                            PrimaryDestination.DASHBOARD -> DashboardScreen(
+                                viewModel = dashboardViewModel,
+                                contentPadding = contentPadding,
+                            )
+                            PrimaryDestination.ANALYTICS -> AnalyticsScreen(
+                                viewModel = analyticsViewModel,
+                                contentPadding = contentPadding,
+                            )
+                            PrimaryDestination.PROFILE -> ProfileScreen(
+                                viewModel = profileViewModel,
+                                contentPadding = contentPadding,
+                                onEditBodyProfile = { isEditingBodyProfile = true },
+                            )
+                        }
+                        MainContentRoute.EditBodyProfile -> {
+                            val profileState by profileViewModel.uiState.collectAsStateWithLifecycle()
+                            EditBodyProfileScreen(
+                                profile = profileState.profile,
+                                onNavigateBack = { isEditingBodyProfile = false },
+                                onSave = { sex, age, heightCm, currentWeight, targetWeight, activity, goalType, recalculate ->
+                                    profileViewModel.updateBodyProfile(
+                                        sex = sex,
+                                        age = age,
+                                        heightCm = heightCm,
+                                        currentWeightKg = currentWeight,
+                                        targetWeightKg = targetWeight,
+                                        activityLevel = activity,
+                                        goalType = goalType,
+                                        recalculateGoals = recalculate,
+                                    )
+                                    isEditingBodyProfile = false
+                                },
+                            )
+                        }
                     }
                 }
 
@@ -244,11 +304,20 @@ fun NutraAppRoot(
                         .align(Alignment.TopCenter),
                 )
 
-                NutraBottomBar(
-                    selectedTab = activeTab,
-                    onSelectTab = { activeTab = it },
+                AnimatedVisibility(
+                    visible = route !is MainContentRoute.EditBodyProfile,
+                    enter = fadeIn(tween(200)) + slideInVertically(tween(220)) { it / 2 },
+                    exit = fadeOut(tween(150)) + slideOutVertically(tween(180)) { it / 2 },
                     modifier = Modifier.align(Alignment.BottomCenter),
-                )
+                ) {
+                    NutraBottomBar(
+                        selectedTab = activeTab,
+                        onSelectTab = {
+                            isEditingBodyProfile = false
+                            activeTab = it
+                        },
+                    )
+                }
             }
         }
     }
