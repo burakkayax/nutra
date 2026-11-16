@@ -2,7 +2,6 @@ package com.nutra.app.core.designsystem
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -11,14 +10,11 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
@@ -27,7 +23,6 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -66,13 +61,9 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -94,19 +85,6 @@ import kotlin.math.roundToInt
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared enums
 // ─────────────────────────────────────────────────────────────────────────────
-
-enum class CalorieDisplayMode {
-    REMAINING,
-    CONSUMED,
-    PERCENTAGE,
-    ;
-
-    fun next(): CalorieDisplayMode = when (this) {
-        REMAINING -> CONSUMED
-        CONSUMED -> PERCENTAGE
-        PERCENTAGE -> REMAINING
-    }
-}
 
 enum class NutraButtonStyle { Primary, Secondary, Accent, Ghost, Destructive }
 
@@ -384,119 +362,6 @@ fun NutraIconButton(
 // ─────────────────────────────────────────────────────────────────────────────
 // Progress
 // ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Full-circle progress ring. [progress] may exceed 1f; the overflow is drawn on top in [overflowColor].
- */
-@Composable
-fun NutraProgressRing(
-    progress: Float,
-    modifier: Modifier = Modifier,
-    size: Dp = 64.dp,
-    strokeWidth: Dp = 8.dp,
-    color: Color = NutraTheme.colors.accent,
-    trackColor: Color = NutraTheme.colors.surfaceMuted,
-    overflowColor: Color = NutraTheme.colors.warning,
-    content: @Composable BoxScope.() -> Unit = {},
-) {
-    val animated by animateFloatAsState(
-        targetValue = progress.coerceIn(0f, 2f),
-        animationSpec = ProgressSpring,
-        label = "ring",
-    )
-    Box(modifier = modifier.size(size), contentAlignment = Alignment.Center) {
-        Canvas(modifier = Modifier.fillMaxSize().padding(strokeWidth / 2)) {
-            val stroke = Stroke(width = strokeWidth.toPx(), cap = StrokeCap.Round)
-            val arcSize = Size(this.size.width, this.size.height)
-            drawArc(trackColor, -90f, 360f, false, Offset.Zero, arcSize, style = stroke)
-            val main = animated.coerceIn(0f, 1f) * 360f
-            if (main > 0.5f) drawArc(color, -90f, main, false, Offset.Zero, arcSize, style = stroke)
-            if (animated > 1f) {
-                val extra = (animated - 1f).coerceIn(0f, 1f) * 360f
-                drawArc(overflowColor, -90f, extra, false, Offset.Zero, arcSize, style = stroke)
-            }
-        }
-        content()
-    }
-}
-
-/**
- * Hero calorie ring. Defaults to consumed / target display; optional click callback.
- */
-@Composable
-fun NutraCalorieRing(
-    consumedCalories: Int,
-    targetCalories: Int,
-    displayMode: CalorieDisplayMode = CalorieDisplayMode.CONSUMED,
-    onToggleDisplayMode: (() -> Unit)? = null,
-    modifier: Modifier = Modifier,
-    size: Dp = 208.dp,
-    strokeWidth: Dp = 16.dp,
-) {
-    val haptic = LocalHapticFeedback.current
-    val target = targetCalories.coerceAtLeast(1)
-    val ratio = consumedCalories.toFloat() / target
-    val isOver = consumedCalories > target
-    val ringColor by animateColorAsState(
-        targetValue = if (isOver) NutraTheme.colors.warning else NutraTheme.colors.accent,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "ringColor",
-    )
-
-    val value = when (displayMode) {
-        CalorieDisplayMode.REMAINING -> if (isOver) "${consumedCalories - target}" else "${target - consumedCalories}"
-        CalorieDisplayMode.CONSUMED -> "$consumedCalories"
-        CalorieDisplayMode.PERCENTAGE -> "%${(ratio * 100).roundToInt()}"
-    }
-    val caption = when (displayMode) {
-        CalorieDisplayMode.REMAINING -> if (isOver) "kcal fazla" else "kcal kaldı"
-        CalorieDisplayMode.CONSUMED -> "/ $target kcal"
-        CalorieDisplayMode.PERCENTAGE -> "hedefin"
-    }
-
-    val clickModifier = if (onToggleDisplayMode != null) {
-        Modifier
-            .clip(CircleShape)
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                role = Role.Button,
-            ) {
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                onToggleDisplayMode()
-            }
-    } else {
-        Modifier
-    }
-
-    NutraProgressRing(
-        progress = ratio,
-        size = size,
-        strokeWidth = strokeWidth,
-        color = ringColor,
-        overflowColor = NutraTheme.colors.danger.copy(alpha = 0.85f),
-        modifier = modifier.then(clickModifier),
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
-                text = value,
-                style = NutraTheme.typography.display,
-                color = if (isOver && displayMode == CalorieDisplayMode.REMAINING) {
-                    NutraTheme.colors.warning
-                } else {
-                    NutraTheme.colors.textPrimary
-                },
-                maxLines = 1,
-            )
-            Text(
-                text = caption,
-                style = NutraTheme.typography.bodySmall,
-                color = NutraTheme.colors.textSecondary,
-                maxLines = 1,
-            )
-        }
-    }
-}
 
 @Composable
 fun NutraLinearProgress(

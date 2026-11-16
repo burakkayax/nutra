@@ -1,6 +1,5 @@
 package com.nutra.app
 
-import com.nutra.app.core.designsystem.CalorieDisplayMode
 import com.nutra.app.feature.dashboard.DashboardUiState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -10,11 +9,11 @@ import org.junit.Test
 class DashboardUiStateTest {
 
     @Test
-    fun defaultDashboardUiState_showsConsumedCaloriesAndCollapsedMeals() {
+    fun defaultDashboardUiState_startsLoadingWithCollapsedCalendarAndMeals() {
         val state = DashboardUiState()
         assertTrue(state.isLoading)
         assertFalse(state.isWeekCalendarVisible)
-        assertEquals(CalorieDisplayMode.CONSUMED, state.calorieDisplayMode)
+        assertEquals(0, state.dailySummary.consumedCalories)
         assertTrue(state.expandedMeals.isEmpty())
     }
 }

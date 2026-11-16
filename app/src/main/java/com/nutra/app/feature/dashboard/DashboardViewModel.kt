@@ -3,8 +3,7 @@ package com.nutra.app.feature.dashboard
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nutra.app.core.datastore.UserPreferencesDataStore
-import com.nutra.app.core.designsystem.CalorieDisplayMode
-import com.nutra.app. core.network.GeminiAiService
+import com.nutra.app.core.network.GeminiAiService
 import com.nutra.app.domain.model.AiAnalyzedFoodItem
 import com.nutra.app.domain.model.AppResult
 import com.nutra.app.domain.model.ComboFoodEntry
@@ -53,7 +52,6 @@ data class DashboardUiState(
         meals = MealType.entries.map { MealSummary(it, emptyList()) },
         waterMl = 0,
     ),
-    val calorieDisplayMode: CalorieDisplayMode = CalorieDisplayMode.CONSUMED,
     val expandedMeals: Set<MealType> = emptySet(),
     val activeLoggingMealType: MealType? = null,
     val loggingTabMode: LoggingTabMode = LoggingTabMode.CATALOG,
@@ -104,7 +102,6 @@ class DashboardViewModel @Inject constructor(
 
     private val selectedDateFlow = MutableStateFlow(LocalDate.now())
     private val isWeekCalendarVisibleFlow = MutableStateFlow(false)
-    private val calorieDisplayModeFlow = MutableStateFlow(CalorieDisplayMode.CONSUMED)
     private val expandedMealsFlow = MutableStateFlow<Set<MealType>>(emptySet())
     private val modalStateFlow = MutableStateFlow(LoggingModalInternalState())
 
@@ -125,15 +122,14 @@ class DashboardViewModel @Inject constructor(
     val uiState: StateFlow<DashboardUiState> = combine(
         dateDependentSummaryFlow,
         combine(
-            calorieDisplayModeFlow,
             expandedMealsFlow,
             isWeekCalendarVisibleFlow,
-        ) { displayMode, expandedMeals, isWeekCalendarVisible ->
-            Triple(displayMode, expandedMeals, isWeekCalendarVisible)
+        ) { expandedMeals, isWeekCalendarVisible ->
+            expandedMeals to isWeekCalendarVisible
         },
         modalStateFlow,
         combine(allFoodsFlow, recentLogsFlow, preferencesDataStore.userProfileFlow) { f, l, p -> Triple(f, l, p) },
-    ) { (date, summary, weekStatus), (displayMode, expandedMeals, isWeekCalendarVisible), modal, (allFoods, recentLogs, profile) ->
+    ) { (date, summary, weekStatus), (expandedMeals, isWeekCalendarVisible), modal, (allFoods, recentLogs, profile) ->
         val monday = date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
         val weekDays = (0L..6L).map { monday.plusDays(it) }
 
@@ -161,7 +157,6 @@ class DashboardViewModel @Inject constructor(
             weekDays = weekDays,
             weekStatusMap = weekStatus,
             dailySummary = summary,
-            calorieDisplayMode = displayMode,
             expandedMeals = expandedMeals,
             activeLoggingMealType = modal.activeLoggingMealType,
             loggingTabMode = modal.loggingTabMode,
@@ -202,10 +197,6 @@ class DashboardViewModel @Inject constructor(
 
     fun jumpToToday() {
         selectedDateFlow.value = LocalDate.now()
-    }
-
-    fun toggleCalorieDisplayMode() {
-        calorieDisplayModeFlow.update { it.next() }
     }
 
     fun toggleMealExpanded(mealType: MealType) {

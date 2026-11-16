@@ -64,11 +64,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.nutra.app.core.designsystem.CalorieDisplayMode
 import com.nutra.app.core.designsystem.NutraButton
 import com.nutra.app.core.designsystem.NutraButtonSize
 import com.nutra.app.core.designsystem.NutraButtonStyle
-import com.nutra.app.core.designsystem.NutraCalorieRing
 import com.nutra.app.core.designsystem.NutraCard
 import com.nutra.app.core.designsystem.NutraDialog
 import com.nutra.app.core.designsystem.NutraDivider
@@ -176,8 +174,6 @@ fun DashboardScreen(
                     targetCarbs = state.dailySummary.goals.carbsGrams,
                     consumedFat = state.dailySummary.consumedFat,
                     targetFat = state.dailySummary.goals.fatGrams,
-                    displayMode = state.calorieDisplayMode,
-                    onToggleDisplayMode = viewModel::toggleCalorieDisplayMode,
                 )
             }
 
@@ -530,31 +526,59 @@ private fun HeroNutritionCard(
     targetCarbs: Int,
     consumedFat: Float,
     targetFat: Int,
-    displayMode: CalorieDisplayMode,
-    onToggleDisplayMode: () -> Unit,
 ) {
     val safeTarget = targetCalories.coerceAtLeast(1)
     val isOver = consumedCalories > safeTarget
     val deltaCalories = if (isOver) consumedCalories - safeTarget else safeTarget - consumedCalories
     val completionPercent = ((consumedCalories.toFloat() / safeTarget) * 100f).roundToInt()
+    val progress = consumedCalories.toFloat() / safeTarget
+    val barColor by animateColorAsState(
+        targetValue = if (isOver) NutraTheme.colors.warning else NutraTheme.colors.accent,
+        animationSpec = tween(220),
+        label = "calorieBarColor",
+    )
 
     NutraCard(
         modifier = Modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(22.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
+        contentPadding = PaddingValues(NutraTheme.spacing.card),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Column(
             modifier = Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            NutraCalorieRing(
-                consumedCalories = consumedCalories,
-                targetCalories = targetCalories,
-                displayMode = displayMode,
-                onToggleDisplayMode = onToggleDisplayMode,
-                size = 192.dp,
-                strokeWidth = 14.dp,
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = "Günlük kalori",
+                    style = NutraTheme.typography.caption,
+                    color = NutraTheme.colors.textSecondary,
+                )
+
+                Row(
+                    verticalAlignment = Alignment.Bottom,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = formatInt(consumedCalories),
+                        style = NutraTheme.typography.numberLarge,
+                        color = NutraTheme.colors.textPrimary,
+                    )
+                    Text(
+                        text = "/ ${formatInt(safeTarget)} kcal",
+                        style = NutraTheme.typography.body,
+                        color = NutraTheme.colors.textSecondary,
+                        modifier = Modifier.padding(bottom = 3.dp),
+                    )
+                }
+            }
+
+            NutraLinearProgress(
+                progress = progress,
+                color = barColor,
+                height = 8.dp,
             )
 
             Row(
@@ -589,7 +613,7 @@ private fun HeroNutritionCard(
                         color = NutraTheme.colors.textPrimary,
                     )
                     Text(
-                        text = "Günlük oran",
+                        text = "Tamamlandı",
                         style = NutraTheme.typography.caption,
                         color = NutraTheme.colors.textTertiary,
                     )
