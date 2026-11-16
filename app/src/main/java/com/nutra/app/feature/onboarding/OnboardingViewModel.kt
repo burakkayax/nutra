@@ -9,6 +9,7 @@ import com.nutra.app.domain.model.GoalType
 import com.nutra.app.domain.model.MacroGoals
 import com.nutra.app.domain.model.UserProfile
 import com.nutra.app.domain.repository.NutritionRepository
+import com.nutra.app.domain.usecase.MacroGoalBounds
 import com.nutra.app.domain.usecase.NutritionCalculatorUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -40,6 +41,21 @@ class OnboardingViewModel @Inject constructor(
     private val nutritionRepository: NutritionRepository,
     private val calculatorUseCase: NutritionCalculatorUseCase,
 ) : ViewModel() {
+
+    private val onboardingGoalBounds = MacroGoalBounds(
+        minCalories = 1100,
+        maxCalories = 5000,
+        minProtein = 40,
+        maxProtein = 350,
+        minCarbs = 30,
+        maxCarbs = 550,
+        minFat = 25,
+        maxFat = 220,
+        minWaterMl = 1200,
+        maxWaterMl = 6000,
+    )
+
+    private var calorieScalingBaseline: MacroGoals? = null
 
     private val _uiState = MutableStateFlow(OnboardingUiState())
     val uiState: StateFlow<OnboardingUiState> = _uiState.asStateFlow()
@@ -106,41 +122,62 @@ class OnboardingViewModel @Inject constructor(
 
     fun adjustCustomCalories(delta: Int) = setCustomCalories(_uiState.value.customGoals.calories + delta)
 
-    fun setCustomCalories(calories: Int) = updateCustomGoals {
-        it.copy(calories = calories.coerceIn(1100, 5000))
+    fun setCustomCalories(calories: Int) {
+        _uiState.update { state ->
+            val baseline = calorieScalingBaseline ?: state.customGoals.also { calorieScalingBaseline = it }
+            val updated = calculatorUseCase.scaleMacrosForCalorieGoal(
+                baselineGoals = baseline,
+                targetCalories = calories,
+                bounds = onboardingGoalBounds,
+            ).copy(waterMl = state.customGoals.waterMl)
+            state.copy(customGoals = updated, isCustomized = true)
+        }
     }
 
     fun adjustCustomProtein(delta: Int) = setCustomProtein(_uiState.value.customGoals.proteinGrams + delta)
 
-    fun setCustomProtein(grams: Int) = updateCustomGoals {
-        it.copy(proteinGrams = grams.coerceIn(40, 350))
+    fun setCustomProtein(grams: Int) = updateMacrosAndRecalculateCalories {
+        it.copy(proteinGrams = grams)
     }
 
     fun adjustCustomCarbs(delta: Int) = setCustomCarbs(_uiState.value.customGoals.carbsGrams + delta)
 
-    fun setCustomCarbs(grams: Int) = updateCustomGoals {
-        it.copy(carbsGrams = grams.coerceIn(30, 550))
+    fun setCustomCarbs(grams: Int) = updateMacrosAndRecalculateCalories {
+        it.copy(carbsGrams = grams)
     }
 
     fun adjustCustomFat(delta: Int) = setCustomFat(_uiState.value.customGoals.fatGrams + delta)
 
-    fun setCustomFat(grams: Int) = updateCustomGoals {
-        it.copy(fatGrams = grams.coerceIn(25, 220))
+    fun setCustomFat(grams: Int) = updateMacrosAndRecalculateCalories {
+        it.copy(fatGrams = grams)
     }
 
     fun adjustCustomWater(delta: Int) = setCustomWater(_uiState.value.customGoals.waterMl + delta)
 
-    fun setCustomWater(waterMl: Int) = updateCustomGoals {
-        it.copy(waterMl = waterMl.coerceIn(1200, 6000))
+    fun setCustomWater(waterMl: Int) {
+        _uiState.update { state ->
+            val nextWater = waterMl.coerceIn(onboardingGoalBounds.minWaterMl, onboardingGoalBounds.maxWaterMl)
+            calorieScalingBaseline = calorieScalingBaseline?.copy(waterMl = nextWater)
+            state.copy(
+                customGoals = state.customGoals.copy(waterMl = nextWater),
+                isCustomized = true,
+            )
+        }
     }
 
-    private inline fun updateCustomGoals(transform: (MacroGoals) -> MacroGoals) {
+    private inline fun updateMacrosAndRecalculateCalories(transform: (MacroGoals) -> MacroGoals) {
+        calorieScalingBaseline = null
         _uiState.update { state ->
-            state.copy(customGoals = transform(state.customGoals), isCustomized = true)
+            val updated = calculatorUseCase.recalculateCaloriesFromMacros(
+                goals = transform(state.customGoals),
+                bounds = onboardingGoalBounds,
+            )
+            state.copy(customGoals = updated, isCustomized = true)
         }
     }
 
     fun resetToMifflinFormula() {
+        calorieScalingBaseline = null
         _uiState.update { state ->
             state.copy(customGoals = state.calculatedGoals, isCustomized = false)
         }

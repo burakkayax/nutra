@@ -6,10 +6,12 @@ import com.nutra.app.domain.model.ActivityLevel
 import com.nutra.app.domain.model.BiologicalSex
 import com.nutra.app.domain.model.FoodCategory
 import com.nutra.app.domain.model.GoalType
+import com.nutra.app.domain.model.MacroGoals
 import com.nutra.app.domain.model.MealLogItem
 import com.nutra.app.domain.model.MealType
 import com.nutra.app.domain.model.WeightEntry
 import com.nutra.app.domain.usecase.ContextualMealRankerAndComboEngine
+import com.nutra.app.domain.usecase.MacroGoalBounds
 import com.nutra.app.domain.usecase.NutritionCalculatorUseCase
 import com.nutra.app.domain.usecase.TurkishTextNormalizer
 import com.nutra.app.domain.usecase.WeightTrendCalculator
@@ -45,6 +47,83 @@ class NutraDomainAlgorithmsTest {
         assertEquals(2320, goals.calories)
         assertTrue(goals.proteinGrams >= 160)
         assertTrue(goals.waterMl in 2500..3000)
+    }
+
+    @Test
+    fun nutritionCalculator_recalculatesCaloriesWhenAnyMacroChanges() {
+        val useCase = NutritionCalculatorUseCase()
+        val initial = MacroGoals(
+            calories = 2320,
+            proteinGrams = 186,
+            carbsGrams = 232,
+            fatGrams = 72,
+            waterMl = 2700,
+        )
+
+        val higherProtein = useCase.recalculateCaloriesFromMacros(
+            initial.copy(proteinGrams = 196),
+        )
+        assertEquals(2360, higherProtein.calories)
+        assertEquals(232, higherProtein.carbsGrams)
+        assertEquals(72, higherProtein.fatGrams)
+        assertEquals(2700, higherProtein.waterMl)
+
+        val lowerFat = useCase.recalculateCaloriesFromMacros(
+            higherProtein.copy(fatGrams = 62),
+        )
+        assertEquals(2270, lowerFat.calories)
+        assertEquals(196, lowerFat.proteinGrams)
+        assertEquals(232, lowerFat.carbsGrams)
+
+        val higherCarbs = useCase.recalculateCaloriesFromMacros(
+            lowerFat.copy(carbsGrams = 250),
+        )
+        assertEquals(2342, higherCarbs.calories)
+    }
+
+    @Test
+    fun nutritionCalculator_scalesAllMacrosProportionallyWhenCalorieGoalChanges() {
+        val useCase = NutritionCalculatorUseCase()
+        val baseline = MacroGoals(
+            calories = 2320,
+            proteinGrams = 186,
+            carbsGrams = 232,
+            fatGrams = 72,
+            waterMl = 2800,
+        )
+
+        val reduced = useCase.scaleMacrosForCalorieGoal(
+            baselineGoals = baseline,
+            targetCalories = 1800,
+        )
+        assertEquals(1800, reduced.calories)
+        assertTrue(reduced.proteinGrams < baseline.proteinGrams)
+        assertTrue(reduced.carbsGrams < baseline.carbsGrams)
+        assertTrue(reduced.fatGrams < baseline.fatGrams)
+        assertEquals(2800, reduced.waterMl)
+
+        val macroSumKcal = reduced.proteinGrams * 4 + reduced.carbsGrams * 4 + reduced.fatGrams * 9
+        assertTrue(kotlin.math.abs(macroSumKcal - 1800) <= 4)
+
+        val basePShare = (baseline.proteinGrams * 4f) / 2320f
+        val newPShare = (reduced.proteinGrams * 4f) / macroSumKcal.toFloat()
+        assertEquals(basePShare, newPShare, 0.015f)
+
+        val restored = useCase.scaleMacrosForCalorieGoal(
+            baselineGoals = baseline,
+            targetCalories = 2320,
+        )
+        assertEquals(baseline, restored)
+
+        val cappedHigh = useCase.scaleMacrosForCalorieGoal(
+            baselineGoals = baseline,
+            targetCalories = 6000,
+            bounds = MacroGoalBounds(),
+        )
+        assertEquals(6000, cappedHigh.calories)
+        assertEquals(400, cappedHigh.proteinGrams)
+        assertEquals(600, cappedHigh.carbsGrams)
+        assertTrue(cappedHigh.fatGrams in 20..250)
     }
 
     @Test

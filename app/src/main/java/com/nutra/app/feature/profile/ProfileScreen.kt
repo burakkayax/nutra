@@ -180,7 +180,7 @@ fun ProfileScreen(
             contentPadding = PaddingValues(
                 start = contentPadding.calculateStartPadding(layoutDirection) + NutraTheme.spacing.screen,
                 end = contentPadding.calculateEndPadding(layoutDirection) + NutraTheme.spacing.screen,
-                top = contentPadding.calculateTopPadding() + 12.dp,
+                top = contentPadding.calculateTopPadding() + 28.dp,
                 bottom = contentPadding.calculateBottomPadding() + 16.dp,
             ),
             verticalArrangement = Arrangement.spacedBy(24.dp),
@@ -278,7 +278,6 @@ fun ProfileScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     NutraSectionHeader(
                         title = "Günlük hedefler",
-                        supportingText = "Değere dokunarak da yazabilirsin",
                         actionLabel = "Oto hesapla",
                         actionIcon = Icons.Rounded.Refresh,
                         actionContainerColor = colors.surfaceElevated,
@@ -296,15 +295,11 @@ fun ProfileScreen(
                                 accentColor = colors.accent,
                                 onDecrement = {
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    viewModel.updateGoals(
-                                        goals.copy(calories = (goals.calories - 50).coerceIn(1000, 6000))
-                                    )
+                                    viewModel.adjustCalorieGoal(-50)
                                 },
                                 onIncrement = {
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    viewModel.updateGoals(
-                                        goals.copy(calories = (goals.calories + 50).coerceIn(1000, 6000))
-                                    )
+                                    viewModel.adjustCalorieGoal(50)
                                 },
                                 onValueClick = { activeGoalField = ProfileGoalField.CALORIES },
                             )
@@ -315,15 +310,11 @@ fun ProfileScreen(
                                 accentColor = colors.protein,
                                 onDecrement = {
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    viewModel.updateGoals(
-                                        goals.copy(proteinGrams = (goals.proteinGrams - 5).coerceIn(30, 400))
-                                    )
+                                    viewModel.adjustProteinGoal(-5)
                                 },
                                 onIncrement = {
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    viewModel.updateGoals(
-                                        goals.copy(proteinGrams = (goals.proteinGrams + 5).coerceIn(30, 400))
-                                    )
+                                    viewModel.adjustProteinGoal(5)
                                 },
                                 onValueClick = { activeGoalField = ProfileGoalField.PROTEIN },
                             )
@@ -334,15 +325,11 @@ fun ProfileScreen(
                                 accentColor = colors.carbs,
                                 onDecrement = {
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    viewModel.updateGoals(
-                                        goals.copy(carbsGrams = (goals.carbsGrams - 5).coerceIn(20, 600))
-                                    )
+                                    viewModel.adjustCarbsGoal(-5)
                                 },
                                 onIncrement = {
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    viewModel.updateGoals(
-                                        goals.copy(carbsGrams = (goals.carbsGrams + 5).coerceIn(20, 600))
-                                    )
+                                    viewModel.adjustCarbsGoal(5)
                                 },
                                 onValueClick = { activeGoalField = ProfileGoalField.CARBS },
                             )
@@ -353,15 +340,11 @@ fun ProfileScreen(
                                 accentColor = colors.fat,
                                 onDecrement = {
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    viewModel.updateGoals(
-                                        goals.copy(fatGrams = (goals.fatGrams - 5).coerceIn(20, 250))
-                                    )
+                                    viewModel.adjustFatGoal(-5)
                                 },
                                 onIncrement = {
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    viewModel.updateGoals(
-                                        goals.copy(fatGrams = (goals.fatGrams + 5).coerceIn(20, 250))
-                                    )
+                                    viewModel.adjustFatGoal(5)
                                 },
                                 onValueClick = { activeGoalField = ProfileGoalField.FAT },
                             )
@@ -372,15 +355,11 @@ fun ProfileScreen(
                                 accentColor = colors.water,
                                 onDecrement = {
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    viewModel.updateGoals(
-                                        goals.copy(waterMl = (goals.waterMl - 250).coerceIn(1000, 7000))
-                                    )
+                                    viewModel.adjustWaterGoal(-250)
                                 },
                                 onIncrement = {
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    viewModel.updateGoals(
-                                        goals.copy(waterMl = (goals.waterMl + 250).coerceIn(1000, 7000))
-                                    )
+                                    viewModel.adjustWaterGoal(250)
                                 },
                                 onValueClick = { activeGoalField = ProfileGoalField.WATER },
                             )
@@ -599,14 +578,13 @@ fun ProfileScreen(
             onDismiss = { activeGoalField = null },
             onConfirm = { entered ->
                 val rounded = entered.roundToInt()
-                val updated = when (editingGoalField) {
-                    ProfileGoalField.CALORIES -> goals.copy(calories = rounded.coerceIn(1000, 6000))
-                    ProfileGoalField.PROTEIN -> goals.copy(proteinGrams = rounded.coerceIn(30, 400))
-                    ProfileGoalField.CARBS -> goals.copy(carbsGrams = rounded.coerceIn(20, 600))
-                    ProfileGoalField.FAT -> goals.copy(fatGrams = rounded.coerceIn(20, 250))
-                    ProfileGoalField.WATER -> goals.copy(waterMl = rounded.coerceIn(1000, 7000))
+                when (editingGoalField) {
+                    ProfileGoalField.CALORIES -> viewModel.setCalorieGoal(rounded)
+                    ProfileGoalField.PROTEIN -> viewModel.setProteinGoal(rounded)
+                    ProfileGoalField.CARBS -> viewModel.setCarbsGoal(rounded)
+                    ProfileGoalField.FAT -> viewModel.setFatGoal(rounded)
+                    ProfileGoalField.WATER -> viewModel.setWaterGoal(rounded)
                 }
-                viewModel.updateGoals(updated)
                 activeGoalField = null
             },
         )

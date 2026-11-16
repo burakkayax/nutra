@@ -30,6 +30,7 @@ data class AnalyticsUiState(
     val selectedRange: AnalyticsRangeOption = AnalyticsRangeOption.DAYS_7,
     val dailyPoints: List<DailyAnalyticsPoint> = emptyList(),
     val scrubbedDayIndex: Int? = null,
+    val scrubbedWaterIndex: Int? = null,
     val weightTrendPoints: List<WeightTrendPoint> = emptyList(),
     val scrubbedWeightIndex: Int? = null,
     val profile: UserProfile = UserProfile(),
@@ -37,6 +38,9 @@ data class AnalyticsUiState(
 ) {
     val activeDayPoint: DailyAnalyticsPoint?
         get() = scrubbedDayIndex?.let { dailyPoints.getOrNull(it) } ?: dailyPoints.lastOrNull()
+
+    val activeWaterDayPoint: DailyAnalyticsPoint?
+        get() = scrubbedWaterIndex?.let { dailyPoints.getOrNull(it) } ?: dailyPoints.lastOrNull()
 
     val averageCalories: Int
         get() {
@@ -51,6 +55,13 @@ data class AnalyticsUiState(
         }
 }
 
+private data class AnalyticsInteractionState(
+    val scrubbedDayIndex: Int?,
+    val scrubbedWaterIndex: Int?,
+    val scrubbedWeightIndex: Int?,
+    val showAddWeightDialog: Boolean,
+)
+
 @OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class AnalyticsViewModel @Inject constructor(
@@ -61,6 +72,7 @@ class AnalyticsViewModel @Inject constructor(
 
     private val rangeFlow = MutableStateFlow(AnalyticsRangeOption.DAYS_7)
     private val scrubbedDayIndexFlow = MutableStateFlow<Int?>(null)
+    private val scrubbedWaterIndexFlow = MutableStateFlow<Int?>(null)
     private val scrubbedWeightIndexFlow = MutableStateFlow<Int?>(null)
     private val showWeightDialogFlow = MutableStateFlow(false)
 
@@ -70,22 +82,38 @@ class AnalyticsViewModel @Inject constructor(
         nutritionRepository.observeAnalyticsRange(start, end)
     }
 
+    private val interactionStateFlow = combine(
+        scrubbedDayIndexFlow,
+        scrubbedWaterIndexFlow,
+        scrubbedWeightIndexFlow,
+        showWeightDialogFlow,
+    ) { dayIdx, waterIdx, weightIdx, showDialog ->
+        AnalyticsInteractionState(
+            scrubbedDayIndex = dayIdx,
+            scrubbedWaterIndex = waterIdx,
+            scrubbedWeightIndex = weightIdx,
+            showAddWeightDialog = showDialog,
+        )
+    }
+
     val uiState: StateFlow<AnalyticsUiState> = combine(
         rangeFlow,
         rangePointsFlow,
         nutritionRepository.observeWeightEntries(),
         preferencesDataStore.userProfileFlow,
-        combine(scrubbedDayIndexFlow, scrubbedWeightIndexFlow, showWeightDialogFlow) { d, w, s -> Triple(d, w, s) },
-    ) { range, points, weightEntries, profile, (scrubDay, scrubWeight, showDialog) ->
+        interactionStateFlow,
+    ) { range, points, weightEntries, profile, interaction ->
         val trendPoints = weightTrendCalculator.calculateTrend(weightEntries)
+        val maxDayIdx = (points.size - 1).coerceAtLeast(0)
         AnalyticsUiState(
             selectedRange = range,
             dailyPoints = points,
-            scrubbedDayIndex = scrubDay?.coerceIn(0, (points.size - 1).coerceAtLeast(0)),
+            scrubbedDayIndex = interaction.scrubbedDayIndex?.coerceIn(0, maxDayIdx),
+            scrubbedWaterIndex = interaction.scrubbedWaterIndex?.coerceIn(0, maxDayIdx),
             weightTrendPoints = trendPoints,
-            scrubbedWeightIndex = scrubWeight?.coerceIn(0, (trendPoints.size - 1).coerceAtLeast(0)),
+            scrubbedWeightIndex = interaction.scrubbedWeightIndex?.coerceIn(0, (trendPoints.size - 1).coerceAtLeast(0)),
             profile = profile,
-            showAddWeightDialog = showDialog,
+            showAddWeightDialog = interaction.showAddWeightDialog,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -96,10 +124,15 @@ class AnalyticsViewModel @Inject constructor(
     fun selectRange(option: AnalyticsRangeOption) {
         rangeFlow.value = option
         scrubbedDayIndexFlow.value = null
+        scrubbedWaterIndexFlow.value = null
     }
 
     fun updateScrubbedDayIndex(index: Int?) {
         scrubbedDayIndexFlow.value = index
+    }
+
+    fun updateScrubbedWaterIndex(index: Int?) {
+        scrubbedWaterIndexFlow.value = index
     }
 
     fun updateScrubbedWeightIndex(index: Int?) {

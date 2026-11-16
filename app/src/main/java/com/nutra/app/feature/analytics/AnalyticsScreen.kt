@@ -24,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.MonitorWeight
 import androidx.compose.material.icons.rounded.Remove
+import androidx.compose.material.icons.rounded.WaterDrop
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -124,7 +125,7 @@ fun AnalyticsScreen(
         contentPadding = PaddingValues(
             start = contentPadding.calculateStartPadding(layoutDirection) + NutraTheme.spacing.screen,
             end = contentPadding.calculateEndPadding(layoutDirection) + NutraTheme.spacing.screen,
-            top = contentPadding.calculateTopPadding() + 12.dp,
+            top = contentPadding.calculateTopPadding() + 28.dp,
             bottom = contentPadding.calculateBottomPadding() + 16.dp,
         ),
         verticalArrangement = Arrangement.spacedBy(20.dp),
@@ -152,7 +153,6 @@ fun AnalyticsScreen(
                 activePoint = uiState.activeDayPoint,
                 targetCalories = uiState.profile.goals.calories,
                 averageCalories = uiState.averageCalories,
-                averageWaterMl = uiState.averageWaterMl,
                 selectedRange = uiState.selectedRange,
                 onScrub = viewModel::updateScrubbedDayIndex,
             )
@@ -172,6 +172,18 @@ fun AnalyticsScreen(
                 profile = uiState.profile,
                 onScrub = viewModel::updateScrubbedWeightIndex,
                 onAddWeightClick = viewModel::openAddWeightDialog,
+            )
+        }
+
+        item(key = "water_chart") {
+            HapticScrubbingWaterChartCard(
+                points = uiState.dailyPoints,
+                scrubbedIndex = uiState.scrubbedWaterIndex,
+                activePoint = uiState.activeWaterDayPoint,
+                targetWaterMl = uiState.profile.goals.waterMl,
+                averageWaterMl = uiState.averageWaterMl,
+                selectedRange = uiState.selectedRange,
+                onScrub = viewModel::updateScrubbedWaterIndex,
             )
         }
     }
@@ -194,13 +206,10 @@ private fun HapticScrubbingCalorieChartCard(
     activePoint: DailyAnalyticsPoint?,
     targetCalories: Int,
     averageCalories: Int,
-    averageWaterMl: Int,
     selectedRange: AnalyticsRangeOption,
     onScrub: (Int?) -> Unit,
 ) {
     val colors = NutraTheme.colors
-    val haptic = LocalHapticFeedback.current
-    val currentScrub by rememberUpdatedState(scrubbedIndex)
 
     NutraCard {
         Row(
@@ -239,21 +248,11 @@ private fun HapticScrubbingCalorieChartCard(
                 }
             }
 
-            Column(
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                Text(
-                    text = "Ort. ${formatInt(averageCalories)} kcal",
-                    style = NutraTheme.typography.caption,
-                    color = colors.textSecondary,
-                )
-                Text(
-                    text = "Ort. su ${formatWaterLitres(averageWaterMl)}",
-                    style = NutraTheme.typography.caption,
-                    color = colors.water,
-                )
-            }
+            Text(
+                text = "Ort. ${formatInt(averageCalories)} kcal",
+                style = NutraTheme.typography.caption,
+                color = colors.textSecondary,
+            )
         }
 
         if (points.isEmpty()) {
@@ -271,162 +270,287 @@ private fun HapticScrubbingCalorieChartCard(
             (maxOf(peak, targetCalories) * 1.15f).coerceAtLeast(800f)
         }
 
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 20.dp)
-                .height(156.dp),
-        ) {
-            var lastDraggedIndex = remember(points.size) { -1 }
+        HapticScrubbingBarChart(
+            points = points,
+            scrubbedIndex = scrubbedIndex,
+            activePoint = activePoint,
+            valueProvider = { it.calories },
+            targetValue = targetCalories,
+            maxChartValue = maxChartCalories,
+            barColorProvider = { pt ->
+                when {
+                    pt.calories == 0 -> colors.surfaceMuted
+                    pt.calories > pt.targetCalories -> colors.warning
+                    else -> colors.accent
+                }
+            },
+            selectedRange = selectedRange,
+            targetSummaryText = "Hedef: ${formatInt(targetCalories)} kcal",
+            footerHintText = "Çubukların üzerinde kaydırarak günlük değerleri incele · Hedef ${formatInt(targetCalories)} kcal",
+            onScrub = onScrub,
+        )
+    }
+}
 
-            Canvas(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .pointerInput(points.size) {
-                        detectTapGestures { offset ->
-                            if (points.isEmpty()) return@detectTapGestures
+@Composable
+private fun HapticScrubbingWaterChartCard(
+    points: List<DailyAnalyticsPoint>,
+    scrubbedIndex: Int?,
+    activePoint: DailyAnalyticsPoint?,
+    targetWaterMl: Int,
+    averageWaterMl: Int,
+    selectedRange: AnalyticsRangeOption,
+    onScrub: (Int?) -> Unit,
+) {
+    val colors = NutraTheme.colors
+
+    NutraCard {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Top,
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = if (scrubbedIndex != null && activePoint != null) {
+                        formatShortDate(activePoint.dateIso)
+                    } else {
+                        "Su geçmişi"
+                    },
+                    style = NutraTheme.typography.caption,
+                    color = if (scrubbedIndex != null) colors.water else colors.textSecondary,
+                )
+                Row(
+                    verticalAlignment = Alignment.Bottom,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = formatInt(activePoint?.waterMl ?: 0),
+                        style = NutraTheme.typography.numberLarge,
+                        color = colors.textPrimary,
+                    )
+                    Text(
+                        text = "/ ${formatInt(targetWaterMl)} ml",
+                        style = NutraTheme.typography.body,
+                        color = colors.textSecondary,
+                        modifier = Modifier.padding(bottom = 3.dp),
+                    )
+                }
+            }
+
+            Text(
+                text = "Ort. ${formatWaterLitres(averageWaterMl)}",
+                style = NutraTheme.typography.caption,
+                color = colors.water,
+            )
+        }
+
+        if (points.isEmpty()) {
+            NutraEmptyState(
+                icon = Icons.Rounded.WaterDrop,
+                title = "Henüz su kaydı yok",
+                message = "Bugün sekmesinden su eklediğinde grafik oluşur.",
+                modifier = Modifier.padding(top = 16.dp),
+            )
+            return@NutraCard
+        }
+
+        val maxChartWater = remember(points, targetWaterMl) {
+            val peak = points.maxOfOrNull { it.waterMl } ?: targetWaterMl
+            (maxOf(peak, targetWaterMl) * 1.15f).coerceAtLeast(1000f)
+        }
+
+        HapticScrubbingBarChart(
+            points = points,
+            scrubbedIndex = scrubbedIndex,
+            activePoint = activePoint,
+            valueProvider = { it.waterMl },
+            targetValue = targetWaterMl,
+            maxChartValue = maxChartWater,
+            barColorProvider = { pt ->
+                if (pt.waterMl == 0) colors.surfaceMuted else colors.water
+            },
+            selectedRange = selectedRange,
+            targetSummaryText = "Hedef: ${formatInt(targetWaterMl)} ml",
+            footerHintText = "Çubukların üzerinde kaydırarak günlük su tüketimini incele · Hedef ${formatInt(targetWaterMl)} ml",
+            onScrub = onScrub,
+        )
+    }
+}
+
+@Composable
+private fun HapticScrubbingBarChart(
+    points: List<DailyAnalyticsPoint>,
+    scrubbedIndex: Int?,
+    activePoint: DailyAnalyticsPoint?,
+    valueProvider: (DailyAnalyticsPoint) -> Int,
+    targetValue: Int,
+    maxChartValue: Float,
+    barColorProvider: (DailyAnalyticsPoint) -> Color,
+    selectedRange: AnalyticsRangeOption,
+    targetSummaryText: String,
+    footerHintText: String,
+    onScrub: (Int?) -> Unit,
+) {
+    val colors = NutraTheme.colors
+    val haptic = LocalHapticFeedback.current
+    val currentScrub by rememberUpdatedState(scrubbedIndex)
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 20.dp)
+            .height(156.dp),
+    ) {
+        var lastDraggedIndex = remember(points.size) { -1 }
+
+        Canvas(
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(points.size) {
+                    detectTapGestures { offset ->
+                        if (points.isEmpty()) return@detectTapGestures
+                        val idx = ((offset.x / size.width.coerceAtLeast(1)) * points.size)
+                            .toInt()
+                            .coerceIn(0, points.lastIndex)
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onScrub(if (currentScrub == idx) null else idx)
+                    }
+                }
+                .pointerInput(points.size) {
+                    detectHorizontalDragGestures(
+                        onDragStart = { offset ->
+                            if (points.isEmpty()) return@detectHorizontalDragGestures
                             val idx = ((offset.x / size.width.coerceAtLeast(1)) * points.size)
                                 .toInt()
                                 .coerceIn(0, points.lastIndex)
+                            lastDraggedIndex = idx
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onScrub(if (currentScrub == idx) null else idx)
-                        }
-                    }
-                    .pointerInput(points.size) {
-                        detectHorizontalDragGestures(
-                            onDragStart = { offset ->
-                                if (points.isEmpty()) return@detectHorizontalDragGestures
-                                val idx = ((offset.x / size.width.coerceAtLeast(1)) * points.size)
-                                    .toInt()
-                                    .coerceIn(0, points.lastIndex)
+                            onScrub(idx)
+                        },
+                        onHorizontalDrag = { change, _ ->
+                            if (points.isEmpty()) return@detectHorizontalDragGestures
+                            change.consume()
+                            val idx = ((change.position.x / size.width.coerceAtLeast(1)) * points.size)
+                                .toInt()
+                                .coerceIn(0, points.lastIndex)
+                            if (idx != lastDraggedIndex) {
                                 lastDraggedIndex = idx
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 onScrub(idx)
-                            },
-                            onHorizontalDrag = { change, _ ->
-                                if (points.isEmpty()) return@detectHorizontalDragGestures
-                                change.consume()
-                                val idx = ((change.position.x / size.width.coerceAtLeast(1)) * points.size)
-                                    .toInt()
-                                    .coerceIn(0, points.lastIndex)
-                                if (idx != lastDraggedIndex) {
-                                    lastDraggedIndex = idx
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    onScrub(idx)
-                                }
-                            },
-                            onDragEnd = {
-                                lastDraggedIndex = -1
-                                onScrub(null)
-                            },
-                            onDragCancel = {
-                                lastDraggedIndex = -1
-                                onScrub(null)
-                            },
-                        )
-                    },
-            ) {
-                val targetY = size.height * (1f - (targetCalories / maxChartCalories).coerceIn(0f, 1f))
-                drawLine(
-                    color = colors.textTertiary.copy(alpha = 0.45f),
-                    start = Offset(0f, targetY),
-                    end = Offset(size.width, targetY),
-                    strokeWidth = 1.dp.toPx(),
-                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f)),
-                )
-
-                val count = points.size
-                val slotWidth = size.width / count.toFloat()
-                val maxBarWidth = when (selectedRange) {
-                    AnalyticsRangeOption.DAYS_7 -> 22.dp.toPx()
-                    AnalyticsRangeOption.DAYS_14 -> 12.dp.toPx()
-                    AnalyticsRangeOption.DAYS_30 -> 6.dp.toPx()
-                }
-                val barWidth = (slotWidth * 0.56f).coerceIn(3.dp.toPx(), maxBarWidth)
-                val minStubHeight = 6.dp.toPx()
-                val corner = CornerRadius(barWidth / 2f, barWidth / 2f)
-
-                points.forEachIndexed { index, pt ->
-                    val isSelected = scrubbedIndex == null || scrubbedIndex == index
-                    val x = index * slotWidth + (slotWidth - barWidth) / 2f
-                    val rawHeight = if (pt.calories > 0) {
-                        (size.height * (pt.calories / maxChartCalories).coerceIn(0f, 1f))
-                            .coerceAtLeast(minStubHeight)
-                    } else {
-                        minStubHeight
-                    }
-                    val y = size.height - rawHeight
-
-                    val baseColor = when {
-                        pt.calories == 0 -> colors.surfaceMuted
-                        pt.calories > pt.targetCalories -> colors.warning
-                        else -> colors.accent
-                    }
-                    val finalColor = if (isSelected) baseColor else baseColor.copy(alpha = 0.28f)
-
-                    drawRoundRect(
-                        color = finalColor,
-                        topLeft = Offset(x, y),
-                        size = Size(barWidth, rawHeight),
-                        cornerRadius = corner,
+                            }
+                        },
+                        onDragEnd = {
+                            lastDraggedIndex = -1
+                            onScrub(null)
+                        },
+                        onDragCancel = {
+                            lastDraggedIndex = -1
+                            onScrub(null)
+                        },
                     )
-                }
-            }
-        }
-
-        // X-axis date strip
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 10.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
+                },
         ) {
-            if (selectedRange == AnalyticsRangeOption.DAYS_7 && points.size <= 7) {
-                points.forEachIndexed { index, pt ->
-                    val isActive = scrubbedIndex == index
-                    Text(
-                        text = formatShortWeekday(pt.dateIso),
-                        style = NutraTheme.typography.caption,
-                        color = if (isActive) colors.textPrimary else colors.textTertiary,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-            } else {
-                Text(
-                    text = formatShortDate(points.firstOrNull()?.dateIso),
-                    style = NutraTheme.typography.caption,
-                    color = colors.textTertiary,
-                )
-                if (scrubbedIndex != null && activePoint != null) {
-                    Text(
-                        text = formatShortDate(activePoint.dateIso),
-                        style = NutraTheme.typography.labelSmall,
-                        color = colors.textPrimary,
-                    )
+            val targetY = size.height * (1f - (targetValue / maxChartValue).coerceIn(0f, 1f))
+            drawLine(
+                color = colors.textTertiary.copy(alpha = 0.45f),
+                start = Offset(0f, targetY),
+                end = Offset(size.width, targetY),
+                strokeWidth = 1.dp.toPx(),
+                pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f)),
+            )
+
+            val count = points.size
+            val slotWidth = size.width / count.toFloat()
+            val maxBarWidth = when (selectedRange) {
+                AnalyticsRangeOption.DAYS_7 -> 22.dp.toPx()
+                AnalyticsRangeOption.DAYS_14 -> 12.dp.toPx()
+                AnalyticsRangeOption.DAYS_30 -> 6.dp.toPx()
+            }
+            val barWidth = (slotWidth * 0.56f).coerceIn(3.dp.toPx(), maxBarWidth)
+            val minStubHeight = 6.dp.toPx()
+            val corner = CornerRadius(barWidth / 2f, barWidth / 2f)
+
+            points.forEachIndexed { index, pt ->
+                val value = valueProvider(pt)
+                val isSelected = scrubbedIndex == null || scrubbedIndex == index
+                val x = index * slotWidth + (slotWidth - barWidth) / 2f
+                val rawHeight = if (value > 0) {
+                    (size.height * (value / maxChartValue).coerceIn(0f, 1f))
+                        .coerceAtLeast(minStubHeight)
                 } else {
-                    Text(
-                        text = "Hedef: ${formatInt(targetCalories)} kcal",
-                        style = NutraTheme.typography.caption,
-                        color = colors.textTertiary,
-                    )
+                    minStubHeight
                 }
-                Text(
-                    text = formatShortDate(points.lastOrNull()?.dateIso),
-                    style = NutraTheme.typography.caption,
-                    color = colors.textTertiary,
+                val y = size.height - rawHeight
+
+                val baseColor = barColorProvider(pt)
+                val finalColor = if (isSelected) baseColor else baseColor.copy(alpha = 0.28f)
+
+                drawRoundRect(
+                    color = finalColor,
+                    topLeft = Offset(x, y),
+                    size = Size(barWidth, rawHeight),
+                    cornerRadius = corner,
                 )
             }
         }
+    }
 
-        if (selectedRange == AnalyticsRangeOption.DAYS_7) {
+    // X-axis date strip
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 10.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        if (selectedRange == AnalyticsRangeOption.DAYS_7 && points.size <= 7) {
+            points.forEachIndexed { index, pt ->
+                val isActive = scrubbedIndex == index
+                Text(
+                    text = formatShortWeekday(pt.dateIso),
+                    style = NutraTheme.typography.caption,
+                    color = if (isActive) colors.textPrimary else colors.textTertiary,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        } else {
             Text(
-                text = "Çubukların üzerinde kaydırarak günlük değerleri incele · Hedef ${formatInt(targetCalories)} kcal",
+                text = formatShortDate(points.firstOrNull()?.dateIso),
                 style = NutraTheme.typography.caption,
                 color = colors.textTertiary,
-                modifier = Modifier.padding(top = 10.dp),
+            )
+            if (scrubbedIndex != null && activePoint != null) {
+                Text(
+                    text = formatShortDate(activePoint.dateIso),
+                    style = NutraTheme.typography.labelSmall,
+                    color = colors.textPrimary,
+                )
+            } else {
+                Text(
+                    text = targetSummaryText,
+                    style = NutraTheme.typography.caption,
+                    color = colors.textTertiary,
+                )
+            }
+            Text(
+                text = formatShortDate(points.lastOrNull()?.dateIso),
+                style = NutraTheme.typography.caption,
+                color = colors.textTertiary,
             )
         }
+    }
+
+    if (selectedRange == AnalyticsRangeOption.DAYS_7) {
+        Text(
+            text = footerHintText,
+            style = NutraTheme.typography.caption,
+            color = colors.textTertiary,
+            modifier = Modifier.padding(top = 10.dp),
+        )
     }
 }
 

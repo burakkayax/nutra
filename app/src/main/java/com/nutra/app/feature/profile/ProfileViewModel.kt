@@ -11,6 +11,7 @@ import com.nutra.app.domain.model.MacroGoals
 import com.nutra.app.domain.model.ThemePreference
 import com.nutra.app.domain.model.UserProfile
 import com.nutra.app.domain.repository.NutritionRepository
+import com.nutra.app.domain.usecase.MacroGoalBounds
 import com.nutra.app.domain.usecase.NutritionCalculatorUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -19,6 +20,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.text.NumberFormat
+import java.util.Locale
 import javax.inject.Inject
 
 data class ProfileUiState(
@@ -32,6 +37,11 @@ class ProfileViewModel @Inject constructor(
     private val nutritionRepository: NutritionRepository,
     private val calculatorUseCase: NutritionCalculatorUseCase,
 ) : ViewModel() {
+
+    private val profileGoalBounds = MacroGoalBounds()
+    private val goalsMutex = Mutex()
+    private var calorieScalingBaseline: MacroGoals? = null
+    private var lastCalorieScaledGoals: MacroGoals? = null
 
     private val feedbackFlow = MutableStateFlow<String?>(null)
 
@@ -49,26 +59,123 @@ class ProfileViewModel @Inject constructor(
         initialValue = ProfileUiState(),
     )
 
-    fun updateGoals(goals: MacroGoals) {
+    fun adjustCalorieGoal(delta: Int) {
         viewModelScope.launch {
-            preferencesDataStore.updateGoals(goals)
-            feedbackFlow.value = "Günlük hedefleriniz güncellendi"
+            goalsMutex.withLock {
+                val current = preferencesDataStore.getSnapshot().goals
+                applyCalorieGoalLocked(current, current.calories + delta)
+            }
         }
+    }
+
+    fun setCalorieGoal(calories: Int) {
+        viewModelScope.launch {
+            goalsMutex.withLock {
+                val current = preferencesDataStore.getSnapshot().goals
+                applyCalorieGoalLocked(current, calories)
+            }
+        }
+    }
+
+    fun adjustProteinGoal(delta: Int) = updateMacroGoal {
+        it.copy(proteinGrams = it.proteinGrams + delta)
+    }
+
+    fun setProteinGoal(grams: Int) = updateMacroGoal {
+        it.copy(proteinGrams = grams)
+    }
+
+    fun adjustCarbsGoal(delta: Int) = updateMacroGoal {
+        it.copy(carbsGrams = it.carbsGrams + delta)
+    }
+
+    fun setCarbsGoal(grams: Int) = updateMacroGoal {
+        it.copy(carbsGrams = grams)
+    }
+
+    fun adjustFatGoal(delta: Int) = updateMacroGoal {
+        it.copy(fatGrams = it.fatGrams + delta)
+    }
+
+    fun setFatGoal(grams: Int) = updateMacroGoal {
+        it.copy(fatGrams = grams)
+    }
+
+    fun adjustWaterGoal(delta: Int) {
+        viewModelScope.launch {
+            goalsMutex.withLock {
+                val current = preferencesDataStore.getSnapshot().goals
+                applyWaterGoalLocked(current, current.waterMl + delta)
+            }
+        }
+    }
+
+    fun setWaterGoal(waterMl: Int) {
+        viewModelScope.launch {
+            goalsMutex.withLock {
+                val current = preferencesDataStore.getSnapshot().goals
+                applyWaterGoalLocked(current, waterMl)
+            }
+        }
+    }
+
+    private fun updateMacroGoal(transform: (MacroGoals) -> MacroGoals) {
+        viewModelScope.launch {
+            goalsMutex.withLock {
+                calorieScalingBaseline = null
+                lastCalorieScaledGoals = null
+                val current = preferencesDataStore.getSnapshot().goals
+                val updated = calculatorUseCase.recalculateCaloriesFromMacros(
+                    goals = transform(current),
+                    bounds = profileGoalBounds,
+                )
+                preferencesDataStore.updateGoals(updated)
+                feedbackFlow.value = "Kalori hedefi ${formatTrInt(updated.calories)} kcal olarak güncellendi"
+            }
+        }
+    }
+
+    private suspend fun applyCalorieGoalLocked(current: MacroGoals, targetCalories: Int) {
+        if (lastCalorieScaledGoals != current) {
+            calorieScalingBaseline = current
+        }
+        val baseline = calorieScalingBaseline ?: current.also { calorieScalingBaseline = it }
+        val updated = calculatorUseCase.scaleMacrosForCalorieGoal(
+            baselineGoals = baseline,
+            targetCalories = targetCalories,
+            bounds = profileGoalBounds,
+        ).copy(waterMl = current.waterMl)
+        lastCalorieScaledGoals = updated
+        preferencesDataStore.updateGoals(updated)
+        feedbackFlow.value = "Makro hedefleri ${formatTrInt(updated.calories)} kcal için güncellendi"
+    }
+
+    private suspend fun applyWaterGoalLocked(current: MacroGoals, waterMl: Int) {
+        val nextWater = waterMl.coerceIn(profileGoalBounds.minWaterMl, profileGoalBounds.maxWaterMl)
+        val updated = current.copy(waterMl = nextWater)
+        calorieScalingBaseline = calorieScalingBaseline?.copy(waterMl = nextWater)
+        lastCalorieScaledGoals = lastCalorieScaledGoals?.copy(waterMl = nextWater)
+        preferencesDataStore.updateGoals(updated)
+        feedbackFlow.value = "Su hedefi güncellendi"
     }
 
     fun recalculateWithMifflinStJeor() {
         viewModelScope.launch {
-            val p = preferencesDataStore.getSnapshot()
-            val calculated = calculatorUseCase.calculateGoals(
-                sex = p.sex,
-                age = p.age,
-                heightCm = p.heightCm,
-                weightKg = p.currentWeightKg,
-                activityLevel = p.activityLevel,
-                goalType = p.goalType,
-            )
-            preferencesDataStore.updateGoals(calculated)
-            feedbackFlow.value = "Mifflin-St Jeor formülüne göre hedefler yenilendi"
+            goalsMutex.withLock {
+                calorieScalingBaseline = null
+                lastCalorieScaledGoals = null
+                val p = preferencesDataStore.getSnapshot()
+                val calculated = calculatorUseCase.calculateGoals(
+                    sex = p.sex,
+                    age = p.age,
+                    heightCm = p.heightCm,
+                    weightKg = p.currentWeightKg,
+                    activityLevel = p.activityLevel,
+                    goalType = p.goalType,
+                )
+                preferencesDataStore.updateGoals(calculated)
+                feedbackFlow.value = "Mifflin-St Jeor formülüne göre hedefler yenilendi"
+            }
         }
     }
 
@@ -83,35 +190,44 @@ class ProfileViewModel @Inject constructor(
         recalculateGoals: Boolean,
     ) {
         viewModelScope.launch {
-            val updatedGoals = if (recalculateGoals) {
-                calculatorUseCase.calculateGoals(
+            goalsMutex.withLock {
+                if (recalculateGoals) {
+                    calorieScalingBaseline = null
+                    lastCalorieScaledGoals = null
+                }
+                val updatedGoals = if (recalculateGoals) {
+                    calculatorUseCase.calculateGoals(
+                        sex = sex,
+                        age = age,
+                        heightCm = heightCm,
+                        weightKg = currentWeightKg,
+                        activityLevel = activityLevel,
+                        goalType = goalType,
+                    )
+                } else {
+                    null
+                }
+                preferencesDataStore.updateBodyMetricsAndGoal(
                     sex = sex,
                     age = age,
                     heightCm = heightCm,
-                    weightKg = currentWeightKg,
+                    currentWeightKg = currentWeightKg,
+                    targetWeightKg = targetWeightKg,
                     activityLevel = activityLevel,
                     goalType = goalType,
+                    updatedGoals = updatedGoals,
                 )
-            } else {
-                null
-            }
-            preferencesDataStore.updateBodyMetricsAndGoal(
-                sex = sex,
-                age = age,
-                heightCm = heightCm,
-                currentWeightKg = currentWeightKg,
-                targetWeightKg = targetWeightKg,
-                activityLevel = activityLevel,
-                goalType = goalType,
-                updatedGoals = updatedGoals,
-            )
-            feedbackFlow.value = if (recalculateGoals) {
-                "Vücut profili güncellendi ve hedefler yeniden hesaplandı"
-            } else {
-                "Vücut profili güncellendi"
+                feedbackFlow.value = if (recalculateGoals) {
+                    "Vücut profili güncellendi ve hedefler yeniden hesaplandı"
+                } else {
+                    "Vücut profili güncellendi"
+                }
             }
         }
     }
+
+    private fun formatTrInt(value: Int): String =
+        NumberFormat.getIntegerInstance(Locale.forLanguageTag("tr-TR")).format(value)
 
     fun updateAppearance(themePreference: ThemePreference, useDynamicColor: Boolean) {
         viewModelScope.launch {
@@ -142,12 +258,16 @@ class ProfileViewModel @Inject constructor(
 
     fun importBackupJson(rawJson: String) {
         viewModelScope.launch {
-            when (val res = nutritionRepository.importBackupJson(rawJson)) {
-                is AppResult.Success -> {
-                    feedbackFlow.value = "Yedek başarıyla geri yüklendi"
-                }
-                is AppResult.Error -> {
-                    feedbackFlow.value = res.message
+            goalsMutex.withLock {
+                when (val res = nutritionRepository.importBackupJson(rawJson)) {
+                    is AppResult.Success -> {
+                        calorieScalingBaseline = null
+                        lastCalorieScaledGoals = null
+                        feedbackFlow.value = "Yedek başarıyla geri yüklendi"
+                    }
+                    is AppResult.Error -> {
+                        feedbackFlow.value = res.message
+                    }
                 }
             }
         }
