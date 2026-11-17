@@ -71,7 +71,6 @@ import com.nutra.app.core.designsystem.NutraButtonStyle
 import com.nutra.app.core.designsystem.NutraCard
 import com.nutra.app.core.designsystem.NutraDialog
 import com.nutra.app.core.designsystem.NutraDivider
-import com.nutra.app.core.designsystem.NutraDot
 import com.nutra.app.core.designsystem.NutraFormatters
 import com.nutra.app.core.designsystem.NutraIconBadge
 import com.nutra.app.core.designsystem.NutraIconButton
@@ -84,8 +83,6 @@ import com.nutra.app.core.designsystem.NutraSectionHeader
 import com.nutra.app.core.designsystem.NutraSnackbarHost
 import com.nutra.app.core.designsystem.NutraStepperButton
 import com.nutra.app.core.designsystem.NutraTheme
-import com.nutra.app.domain.model.DayGoalStatus
-import com.nutra.app.domain.model.DayStatusIndicator
 import com.nutra.app.domain.model.MealLogItem
 import com.nutra.app.domain.model.MealSummary
 import com.nutra.app.domain.model.MealType
@@ -158,7 +155,6 @@ fun DashboardScreen(
                                 today = state.today,
                                 weekDays = state.weekDays,
                                 selectedDate = state.selectedDate,
-                                statusMap = state.weekStatusMap,
                                 onSelectDate = viewModel::selectDate,
                                 onPreviousWeek = { viewModel.shiftWeek(-1) },
                                 onNextWeek = { viewModel.shiftWeek(1) },
@@ -370,7 +366,6 @@ private fun WeekDateStrip(
     today: LocalDate,
     weekDays: List<LocalDate>,
     selectedDate: LocalDate,
-    statusMap: Map<String, DayStatusIndicator>,
     onSelectDate: (LocalDate) -> Unit,
     onPreviousWeek: () -> Unit,
     onNextWeek: () -> Unit,
@@ -467,7 +462,6 @@ private fun WeekDateStrip(
                 weekDays.forEach { day ->
                     val isSelected = day == selectedDate
                     val isDayToday = day == today
-                    val status = statusMap[day.toString()]?.status ?: DayGoalStatus.EMPTY
 
                     val circleBgState = animateColorAsState(
                         targetValue = when {
@@ -493,17 +487,6 @@ private fun WeekDateStrip(
                             .trimEnd('.')
                             .take(3)
                             .replaceFirstChar { it.uppercaseChar() }
-                    }
-
-                    val dotColor = if (isDayToday) {
-                        Color.Transparent
-                    } else {
-                        when (status) {
-                            DayGoalStatus.ON_TARGET -> NutraTheme.colors.accent
-                            DayGoalStatus.OVER_BUDGET -> NutraTheme.colors.warning
-                            DayGoalStatus.PARTIAL -> NutraTheme.colors.textTertiary
-                            DayGoalStatus.EMPTY -> Color.Transparent
-                        }
                     }
 
                     Column(
@@ -542,7 +525,6 @@ private fun WeekDateStrip(
                                 maxLines = 1,
                             )
                         }
-                        NutraDot(color = dotColor, size = 5.dp)
                     }
                 }
             }

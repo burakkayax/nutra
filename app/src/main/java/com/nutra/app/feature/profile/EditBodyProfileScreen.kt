@@ -104,9 +104,9 @@ fun EditBodyProfileScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = NutraTheme.spacing.screen)
-                .padding(top = 12.dp, bottom = 12.dp),
+                .padding(top = NutraTheme.spacing.section, bottom = NutraTheme.spacing.md),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(NutraTheme.spacing.md),
         ) {
             NutraIconButton(
                 icon = Icons.AutoMirrored.Rounded.ArrowBack,
@@ -120,7 +120,7 @@ fun EditBodyProfileScreen(
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 Text(
-                    text = "Vücut profilini düzenle",
+                    text = "Profili düzenle",
                     style = NutraTheme.typography.titleMedium,
                     color = colors.textPrimary,
                     maxLines = 1,
@@ -141,10 +141,10 @@ fun EditBodyProfileScreen(
                 .weight(1f)
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = NutraTheme.spacing.screen)
-                .padding(top = 8.dp, bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.xl),
+                .padding(top = NutraTheme.spacing.md, bottom = NutraTheme.spacing.xxl),
+            verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.xxl),
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.md)) {
                 NutraSectionHeader(title = "Cinsiyet")
                 NutraSegmentedControl(
                     items = BiologicalSex.entries,
@@ -154,9 +154,9 @@ fun EditBodyProfileScreen(
                 )
             }
 
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.md)) {
                 NutraSectionHeader(title = "Hedefin")
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.md)) {
                     GoalType.entries.forEach { option ->
                         NutraSelectableCard(
                             title = option.title,
@@ -168,11 +168,8 @@ fun EditBodyProfileScreen(
                 }
             }
 
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                NutraSectionHeader(
-                    title = "Vücut ölçüleri",
-                    supportingText = "Değere dokunarak yazabilirsin",
-                )
+            Column(verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.md)) {
+                NutraSectionHeader(title = "Vücut ölçüleri")
                 NutraCard(contentPadding = PaddingValues(horizontal = NutraTheme.spacing.card, vertical = NutraTheme.spacing.lg)) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         NutraMetricStepperRow(
@@ -191,6 +188,7 @@ fun EditBodyProfileScreen(
                                     .coerceIn(350, 2500) / 10f
                             },
                             onValueClick = { activeBodyField = BodyMetricField.CURRENT_WEIGHT },
+                            valueMinWidth = 80.dp,
                         )
                         NutraDivider()
                         NutraMetricStepperRow(
@@ -209,6 +207,7 @@ fun EditBodyProfileScreen(
                                     .coerceIn(350, 2500) / 10f
                             },
                             onValueClick = { activeBodyField = BodyMetricField.TARGET_WEIGHT },
+                            valueMinWidth = 80.dp,
                         )
                         NutraDivider()
                         NutraMetricStepperRow(
@@ -223,6 +222,7 @@ fun EditBodyProfileScreen(
                                 heightCm = (heightCm + 1).coerceIn(130, 225)
                             },
                             onValueClick = { activeBodyField = BodyMetricField.HEIGHT },
+                            valueMinWidth = 80.dp,
                         )
                         NutraDivider()
                         NutraMetricStepperRow(
@@ -237,14 +237,15 @@ fun EditBodyProfileScreen(
                                 age = (age + 1).coerceIn(14, 95)
                             },
                             onValueClick = { activeBodyField = BodyMetricField.AGE },
+                            valueMinWidth = 80.dp,
                         )
                     }
                 }
             }
 
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.md)) {
                 NutraSectionHeader(title = "Hareket düzeyi")
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.md)) {
                     ActivityLevel.entries.forEach { level ->
                         NutraSelectableCard(
                             title = level.title,
@@ -275,7 +276,7 @@ fun EditBodyProfileScreen(
                         )
                         Text(
                             text = "Mifflin-St Jeor formülüne göre kalori ve makroları günceller",
-                            style = NutraTheme.typography.caption,
+                            style = NutraTheme.typography.bodySmall,
                             color = colors.textSecondary,
                         )
                     }
@@ -294,7 +295,7 @@ fun EditBodyProfileScreen(
                 onClick = onNavigateBack,
                 style = NutraButtonStyle.Secondary,
                 size = NutraButtonSize.Medium,
-                modifier = Modifier.weight(0.35f),
+                modifier = Modifier.weight(0.38f),
             )
             NutraButton(
                 text = "Kaydet",
@@ -313,7 +314,7 @@ fun EditBodyProfileScreen(
                 },
                 style = NutraButtonStyle.Primary,
                 size = NutraButtonSize.Medium,
-                modifier = Modifier.weight(0.65f),
+                modifier = Modifier.weight(0.62f),
             )
         }
     }

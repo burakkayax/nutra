@@ -802,6 +802,7 @@ fun NutraMetricStepperRow(
     accentColor: Color? = null,
     onValueClick: (() -> Unit)? = null,
     valueContainerColor: Color = NutraTheme.colors.surfaceMuted,
+    valueMinWidth: Dp = 68.dp,
 ) {
     val haptic = LocalHapticFeedback.current
     Row(
@@ -825,7 +826,7 @@ fun NutraMetricStepperRow(
         Box(
             modifier = Modifier
                 .padding(horizontal = 4.dp)
-                .widthIn(min = 68.dp)
+                .widthIn(min = valueMinWidth)
                 .heightIn(min = 40.dp)
                 .clip(NutraTheme.shapes.pill)
                 .background(valueContainerColor)

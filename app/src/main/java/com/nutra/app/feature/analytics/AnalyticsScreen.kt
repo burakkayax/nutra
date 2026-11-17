@@ -460,7 +460,6 @@ private fun HapticScrubbingWaterChartCard(
             },
             selectedRange = selectedRange,
             targetSummaryText = "Hedef: ${formatInt(targetWaterMl)} ml",
-            footerHintText = "Çubukların üzerinde kaydırarak günlük su tüketimini incele · Hedef ${formatInt(targetWaterMl)} ml",
             onScrub = onScrub,
         )
     }
@@ -477,7 +476,6 @@ private fun HapticScrubbingBarChart(
     barColorProvider: (DailyAnalyticsPoint) -> Color,
     selectedRange: AnalyticsRangeOption,
     targetSummaryText: String,
-    footerHintText: String? = null,
     onScrub: (Int?) -> Unit,
 ) {
     val colors = NutraTheme.colors
@@ -642,15 +640,6 @@ private fun HapticScrubbingBarChart(
                 )
             }
         }
-    }
-
-    if (!footerHintText.isNullOrBlank()) {
-        Text(
-            text = footerHintText,
-            style = NutraTheme.typography.caption,
-            color = colors.textTertiary,
-            modifier = Modifier.padding(top = 10.dp),
-        )
     }
 }
 
@@ -986,47 +975,31 @@ private fun WeightTrendBezierCard(
             }
         }
 
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = 18.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.Bottom,
+            verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                text = "${formatShortDate(activePoint.dateIso)} · Trend",
+                style = NutraTheme.typography.caption,
+                color = if (scrubbedIndex != null) colors.accent else colors.textSecondary,
+            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 Text(
-                    text = "${formatShortDate(activePoint.dateIso)} · Trend",
-                    style = NutraTheme.typography.caption,
-                    color = if (scrubbedIndex != null) colors.accent else colors.textSecondary,
-                )
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = "${formatKg(activePoint.emaTrendKg)} kg",
-                        style = NutraTheme.typography.numberLarge,
-                        color = colors.textPrimary,
-                        modifier = Modifier.alignByBaseline(),
-                    )
-                    Text(
-                        text = "$deltaSign${formatKg(deltaFromStart)} kg",
-                        style = NutraTheme.typography.labelSmall,
-                        color = deltaColor,
-                        modifier = Modifier.alignByBaseline(),
-                    )
-                }
-            }
-
-            Column(horizontalAlignment = Alignment.End) {
-                Text(
-                    text = "Tartı",
-                    style = NutraTheme.typography.caption,
-                    color = colors.textTertiary,
+                    text = "${formatKg(activePoint.emaTrendKg)} kg",
+                    style = NutraTheme.typography.numberLarge,
+                    color = colors.textPrimary,
+                    modifier = Modifier.alignByBaseline(),
                 )
                 Text(
-                    text = "${formatKg(activePoint.rawWeightKg)} kg",
-                    style = NutraTheme.typography.numberSmall,
-                    color = colors.textSecondary,
+                    text = "$deltaSign${formatKg(deltaFromStart)} kg",
+                    style = NutraTheme.typography.labelSmall,
+                    color = deltaColor,
+                    modifier = Modifier.alignByBaseline(),
                 )
             }
         }
@@ -1035,7 +1008,6 @@ private fun WeightTrendBezierCard(
         val (minY, maxY) = remember(points, targetWeight) {
             val allValues = buildList {
                 points.forEach {
-                    add(it.rawWeightKg)
                     add(it.emaTrendKg)
                 }
                 if (abs(targetWeight - points.last().emaTrendKg) <= 25f) {
@@ -1128,12 +1100,10 @@ private fun WeightTrendBezierCard(
                         val cursorDashEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f))
 
                         val emaPoints = ArrayList<Offset>(points.size)
-                        val rawOffsets = ArrayList<Offset>(points.size)
                         for (idx in points.indices) {
                             val pt = points[idx]
                             val x = xFor(idx)
                             emaPoints.add(Offset(x, yFor(pt.emaTrendKg)))
-                            rawOffsets.add(Offset(x, yFor(pt.rawWeightKg)))
                         }
 
                         val curvePath = Path().apply {
@@ -1168,11 +1138,9 @@ private fun WeightTrendBezierCard(
                             join = StrokeJoin.Round,
                         )
                         val targetStrokePx = 1.dp.toPx()
-                        val rawDotRadiusPx = 3.dp.toPx()
                         val focusOuterRadiusPx = 6.dp.toPx()
                         val focusInnerRadiusPx = 4.dp.toPx()
                         val targetLineColor = colors.accent.copy(alpha = 0.45f)
-                        val rawDotColor = colors.textTertiary.copy(alpha = 0.5f)
                         val accentColor = colors.accent
                         val surfaceColor = colors.surface
                         val dividerColor = colors.divider
@@ -1190,14 +1158,6 @@ private fun WeightTrendBezierCard(
 
                             drawPath(path = fillPath, brush = fillBrush)
                             drawPath(path = curvePath, color = accentColor, style = curveStroke)
-
-                            for (i in rawOffsets.indices) {
-                                drawCircle(
-                                    color = rawDotColor,
-                                    radius = rawDotRadiusPx,
-                                    center = rawOffsets[i],
-                                )
-                            }
 
                             val activeScrub = currentScrubState.value
                             val focusIdx = (activeScrub ?: emaPoints.lastIndex).coerceIn(0, emaPoints.lastIndex)
@@ -1265,17 +1225,10 @@ private fun WeightTrendBezierCard(
             LegendItem(
                 color = colors.accent,
                 text = "Trend",
-                isLine = true,
-            )
-            LegendItem(
-                color = colors.textTertiary.copy(alpha = 0.65f),
-                text = "Günlük tartı",
-                isLine = false,
             )
             LegendItem(
                 color = colors.accent.copy(alpha = 0.55f),
                 text = "Hedef",
-                isLine = true,
                 isDashed = true,
             )
         }
@@ -1286,7 +1239,6 @@ private fun WeightTrendBezierCard(
 private fun LegendItem(
     color: Color,
     text: String,
-    isLine: Boolean,
     isDashed: Boolean = false,
 ) {
     Row(
@@ -1310,7 +1262,7 @@ private fun LegendItem(
                         .background(color),
                 )
             }
-        } else if (isLine) {
+        } else {
             Box(
                 modifier = Modifier
                     .width(12.dp)
@@ -1318,8 +1270,6 @@ private fun LegendItem(
                     .clip(NutraTheme.shapes.pill)
                     .background(color),
             )
-        } else {
-            NutraDot(color = color, size = 6.dp)
         }
         Text(
             text = text,

@@ -147,7 +147,7 @@ fun ProfileScreen(
             item(key = "header") {
                 NutraScreenHeader(
                     title = "Profil",
-                    eyebrow = "Vücut profili ve hedefler",
+                    eyebrow = "Hedefler ve ayarlar",
                 )
             }
 
