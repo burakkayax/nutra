@@ -1,5 +1,6 @@
 package com.nutra.app.feature.onboarding
 
+import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nutra.app.core.datastore.UserPreferencesDataStore
@@ -21,6 +22,7 @@ import java.time.LocalDate
 import javax.inject.Inject
 import kotlin.math.roundToInt
 
+@Immutable
 data class OnboardingUiState(
     val stepIndex: Int = 0,
     val goalType: GoalType = GoalType.LOSE_WEIGHT,

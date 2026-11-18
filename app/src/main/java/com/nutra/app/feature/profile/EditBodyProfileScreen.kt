@@ -25,7 +25,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.nutra.app.core.designsystem.NutraBottomActionBar
@@ -48,8 +47,6 @@ import com.nutra.app.domain.model.BiologicalSex
 import com.nutra.app.domain.model.GoalType
 import com.nutra.app.domain.model.UserProfile
 import kotlin.math.roundToInt
-
-private fun formatKg(value: Float): String = NutraFormatters.formatKg(value)
 
 private enum class BodyMetricField(
     val dialogTitle: String,
@@ -81,7 +78,6 @@ fun EditBodyProfileScreen(
     ) -> Unit,
 ) {
     val colors = NutraTheme.colors
-    val haptic = LocalHapticFeedback.current
 
     var sex by rememberSaveable { mutableStateOf(profile.sex) }
     var age by rememberSaveable { mutableIntStateOf(profile.age) }
@@ -174,15 +170,13 @@ fun EditBodyProfileScreen(
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         NutraMetricStepperRow(
                             label = "Mevcut kilo",
-                            valueText = "${formatKg(currentWeight)} kg",
+                            valueText = "${NutraFormatters.formatKg(currentWeight)} kg",
                             onDecrement = {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 currentWeight = ((currentWeight - 0.5f) * 10f)
                                     .roundToInt()
                                     .coerceIn(350, 2500) / 10f
                             },
                             onIncrement = {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 currentWeight = ((currentWeight + 0.5f) * 10f)
                                     .roundToInt()
                                     .coerceIn(350, 2500) / 10f
@@ -193,15 +187,13 @@ fun EditBodyProfileScreen(
                         NutraDivider()
                         NutraMetricStepperRow(
                             label = "Hedef kilo",
-                            valueText = "${formatKg(targetWeight)} kg",
+                            valueText = "${NutraFormatters.formatKg(targetWeight)} kg",
                             onDecrement = {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 targetWeight = ((targetWeight - 0.5f) * 10f)
                                     .roundToInt()
                                     .coerceIn(350, 2500) / 10f
                             },
                             onIncrement = {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 targetWeight = ((targetWeight + 0.5f) * 10f)
                                     .roundToInt()
                                     .coerceIn(350, 2500) / 10f
@@ -213,14 +205,8 @@ fun EditBodyProfileScreen(
                         NutraMetricStepperRow(
                             label = "Boy",
                             valueText = "$heightCm cm",
-                            onDecrement = {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                heightCm = (heightCm - 1).coerceIn(130, 225)
-                            },
-                            onIncrement = {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                heightCm = (heightCm + 1).coerceIn(130, 225)
-                            },
+                            onDecrement = { heightCm = (heightCm - 1).coerceIn(130, 225) },
+                            onIncrement = { heightCm = (heightCm + 1).coerceIn(130, 225) },
                             onValueClick = { activeBodyField = BodyMetricField.HEIGHT },
                             valueMinWidth = 80.dp,
                         )
@@ -228,14 +214,8 @@ fun EditBodyProfileScreen(
                         NutraMetricStepperRow(
                             label = "Yaş",
                             valueText = "$age yaş",
-                            onDecrement = {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                age = (age - 1).coerceIn(14, 95)
-                            },
-                            onIncrement = {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                age = (age + 1).coerceIn(14, 95)
-                            },
+                            onDecrement = { age = (age - 1).coerceIn(14, 95) },
+                            onIncrement = { age = (age + 1).coerceIn(14, 95) },
                             onValueClick = { activeBodyField = BodyMetricField.AGE },
                             valueMinWidth = 80.dp,
                         )
@@ -300,7 +280,6 @@ fun EditBodyProfileScreen(
             NutraButton(
                 text = "Kaydet",
                 onClick = {
-                    haptic.performHapticFeedback(HapticFeedbackType.Confirm)
                     onSave(
                         sex,
                         age,
@@ -314,6 +293,7 @@ fun EditBodyProfileScreen(
                 },
                 style = NutraButtonStyle.Primary,
                 size = NutraButtonSize.Medium,
+                hapticFeedback = HapticFeedbackType.Confirm,
                 modifier = Modifier.weight(0.62f),
             )
         }
@@ -322,8 +302,8 @@ fun EditBodyProfileScreen(
     val editingBodyField = activeBodyField
     if (editingBodyField != null) {
         val currentValue = when (editingBodyField) {
-            BodyMetricField.CURRENT_WEIGHT -> formatKg(currentWeight)
-            BodyMetricField.TARGET_WEIGHT -> formatKg(targetWeight)
+            BodyMetricField.CURRENT_WEIGHT -> NutraFormatters.formatKg(currentWeight)
+            BodyMetricField.TARGET_WEIGHT -> NutraFormatters.formatKg(targetWeight)
             BodyMetricField.HEIGHT -> heightCm.toString()
             BodyMetricField.AGE -> age.toString()
         }

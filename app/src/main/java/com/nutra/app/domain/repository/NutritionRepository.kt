@@ -140,23 +140,39 @@ class NutritionRepository @Inject constructor(
             nutraDao.observeMealLogsInRange(startIso, endIso),
             nutraDao.observeWaterInRange(startIso, endIso),
         ) { goals, mealLogs, waterLogs ->
-            val mealsByDate = mealLogs.groupBy { it.dateIso }
-            val waterByDate = waterLogs.associateBy { it.dateIso }
+            class DayTotals {
+                var calories = 0
+                var protein = 0.0
+                var carbs = 0.0
+                var fat = 0.0
+            }
+            val totalsByDate = HashMap<String, DayTotals>(mealLogs.size.coerceAtMost(64))
+            for (log in mealLogs) {
+                val acc = totalsByDate.getOrPut(log.dateIso) { DayTotals() }
+                acc.calories += log.calories
+                acc.protein += log.proteinGrams
+                acc.carbs += log.carbsGrams
+                acc.fat += log.fatGrams
+            }
+            val waterByDate = HashMap<String, Int>(waterLogs.size)
+            for (water in waterLogs) {
+                waterByDate[water.dateIso] = water.waterMl
+            }
 
-            val points = mutableListOf<DailyAnalyticsPoint>()
+            val points = ArrayList<DailyAnalyticsPoint>(32)
             var cursor = startDate
             while (!cursor.isAfter(endDate)) {
                 val iso = cursor.toString()
-                val dayMeals = mealsByDate[iso].orEmpty()
-                val dayWater = waterByDate[iso]?.waterMl ?: 0
+                val acc = totalsByDate[iso]
+                val dayWater = waterByDate[iso] ?: 0
                 points.add(
                     DailyAnalyticsPoint(
                         dateIso = iso,
-                        calories = dayMeals.sumOf { it.calories },
+                        calories = acc?.calories ?: 0,
                         targetCalories = goals.calories,
-                        proteinGrams = dayMeals.sumOf { it.proteinGrams.toDouble() }.toFloat(),
-                        carbsGrams = dayMeals.sumOf { it.carbsGrams.toDouble() }.toFloat(),
-                        fatGrams = dayMeals.sumOf { it.fatGrams.toDouble() }.toFloat(),
+                        proteinGrams = acc?.protein?.toFloat() ?: 0f,
+                        carbsGrams = acc?.carbs?.toFloat() ?: 0f,
+                        fatGrams = acc?.fat?.toFloat() ?: 0f,
                         waterMl = dayWater,
                     ),
                 )
@@ -382,6 +398,7 @@ class NutritionRepository @Inject constructor(
                 ensureCatalogSeeded()
 
             database.withTransaction {
+                nutraDao.clearSeedFavorites()
                 val existingFoods = nutraDao.getAllFoodsSnapshot()
                 val existingById = existingFoods.associateBy { it.id }
                 val existingByBarcode = existingFoods

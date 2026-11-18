@@ -5,7 +5,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nutra.app.core.datastore.UserPreferencesDataStore
 import com.nutra.app.domain.model.DailyAnalyticsPoint
-import com.nutra.app.domain.model.UserProfile
+import com.nutra.app.domain.model.GoalType
+import com.nutra.app.domain.model.MacroGoals
 import com.nutra.app.domain.model.WeightTrendPoint
 import com.nutra.app.domain.repository.NutritionRepository
 import com.nutra.app.domain.usecase.WeightTrendCalculator
@@ -16,6 +17,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
@@ -31,6 +33,14 @@ enum class AnalyticsRangeOption(val days: Int, val title: String) {
 }
 
 @Immutable
+data class AnalyticsProfileSlice(
+    val goals: MacroGoals = MacroGoals(),
+    val currentWeightKg: Float = 75f,
+    val targetWeightKg: Float = 70f,
+    val goalType: GoalType = GoalType.LOSE_WEIGHT,
+)
+
+@Immutable
 data class AnalyticsUiState(
     val isLoading: Boolean = true,
     val selectedRange: AnalyticsRangeOption = AnalyticsRangeOption.DAYS_7,
@@ -41,7 +51,7 @@ data class AnalyticsUiState(
     val scrubbedWaterIndex: Int? = null,
     val weightTrendPoints: List<WeightTrendPoint> = emptyList(),
     val scrubbedWeightIndex: Int? = null,
-    val profile: UserProfile = UserProfile(),
+    val profile: AnalyticsProfileSlice = AnalyticsProfileSlice(),
     val showAddWeightDialog: Boolean = false,
 ) {
     val activeDayPoint: DailyAnalyticsPoint?
@@ -126,25 +136,35 @@ class AnalyticsViewModel @Inject constructor(
         )
     }
 
+    private val analyticsProfileFlow = preferencesDataStore.userProfileFlow
+        .map { profile ->
+            AnalyticsProfileSlice(
+                goals = profile.goals,
+                currentWeightKg = profile.currentWeightKg,
+                targetWeightKg = profile.targetWeightKg,
+                goalType = profile.goalType,
+            )
+        }
+        .distinctUntilChanged()
+
     val uiState: StateFlow<AnalyticsUiState> = combine(
         rangeFlow,
         rangeSummaryFlow,
         weightTrendPointsFlow,
-        preferencesDataStore.userProfileFlow,
+        analyticsProfileFlow,
         interactionStateFlow,
     ) { range, summary, trendPoints, profile, interaction ->
         val points = summary.points
-        val maxDayIdx = (points.size - 1).coerceAtLeast(0)
         AnalyticsUiState(
             isLoading = false,
             selectedRange = range,
             dailyPoints = points,
             averageCalories = summary.averageCalories,
             averageWaterMl = summary.averageWaterMl,
-            scrubbedDayIndex = interaction.scrubbedDayIndex?.coerceIn(0, maxDayIdx),
-            scrubbedWaterIndex = interaction.scrubbedWaterIndex?.coerceIn(0, maxDayIdx),
+            scrubbedDayIndex = if (points.isEmpty()) null else interaction.scrubbedDayIndex?.coerceIn(0, points.lastIndex),
+            scrubbedWaterIndex = if (points.isEmpty()) null else interaction.scrubbedWaterIndex?.coerceIn(0, points.lastIndex),
             weightTrendPoints = trendPoints,
-            scrubbedWeightIndex = interaction.scrubbedWeightIndex?.coerceIn(0, (trendPoints.size - 1).coerceAtLeast(0)),
+            scrubbedWeightIndex = if (trendPoints.isEmpty()) null else interaction.scrubbedWeightIndex?.coerceIn(0, trendPoints.lastIndex),
             profile = profile,
             showAddWeightDialog = interaction.showAddWeightDialog,
         )

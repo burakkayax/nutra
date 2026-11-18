@@ -20,7 +20,6 @@ import com.nutra.app.domain.model.MealType
 import com.nutra.app.domain.model.SmartComboSuggestion
 import com.nutra.app.domain.repository.NutritionRepository
 import com.nutra.app.domain.usecase.ContextualMealRankerAndComboEngine
-import com.nutra.app.domain.usecase.MealUsageStats
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -30,6 +29,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -38,6 +38,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -72,7 +73,7 @@ data class DashboardUiState(
     val today: LocalDate = LocalDate.now(),
     val selectedDate: LocalDate = LocalDate.now(),
     val isWeekCalendarVisible: Boolean = false,
-    val weekDays: List<LocalDate> = emptyList(),
+    val weekStart: LocalDate = LocalDate.now().with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)),
     val dailySummary: DailyNutritionSummary = DailyNutritionSummary(
         dateIso = LocalDate.now().toString(),
         goals = MacroGoals(),
@@ -106,6 +107,8 @@ data class LoggingSheetUiState(
     val barcodeLoading: Boolean = false,
     val barcodeErrorMessage: String? = null,
     val customFoodDraft: CustomFoodDraft = CustomFoodDraft(),
+    val sheetFeedbackMessage: String? = null,
+    val sheetFeedbackEventId: Long = 0L,
 ) {
     val shouldShowSmartCombos: Boolean
         get() = !isSearchActive && selectedCategory == FoodCategory.ALL && smartCombos.isNotEmpty()
@@ -138,6 +141,8 @@ private data class LoggingModalInternalState(
     val barcodeLoading: Boolean = false,
     val barcodeErrorMessage: String? = null,
     val customFoodDraft: CustomFoodDraft = CustomFoodDraft(),
+    val sheetFeedbackMessage: String? = null,
+    val sheetFeedbackEventId: Long = 0L,
 )
 
 @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
@@ -157,15 +162,17 @@ class DashboardViewModel @Inject constructor(
     private val modalStateFlow = MutableStateFlow(LoggingModalInternalState())
     private val searchQueryFlow = MutableStateFlow("")
     private val bannerSeq = AtomicLong(0L)
+    private val sheetFeedbackSeq = AtomicLong(0L)
+    private val _isReady = MutableStateFlow(false)
+    val isReady: StateFlow<Boolean> = _isReady.asStateFlow()
     private var aiAnalysisJob: Job? = null
     private var barcodeLookupJob: Job? = null
     val searchQueryState: StateFlow<String> = searchQueryFlow
 
     private val dateDependentSummaryFlow = selectedDateFlow.flatMapLatest { date ->
-        val monday = date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
-        val weekDays = (0L..6L).map { monday.plusDays(it) }
+        val weekStart = date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
         nutritionRepository.observeDailySummary(date.toString()).map { summary ->
-            Triple(date, weekDays, summary)
+            Triple(date, weekStart, summary)
         }
     }
 
@@ -179,13 +186,13 @@ class DashboardViewModel @Inject constructor(
         combine(expandedMealsFlow, isWeekCalendarVisibleFlow) { e, w -> e to w },
         activeLoggingMealTypeFlow,
         bannerStateFlow,
-    ) { today, (selectedDate, weekDays, summary), (expandedMeals, isWeekCalendarVisible), activeLoggingMeal, banner ->
+    ) { today, (selectedDate, weekStart, summary), (expandedMeals, isWeekCalendarVisible), activeLoggingMeal, banner ->
         DashboardUiState(
             isLoading = false,
             today = today,
             selectedDate = selectedDate,
             isWeekCalendarVisible = isWeekCalendarVisible,
-            weekDays = weekDays,
+            weekStart = weekStart,
             dailySummary = summary,
             expandedMeals = expandedMeals,
             activeLoggingMealType = activeLoggingMeal,
@@ -194,63 +201,40 @@ class DashboardViewModel @Inject constructor(
             statusBannerMessage = banner.statusBannerMessage,
             bannerEventId = banner.bannerEventId,
         )
+    }.onEach {
+        if (!_isReady.value) _isReady.value = true
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(30_000),
         initialValue = DashboardUiState(),
     )
 
-    val isReady: StateFlow<Boolean> = uiState
-        .map { !it.isLoading }
-        .distinctUntilChanged()
+    private val cachedFoodsFlow: StateFlow<List<FoodItem>?> = nutritionRepository
+        .observeAllFoods()
+        .map<List<FoodItem>, List<FoodItem>?> { it }
         .stateIn(
             scope = viewModelScope,
-            started = SharingStarted.Eagerly,
-            initialValue = false,
-        )
-
-    private val isModalOpenFlow = activeLoggingMealTypeFlow
-        .map { it != null }
-        .distinctUntilChanged()
-
-    private val catalogPrewarmTrigger = MutableStateFlow(false)
-
-    init {
-        viewModelScope.launch {
-            isReady.first { it }
-            delay(350)
-            catalogPrewarmTrigger.value = true
-        }
-    }
-
-    private val shouldKeepCatalogWarmFlow = combine(
-        isModalOpenFlow,
-        catalogPrewarmTrigger,
-    ) { isOpen, prewarm -> isOpen || prewarm }.distinctUntilChanged()
-
-    private val cachedFoodsFlow: StateFlow<List<FoodItem>?> = shouldKeepCatalogWarmFlow
-        .flatMapLatest { shouldLoad ->
-            if (shouldLoad) {
-                nutritionRepository.observeAllFoods().map<List<FoodItem>, List<FoodItem>?> { it }
-            } else {
-                flowOf(null)
-            }
-        }
-        .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.Eagerly,
+            started = SharingStarted.WhileSubscribed(30_000),
             initialValue = null,
         )
 
-    private val cachedRecentLogsFlow: StateFlow<List<MealLogItem>> = shouldKeepCatalogWarmFlow
-        .flatMapLatest { shouldLoad ->
-            if (shouldLoad) nutritionRepository.observeRecentHistoricalMealLogs() else flowOf(emptyList())
-        }
+    private val cachedRecentLogsFlow: StateFlow<List<MealLogItem>> = nutritionRepository
+        .observeRecentHistoricalMealLogs()
         .stateIn(
             scope = viewModelScope,
-            started = SharingStarted.Eagerly,
+            started = SharingStarted.WhileSubscribed(30_000),
             initialValue = emptyList(),
         )
+
+    init {
+        viewModelScope.launch {
+            // Trigger initial Dashboard load and gently warm catalog cache after first frame settles.
+            uiState.first { !it.isLoading }
+            delay(350)
+            nutritionRepository.ensureCatalogSeeded()
+            cachedFoodsFlow.first { it != null }
+        }
+    }
 
     private val debouncedSearchQueryFlow = searchQueryFlow
         .debounce { query -> if (query.isBlank()) 0L else 45L }
@@ -265,24 +249,15 @@ class DashboardViewModel @Inject constructor(
         .distinctUntilChanged()
 
     private val mealUsageStatsFlow = combine(
-        shouldKeepCatalogWarmFlow,
         cachedRecentLogsFlow,
         activeModalMealFlow,
-    ) { shouldWarm, logs, mealType ->
-        if (!shouldWarm) {
-            null
-        } else {
-            rankerAndComboEngine.prepareMealUsageStats(logs, mealType)
-        }
+    ) { logs, mealType ->
+        rankerAndComboEngine.prepareMealUsageStats(logs, mealType)
     }.flowOn(Dispatchers.Default)
 
-    private val catalogAndCombosFlow = combine(
-        shouldKeepCatalogWarmFlow,
-        activeModalMealFlow,
-    ) { shouldWarm, mealType -> shouldWarm to mealType }
-        .distinctUntilChanged()
-        .flatMapLatest { (shouldWarm, mealType) ->
-            if (!shouldWarm) {
+    private val catalogAndCombosFlow = activeLoggingMealTypeFlow
+        .flatMapLatest { activeMeal ->
+            if (activeMeal == null) {
                 flowOf(CatalogAndCombosState())
             } else {
                 val rankedFlow = combine(
@@ -293,13 +268,13 @@ class DashboardViewModel @Inject constructor(
                 ) { foods, stats, query, category ->
                     val isSearchActive = query.isNotBlank()
                     when {
-                        foods == null || stats == null -> Triple(isSearchActive, true, emptyList())
+                        foods == null -> Triple(isSearchActive, true, emptyList())
                         foods.isEmpty() -> Triple(isSearchActive, false, emptyList())
                         else -> {
                             val ranked = rankerAndComboEngine.rankFoodsWithStats(
                                 allFoods = foods,
                                 stats = stats,
-                                mealType = mealType,
+                                mealType = activeMeal,
                                 query = query,
                                 selectedCategory = category,
                             )
@@ -310,7 +285,7 @@ class DashboardViewModel @Inject constructor(
 
                 val currentMealItemsForMealFlow = uiState
                     .map { summary ->
-                        summary.dailySummary.meals.firstOrNull { it.mealType == mealType }?.items.orEmpty()
+                        summary.dailySummary.meals.firstOrNull { it.mealType == activeMeal }?.items.orEmpty()
                     }
                     .distinctUntilChanged()
 
@@ -333,7 +308,7 @@ class DashboardViewModel @Inject constructor(
                                 emptyList()
                             } else {
                                 rankerAndComboEngine.buildSmartComboSuggestions(
-                                    mealType = mealType,
+                                    mealType = activeMeal,
                                     currentDateMealItems = currentMealItems,
                                     historicalLogs = logs,
                                     catalogFoods = foods,
@@ -381,10 +356,12 @@ class DashboardViewModel @Inject constructor(
             barcodeLoading = modal.barcodeLoading,
             barcodeErrorMessage = modal.barcodeErrorMessage,
             customFoodDraft = modal.customFoodDraft,
+            sheetFeedbackMessage = modal.sheetFeedbackMessage,
+            sheetFeedbackEventId = modal.sheetFeedbackEventId,
         )
     }.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.Eagerly,
+        started = SharingStarted.WhileSubscribed(30_000),
         initialValue = LoggingSheetUiState(),
     )
 
@@ -441,6 +418,7 @@ class DashboardViewModel @Inject constructor(
                 aiErrorMessage = null,
                 barcodeErrorMessage = null,
                 customFoodDraft = CustomFoodDraft(),
+                sheetFeedbackMessage = null,
             )
         }
     }
@@ -459,8 +437,13 @@ class DashboardViewModel @Inject constructor(
                 aiErrorMessage = null,
                 barcodeLoading = false,
                 barcodeErrorMessage = null,
+                sheetFeedbackMessage = null,
             )
         }
+    }
+
+    fun dismissSheetFeedback() {
+        modalStateFlow.update { it.copy(sheetFeedbackMessage = null) }
     }
 
     fun selectLoggingTab(tab: LoggingTabMode) {
@@ -530,8 +513,14 @@ class DashboardViewModel @Inject constructor(
                 unitGrams = unitGrams,
                 multiplier = multiplier,
             )
-            modalStateFlow.update { it.copy(selectedFoodForPortion = null) }
-            showStatusBanner("${food.name} (${mealType.title}) eklendi")
+            val feedbackId = sheetFeedbackSeq.incrementAndGet()
+            modalStateFlow.update {
+                it.copy(
+                    selectedFoodForPortion = null,
+                    sheetFeedbackMessage = "${food.name} (${mealType.title}) eklendi",
+                    sheetFeedbackEventId = feedbackId,
+                )
+            }
         }
     }
 
@@ -634,7 +623,9 @@ class DashboardViewModel @Inject constructor(
     private suspend fun runAiAnalysisInternal(imageBytes: ByteArray?) {
         val prompt = modalStateFlow.value.aiPromptText
         val profile = preferencesDataStore.getSnapshot()
-        val catalog = cachedFoodsFlow.value ?: nutritionRepository.observeAllFoods().first()
+        nutritionRepository.ensureCatalogSeeded()
+        val catalog = cachedFoodsFlow.value?.takeIf { it.isNotEmpty() }
+            ?: nutritionRepository.observeAllFoods().first()
         val result = geminiAiService.get().analyzeFoodInput(
             promptText = prompt,
             imageBytes = imageBytes,

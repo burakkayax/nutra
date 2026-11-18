@@ -38,6 +38,9 @@ interface NutraDao {
     @Query("UPDATE food_items SET isFavorite = :isFavorite WHERE id = :foodId")
     suspend fun updateFavorite(foodId: Long, isFavorite: Boolean)
 
+    @Query("UPDATE food_items SET isFavorite = 0 WHERE isCustom = 0")
+    suspend fun clearSeedFavorites()
+
     // --- Meal Logs ---
     @Query("SELECT * FROM meal_logs WHERE dateIso = :dateIso ORDER BY timestampMillis ASC")
     fun observeMealLogsForDate(dateIso: String): Flow<List<MealLogEntity>>
@@ -100,9 +103,6 @@ interface NutraDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertWeightLogs(weightLogs: List<WeightLogEntity>)
-
-    @Query("DELETE FROM weight_logs WHERE id = :id")
-    suspend fun deleteWeightLogById(id: Long)
 
     @Query("DELETE FROM weight_logs")
     suspend fun deleteAllWeightLogs()

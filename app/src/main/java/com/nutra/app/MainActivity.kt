@@ -13,6 +13,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -22,7 +23,6 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -47,7 +47,7 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.layout.windowInsetsTopHeight
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Person
@@ -60,6 +60,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -70,7 +71,11 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -80,12 +85,14 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
-import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nutra.app.core.datastore.UserPreferencesDataStore
 import com.nutra.app.core.designsystem.NutraIcons
 import com.nutra.app.core.designsystem.NutraTheme
@@ -237,7 +244,7 @@ fun NutraAppRoot(
     ) { isCompleted ->
         if (!isCompleted) {
             SideEffect { onReadyChanged(true) }
-            val onboardingViewModel: OnboardingViewModel = hiltViewModel()
+            val onboardingViewModel: OnboardingViewModel = viewModel()
             OnboardingScreen(
                 viewModel = onboardingViewModel,
                 onOnboardingFinished = {
@@ -246,7 +253,7 @@ fun NutraAppRoot(
                 },
             )
         } else {
-            val dashboardViewModel: DashboardViewModel = hiltViewModel()
+            val dashboardViewModel: DashboardViewModel = viewModel()
             val isDashboardReady by dashboardViewModel.isReady.collectAsStateWithLifecycle()
             SideEffect { onReadyChanged(isDashboardReady) }
             if (!isDashboardReady) {
@@ -297,6 +304,10 @@ fun NutraAppRoot(
                 isEditingBodyProfile = false
             }
 
+            BackHandler(enabled = !showEditBodyProfile && activeTab != PrimaryDestination.DASHBOARD) {
+                activeTab = PrimaryDestination.DASHBOARD
+            }
+
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -331,7 +342,7 @@ fun NutraAppRoot(
                     if (mountAnalytics) {
                         TabSlotBox(isSelected = activeTab == PrimaryDestination.ANALYTICS && !showEditBodyProfile) {
                             saveableStateHolder.SaveableStateProvider(PrimaryDestination.ANALYTICS) {
-                                val analyticsViewModel: AnalyticsViewModel = hiltViewModel()
+                                val analyticsViewModel: AnalyticsViewModel = viewModel()
                                 LaunchedEffect(activeTab) {
                                     if (activeTab == PrimaryDestination.ANALYTICS) {
                                         analyticsViewModel.refreshToday()
@@ -348,7 +359,7 @@ fun NutraAppRoot(
                     if (mountProfile) {
                         TabSlotBox(isSelected = activeTab == PrimaryDestination.PROFILE && !showEditBodyProfile) {
                             saveableStateHolder.SaveableStateProvider(PrimaryDestination.PROFILE) {
-                                val profileViewModel: ProfileViewModel = hiltViewModel()
+                                val profileViewModel: ProfileViewModel = viewModel()
                                 ProfileScreen(
                                     viewModel = profileViewModel,
                                     contentPadding = contentPadding,
@@ -366,7 +377,7 @@ fun NutraAppRoot(
                             .fillMaxSize()
                             .zIndex(2f),
                     ) {
-                        val profileViewModel: ProfileViewModel = hiltViewModel()
+                        val profileViewModel: ProfileViewModel = viewModel()
                         val profileState by profileViewModel.uiState.collectAsStateWithLifecycle()
                         if (profileState.isLoading) {
                             Box(
@@ -395,15 +406,6 @@ fun NutraAppRoot(
                         }
                     }
                 }
-
-                // Solid status bar backdrop so scrolled content never collides with system icons
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .windowInsetsTopHeight(WindowInsets.statusBars)
-                        .background(NutraTheme.colors.background)
-                        .align(Alignment.TopCenter),
-                )
 
                 AnimatedVisibility(
                     visible = !showEditBodyProfile,
@@ -437,6 +439,10 @@ private fun TabSlotBox(
         animationSpec = tween(durationMillis = 150),
         label = "tabAlpha",
     )
+    // Only invalidate layout when crossing visibility threshold, keeping per-frame fade GPU-only.
+    val shouldLayoutState = remember(isSelected) {
+        derivedStateOf { isSelected || alphaState.value > 0.01f }
+    }
 
     val baseModifier = Modifier
         .fillMaxSize()
@@ -444,8 +450,7 @@ private fun TabSlotBox(
         .focusProperties { canFocus = isSelected }
         .graphicsLayer { alpha = alphaState.value }
         .layout { measurable, constraints ->
-            val shouldLayout = isSelected || alphaState.value > 0.01f
-            if (!shouldLayout) {
+            if (!shouldLayoutState.value) {
                 layout(0, 0) {}
             } else {
                 val placeable = measurable.measure(constraints)
@@ -481,7 +486,7 @@ private fun TabSlotBox(
 }
 
 /**
- * Centered floating pill bottom bar over a soft vertical fade scrim.
+ * Centered floating pill bottom bar over a soft vertical fade scrim with a sliding active pill indicator.
  */
 @Composable
 private fun NutraBottomBar(
@@ -491,6 +496,7 @@ private fun NutraBottomBar(
 ) {
     val haptic = LocalHapticFeedback.current
     val colors = NutraTheme.colors
+    val layoutDirection = LocalLayoutDirection.current
     val shadowElevation = if (colors.isDark) 0.dp else 6.dp
     val borderStroke = remember(colors.isDark, colors.segmentThumb, colors.divider) {
         if (colors.isDark) {
@@ -506,6 +512,12 @@ private fun NutraBottomBar(
             1f to colors.background,
         )
     }
+    val activePillColor = if (colors.isDark) colors.segmentThumb.copy(alpha = 0.65f) else colors.surfaceMuted
+    val animatedIndexState = animateFloatAsState(
+        targetValue = selectedTab.ordinal.toFloat(),
+        animationSpec = spring(dampingRatio = 0.85f, stiffness = 420f),
+        label = "navPillIndex",
+    )
 
     Box(
         modifier = modifier
@@ -528,7 +540,23 @@ private fun NutraBottomBar(
             Row(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 8.dp),
+                    .padding(horizontal = 6.dp, vertical = 6.dp)
+                    .drawBehind {
+                        val count = PrimaryDestination.entries.size
+                        val slotWidth = size.width / count.toFloat()
+                        val visualIndex = if (layoutDirection == LayoutDirection.Rtl) {
+                            (count - 1) - animatedIndexState.value
+                        } else {
+                            animatedIndexState.value
+                        }
+                        val corner = CornerRadius(size.height / 2f, size.height / 2f)
+                        drawRoundRect(
+                            color = activePillColor,
+                            topLeft = Offset(visualIndex * slotWidth, 0f),
+                            size = Size(slotWidth, size.height),
+                            cornerRadius = corner,
+                        )
+                    },
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 PrimaryDestination.entries.forEach { dest ->
@@ -538,13 +566,18 @@ private fun NutraBottomBar(
                         animationSpec = tween(180),
                         label = "navTint",
                     )
+                    val iconScaleState = animateFloatAsState(
+                        targetValue = if (selected) 1.06f else 1f,
+                        animationSpec = spring(dampingRatio = 0.72f, stiffness = 500f),
+                        label = "navIconScale",
+                    )
                     Column(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
-                            .padding(vertical = 4.dp)
                             .clip(NutraTheme.shapes.pill)
-                            .clickable(
+                            .selectable(
+                                selected = selected,
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null,
                                 role = Role.Tab,
@@ -561,9 +594,15 @@ private fun NutraBottomBar(
                             imageVector = dest.iconVector(selected),
                             contentDescription = dest.title,
                             tint = tint,
-                            modifier = Modifier.size(24.dp),
+                            modifier = Modifier
+                                .size(22.dp)
+                                .graphicsLayer {
+                                    val s = iconScaleState.value
+                                    scaleX = s
+                                    scaleY = s
+                                },
                         )
-                        Spacer(Modifier.height(4.dp))
+                        Spacer(Modifier.height(3.dp))
                         Text(
                             text = dest.title,
                             style = NutraTheme.typography.overline.copy(letterSpacing = NutraTheme.typography.caption.letterSpacing),

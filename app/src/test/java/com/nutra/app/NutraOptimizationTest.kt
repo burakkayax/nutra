@@ -2,20 +2,30 @@ package com.nutra.app
 
 import com.nutra.app.core.database.FoodItemEntity
 import com.nutra.app.core.designsystem.NutraFormatters
+import com.nutra.app.core.network.GeminiAiService
 import com.nutra.app.core.network.OpenFoodFactsService
 import com.nutra.app.domain.model.AppResult
+import com.nutra.app.domain.model.ComboFoodEntry
+import com.nutra.app.domain.model.DailyNutritionSummary
 import com.nutra.app.domain.model.FoodCategory
 import com.nutra.app.domain.model.FoodItem
+import com.nutra.app.domain.model.MacroGoals
 import com.nutra.app.domain.model.MealLogItem
+import com.nutra.app.domain.model.MealSummary
 import com.nutra.app.domain.model.MealType
 import com.nutra.app.domain.model.ServingUnit
+import com.nutra.app.domain.model.SmartComboSuggestion
 import com.nutra.app.domain.usecase.ContextualMealRankerAndComboEngine
 import com.nutra.app.domain.usecase.TurkishTextNormalizer
+import com.nutra.app.feature.analytics.AnalyticsUiState
+import com.nutra.app.feature.dashboard.DashboardUiState
 import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.DayOfWeek
 import java.time.LocalDate
 
 class NutraOptimizationTest {
@@ -158,5 +168,86 @@ class NutraOptimizationTest {
             engine.rankFoodsForMeal(foods, logs, MealType.BREAKFAST, "tavuk", FoodCategory.ALL),
             engine.rankFoodsWithStats(foods, stats, MealType.BREAKFAST, "tavuk", FoodCategory.ALL),
         )
+    }
+
+    @Test
+    fun geminiService_extractStructuredTextSkipsThoughtPartsAndStripsMarkdownFences() {
+        val service = GeminiAiService(OkHttpClient())
+        val responseWithThought = """
+            {
+              "candidates": [
+                {
+                  "content": {
+                    "parts": [
+                      { "thought": true, "text": "Let me estimate the plate macros carefully..." },
+                      { "text": "```json\n{\"items\":[{\"name\":\"Yumurta\"}]}\n```" }
+                    ]
+                  }
+                }
+              ]
+            }
+        """.trimIndent()
+
+        assertEquals(
+            "{\"items\":[{\"name\":\"Yumurta\"}]}",
+            service.extractStructuredText(responseWithThought),
+        )
+
+        val thoughtOnlyResponse = """
+            {
+              "candidates": [
+                {
+                  "content": {
+                    "parts": [
+                      { "thought": true, "text": "Internal reasoning only" }
+                    ]
+                  }
+                }
+              ]
+            }
+        """.trimIndent()
+        assertNull(service.extractStructuredText(thoughtOnlyResponse))
+    }
+
+    @Test
+    fun precomputedNutritionSummariesAndSmartComboTotalsAreAccurate() {
+        val log1 = MealLogItem(1L, "2026-11-19", MealType.BREAKFAST, 1L, "Yumurta", "1 Adet", 2f, 100f, 155, 12.6f, 1.1f, 10.6f, 100L)
+        val log2 = MealLogItem(2L, "2026-11-19", MealType.BREAKFAST, 2L, "Peynir", "1 Dilim", 1f, 30f, 87, 5.2f, 0.5f, 7.0f, 200L)
+        val breakfast = MealSummary(MealType.BREAKFAST, listOf(log1, log2))
+        val lunch = MealSummary(
+            MealType.LUNCH,
+            listOf(MealLogItem(3L, "2026-11-19", MealType.LUNCH, 3L, "Tavuk", "1 Gram", 150f, 150f, 248, 46.5f, 0f, 5.4f, 300L)),
+        )
+        val daily = DailyNutritionSummary("2026-11-19", MacroGoals(), listOf(breakfast, lunch), 1200)
+
+        assertEquals(242, breakfast.totalCalories)
+        assertEquals(17.8f, breakfast.totalProtein, 0.01f)
+        assertEquals(490, daily.consumedCalories)
+        assertEquals(64.3f, daily.consumedProtein, 0.01f)
+        assertEquals(1.6f, daily.consumedCarbs, 0.01f)
+        assertEquals(23.0f, daily.consumedFat, 0.01f)
+
+        val combo = SmartComboSuggestion(
+            id = "c1",
+            title = "Kahvaltı",
+            subtitle = "Sık",
+            items = listOf(
+                ComboFoodEntry(1L, "Yumurta", "1 Adet", 1f, 50f, 78, 6.3f, 0.6f, 5.3f),
+                ComboFoodEntry(2L, "Peynir", "1 Dilim", 1f, 30f, 87, 5.2f, 0.5f, 7.0f),
+            ),
+            coOccurrenceCount = 3,
+        )
+        assertEquals(165, combo.totalCalories)
+        assertEquals("Yumurta · Peynir", combo.itemsPreview)
+    }
+
+    @Test
+    fun uiStates_haveValidDefaultsForWeekStartAndEmptyAnalytics() {
+        val dashboard = DashboardUiState()
+        assertEquals(DayOfWeek.MONDAY, dashboard.weekStart.dayOfWeek)
+
+        val analytics = AnalyticsUiState()
+        assertNull(analytics.activeDayPoint)
+        assertNull(analytics.activeWaterDayPoint)
     }
 }

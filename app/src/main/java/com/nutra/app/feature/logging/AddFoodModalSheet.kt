@@ -45,6 +45,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -67,6 +68,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -76,10 +78,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -103,6 +108,7 @@ import com.nutra.app.core.designsystem.NutraModalSheet
 import com.nutra.app.core.designsystem.NutraSectionHeader
 import com.nutra.app.core.designsystem.NutraSegmentedControl
 import com.nutra.app.core.designsystem.NutraSelectionIndicator
+import com.nutra.app.core.designsystem.NutraSnackbarHost
 import com.nutra.app.core.designsystem.NutraStepperButton
 import com.nutra.app.core.designsystem.NutraTextField
 import com.nutra.app.core.designsystem.NutraTheme
@@ -113,11 +119,8 @@ import com.nutra.app.domain.model.SmartComboSuggestion
 import com.nutra.app.feature.dashboard.CustomFoodDraft
 import com.nutra.app.feature.dashboard.LoggingSheetUiState
 import com.nutra.app.feature.dashboard.LoggingTabMode
+import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
-
-private fun formatInt(value: Int): String = NutraFormatters.formatInt(value)
-
-private fun formatMacro(value: Float): String = NutraFormatters.formatMacroGrams(value)
 
 @Composable
 private fun sheetCardContainerColor(): Color {
@@ -145,6 +148,7 @@ fun AddFoodModalSheet(
     state: LoggingSheetUiState,
     searchQuery: String,
     onDismiss: () -> Unit,
+    onDismissSheetFeedback: () -> Unit,
     onSelectMealType: (MealType) -> Unit,
     onSelectTab: (LoggingTabMode) -> Unit,
     onSearchQueryChange: (String) -> Unit,
@@ -171,6 +175,13 @@ fun AddFoodModalSheet(
     val portionFood = state.selectedFoodForPortion
     val showSmartCombos = state.shouldShowSmartCombos
 
+    LaunchedEffect(state.sheetFeedbackEventId, state.sheetFeedbackMessage) {
+        if (state.sheetFeedbackMessage != null) {
+            delay(2800)
+            onDismissSheetFeedback()
+        }
+    }
+
     LaunchedEffect(state.activeLoggingMealType, state.selectedCategory, state.isSearchActive) {
         if (catalogListState.firstVisibleItemIndex > 0 || catalogListState.firstVisibleItemScrollOffset > 0) {
             catalogListState.scrollToItem(0)
@@ -193,12 +204,13 @@ fun AddFoodModalSheet(
         BackHandler(enabled = portionFood != null) {
             onClosePortionPicker()
         }
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .fillMaxHeight(0.92f)
                 .imePadding(),
         ) {
+            Column(modifier = Modifier.fillMaxSize()) {
             // Sheet header
             Row(
                 modifier = Modifier
@@ -342,6 +354,16 @@ fun AddFoodModalSheet(
                     }
                 }
             }
+            }
+
+            NutraSnackbarHost(
+                visible = state.sheetFeedbackMessage != null && portionFood == null,
+                message = state.sheetFeedbackMessage.orEmpty(),
+                icon = Icons.Rounded.Check,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(horizontal = NutraTheme.spacing.screen, vertical = 14.dp),
+            )
         }
     }
 }
@@ -358,7 +380,7 @@ private fun MealSelectorDropdownPill(
 ) {
     val haptic = LocalHapticFeedback.current
     var expanded by remember { mutableStateOf(false) }
-    val arrowRotation by animateFloatAsState(
+    val arrowRotationState = animateFloatAsState(
         targetValue = if (expanded) 180f else 0f,
         animationSpec = tween(180),
         label = "mealDropdownArrow",
@@ -388,7 +410,7 @@ private fun MealSelectorDropdownPill(
                 tint = NutraTheme.colors.textPrimary,
                 modifier = Modifier
                     .size(18.dp)
-                    .graphicsLayer { rotationZ = arrowRotation },
+                    .graphicsLayer { rotationZ = arrowRotationState.value },
             )
             Text(
                 text = activeMeal.title,
@@ -499,6 +521,7 @@ private fun CatalogSearchField(
     searchQuery: String,
     onSearchQueryChange: (String) -> Unit,
 ) {
+    val keyboardController = LocalSoftwareKeyboardController.current
     NutraTextField(
         value = searchQuery,
         onValueChange = onSearchQueryChange,
@@ -519,6 +542,9 @@ private fun CatalogSearchField(
             null
         },
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+        keyboardActions = KeyboardActions(
+            onSearch = { keyboardController?.hide() },
+        ),
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = NutraTheme.spacing.screen),
@@ -530,14 +556,23 @@ private fun CatalogCategoryChips(
     selectedCategory: FoodCategory,
     onSelectCategory: (FoodCategory) -> Unit,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = NutraTheme.spacing.screen),
+    val chipsListState = rememberLazyListState()
+    LaunchedEffect(selectedCategory) {
+        val index = FoodCategory.entries.indexOf(selectedCategory)
+        if (index >= 0) {
+            chipsListState.animateScrollToItem(index)
+        }
+    }
+    LazyRow(
+        state = chipsListState,
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(horizontal = NutraTheme.spacing.screen),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        FoodCategory.entries.forEach { cat ->
+        items(
+            items = FoodCategory.entries,
+            key = { it.name },
+        ) { cat ->
             NutraChip(
                 text = cat.title,
                 selected = cat == selectedCategory,
@@ -611,14 +646,14 @@ private fun CatalogFoodResultsList(
                                             .padding(end = 8.dp),
                                     )
                                     NutraBadge(
-                                        text = "${formatInt(combo.totalCalories)} kcal",
+                                        text = "${NutraFormatters.formatInt(combo.totalCalories)} kcal",
                                         color = NutraTheme.colors.accent,
                                         container = NutraTheme.colors.accentSoft,
                                     )
                                 }
 
                                 Text(
-                                    text = combo.items.joinToString(" · ") { it.foodName },
+                                    text = combo.itemsPreview,
                                     style = NutraTheme.typography.bodySmall,
                                     color = NutraTheme.colors.textSecondary,
                                     minLines = 2,
@@ -628,13 +663,11 @@ private fun CatalogFoodResultsList(
 
                                 NutraButton(
                                     text = "Beraber ekle",
-                                    onClick = {
-                                        haptic.performHapticFeedback(HapticFeedbackType.Confirm)
-                                        onLogSmartCombo(combo)
-                                    },
+                                    onClick = { onLogSmartCombo(combo) },
                                     style = NutraButtonStyle.Primary,
                                     size = NutraButtonSize.Small,
                                     leadingIcon = Icons.Rounded.Add,
+                                    hapticFeedback = HapticFeedbackType.Confirm,
                                     modifier = Modifier.fillMaxWidth(),
                                 )
                             }
@@ -660,7 +693,43 @@ private fun CatalogFoodResultsList(
             }
         }
 
-        if (!isCatalogLoading && rankedFoods.isEmpty()) {
+        if (isCatalogLoading && rankedFoods.isEmpty()) {
+            items(count = 5, key = { "catalog_skeleton_$it" }, contentType = { "skeleton" }) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = NutraTheme.spacing.screen, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(0.55f)
+                                .height(14.dp)
+                                .clip(NutraTheme.shapes.pill)
+                                .background(NutraTheme.colors.surfaceMuted),
+                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(0.75f)
+                                .height(11.dp)
+                                .clip(NutraTheme.shapes.pill)
+                                .background(NutraTheme.colors.surfaceMuted),
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(NutraTheme.shapes.pill)
+                            .background(NutraTheme.colors.surfaceMuted),
+                    )
+                }
+            }
+        } else if (!isCatalogLoading && rankedFoods.isEmpty()) {
             item(key = "empty_catalog", contentType = "empty_state") {
                 NutraEmptyState(
                     icon = NutraIcons.SearchOff,
@@ -681,7 +750,7 @@ private fun CatalogFoodResultsList(
                     food.defaultUnitLabel,
                 ) {
                     val defaultCal = food.caloriesForGrams(food.defaultUnitGrams)
-                    "${food.defaultUnitLabel} (${food.defaultUnitGrams.roundToInt()} g) · ${formatInt(defaultCal)} kcal"
+                    "${food.defaultUnitLabel} (${food.defaultUnitGrams.roundToInt()} g) · ${NutraFormatters.formatInt(defaultCal)} kcal"
                 }
                 val macroLine = remember(
                     food.id,
@@ -749,10 +818,7 @@ private fun CatalogFoodResultsList(
                     NutraIconButton(
                         icon = Icons.Rounded.Add,
                         contentDescription = "${food.name} seç",
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onSelectFood(food)
-                        },
+                        onClick = { onSelectFood(food) },
                         size = 40.dp,
                         iconSize = 20.dp,
                         containerColor = NutraTheme.colors.surfaceMuted,
@@ -781,7 +847,10 @@ private fun PortionPickerContent(
     modifier: Modifier = Modifier,
 ) {
     val haptic = LocalHapticFeedback.current
-    val units = remember(food.id) { food.allUnits }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val units = remember(food.id, food.defaultUnitLabel, food.defaultUnitGrams, food.alternateUnits) {
+        food.allUnits
+    }
     var selectedUnitIndex by remember(food.id) { mutableIntStateOf(0) }
     var multiplier by remember(food.id) { mutableFloatStateOf(1f) }
     var customGramInput by remember(food.id) { mutableStateOf("") }
@@ -859,7 +928,7 @@ private fun PortionPickerContent(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Text(
-                        text = formatInt(liveCalories),
+                        text = NutraFormatters.formatInt(liveCalories),
                         style = NutraTheme.typography.display,
                         color = NutraTheme.colors.textPrimary,
                         modifier = Modifier.alignByBaseline(),
@@ -878,9 +947,9 @@ private fun PortionPickerContent(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    MacroDataColumn("Protein", "${formatMacro(liveProtein)} g", NutraTheme.colors.protein)
-                    MacroDataColumn("Karbonhidrat", "${formatMacro(liveCarbs)} g", NutraTheme.colors.carbs)
-                    MacroDataColumn("Yağ", "${formatMacro(liveFat)} g", NutraTheme.colors.fat)
+                    MacroDataColumn("Protein", "${NutraFormatters.formatMacroGrams(liveProtein)} g", NutraTheme.colors.protein)
+                    MacroDataColumn("Karbonhidrat", "${NutraFormatters.formatMacroGrams(liveCarbs)} g", NutraTheme.colors.carbs)
+                    MacroDataColumn("Yağ", "${NutraFormatters.formatMacroGrams(liveFat)} g", NutraTheme.colors.fat)
                 }
             }
 
@@ -903,7 +972,7 @@ private fun PortionPickerContent(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable(role = Role.RadioButton) {
+                                .selectable(selected = isSelected, role = Role.RadioButton) {
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                     selectedUnitIndex = idx
                                     customGramInput = if (unit.label == "1 Gram") {
@@ -946,7 +1015,20 @@ private fun PortionPickerContent(
 
             // Quantity control
             if (isRawGramMode) {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        listOf(50, 100, 150, 200).forEach { gramPreset ->
+                            CompactMultiplierPill(
+                                text = "$gramPreset g",
+                                selected = parsedCustomGrams?.roundToInt() == gramPreset,
+                                onClick = { customGramInput = gramPreset.toString() },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
                     NutraTextField(
                         value = customGramInput,
                         onValueChange = {
@@ -956,7 +1038,13 @@ private fun PortionPickerContent(
                         placeholder = "100",
                         suffix = "g",
                         isError = showRawGramError,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Decimal,
+                            imeAction = ImeAction.Done,
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onDone = { keyboardController?.hide() },
+                        ),
                     )
                     if (showRawGramError) {
                         Text(
@@ -1061,9 +1149,8 @@ private fun PortionPickerContent(
                 modifier = Modifier.weight(0.32f),
             )
             NutraButton(
-                text = "Ekle · ${formatInt(liveCalories)} kcal",
+                text = "Ekle · ${NutraFormatters.formatInt(liveCalories)} kcal",
                 onClick = {
-                    haptic.performHapticFeedback(HapticFeedbackType.Confirm)
                     if (isRawGramMode) {
                         onConfirm("1 Gram", 1f, effectiveGrams)
                     } else {
@@ -1074,6 +1161,7 @@ private fun PortionPickerContent(
                 size = NutraButtonSize.Medium,
                 leadingIcon = Icons.Rounded.Check,
                 enabled = isCustomGramValid,
+                hapticFeedback = HapticFeedbackType.Confirm,
                 modifier = Modifier.weight(0.68f),
             )
         }
@@ -1130,7 +1218,7 @@ private fun CompactMultiplierPill(
             .height(40.dp)
             .clip(NutraTheme.shapes.pill)
             .drawBehind { drawRect(bgState.value) }
-            .clickable(role = Role.Tab) {
+            .selectable(selected = selected, role = Role.Tab) {
                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 onClick()
             },
@@ -1166,8 +1254,17 @@ private fun AiAnalyzeTab(
         }
     }
 
-    val selectedCount = state.aiAnalyzedItems.count { it.included }
-    val totalSelectedCalories = state.aiAnalyzedItems.filter { it.included }.sumOf { it.effectiveCalories }
+    val (selectedCount, totalSelectedCalories) = remember(state.aiAnalyzedItems) {
+        var count = 0
+        var cals = 0
+        for (item in state.aiAnalyzedItems) {
+            if (item.included) {
+                count++
+                cals += item.effectiveCalories
+            }
+        }
+        count to cals
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Column(
@@ -1209,6 +1306,20 @@ private fun AiAnalyzeTab(
                 value = state.aiPromptText,
                 onValueChange = onAiPromptChange,
                 placeholder = "Örn: 2 haşlanmış yumurta, 40g beyaz peynir ve 1 dilim ekmek",
+                trailing = if (state.aiPromptText.isNotEmpty()) {
+                    {
+                        NutraIconButton(
+                            icon = Icons.Rounded.Close,
+                            contentDescription = "Temizle",
+                            onClick = { onAiPromptChange("") },
+                            size = 36.dp,
+                            iconSize = 16.dp,
+                            containerColor = NutraTheme.colors.surfaceElevated,
+                        )
+                    }
+                } else {
+                    null
+                },
                 singleLine = false,
                 minLines = 3,
                 maxLines = 5,
@@ -1243,14 +1354,11 @@ private fun AiAnalyzeTab(
             ) {
                 NutraButton(
                     text = "Analiz et",
-                    onClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onRunAiAnalysis()
-                    },
+                    onClick = onRunAiAnalysis,
                     style = NutraButtonStyle.Primary,
                     size = NutraButtonSize.Medium,
                     loading = state.aiAnalyzing,
-                    enabled = !state.aiAnalyzing,
+                    enabled = !state.aiAnalyzing && state.aiPromptText.isNotBlank(),
                     modifier = Modifier.weight(1f),
                 )
                 NutraButton(
@@ -1292,65 +1400,70 @@ private fun AiAnalyzeTab(
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     val pillUnselected = if (NutraTheme.colors.isDark) NutraTheme.colors.segmentThumb else NutraTheme.colors.surfaceMuted
                     state.aiAnalyzedItems.forEach { item ->
-                        NutraCard(
-                            color = sheetCardContainerColor(),
-                            shape = NutraTheme.shapes.md,
-                            contentPadding = PaddingValues(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp),
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable(role = Role.Checkbox) { onToggleIncluded(item.id) },
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
+                        key(item.id) {
+                            NutraCard(
+                                color = sheetCardContainerColor(),
+                                shape = NutraTheme.shapes.md,
+                                contentPadding = PaddingValues(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                                modifier = Modifier.fillMaxWidth(),
                             ) {
-                                NutraSelectionIndicator(
-                                    selected = item.included,
-                                    size = 22.dp,
-                                    iconSize = 13.dp,
-                                )
-
-                                Column(
-                                    modifier = Modifier.weight(1f),
-                                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .selectable(selected = item.included, role = Role.Checkbox) {
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            onToggleIncluded(item.id)
+                                        },
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
                                 ) {
-                                    Text(
-                                        text = item.name,
-                                        style = NutraTheme.typography.titleSmall,
-                                        color = if (item.included) NutraTheme.colors.textPrimary else NutraTheme.colors.textTertiary,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
+                                    NutraSelectionIndicator(
+                                        selected = item.included,
+                                        size = 22.dp,
+                                        iconSize = 13.dp,
                                     )
+
+                                    Column(
+                                        modifier = Modifier.weight(1f),
+                                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                                    ) {
+                                        Text(
+                                            text = item.name,
+                                            style = NutraTheme.typography.titleSmall,
+                                            color = if (item.included) NutraTheme.colors.textPrimary else NutraTheme.colors.textTertiary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        Text(
+                                            text = "${item.unitLabel} (${item.effectiveGrams.roundToInt()} g) · P ${NutraFormatters.formatMacroGrams(item.effectiveProtein)}g · K ${NutraFormatters.formatMacroGrams(item.effectiveCarbs)}g · Y ${NutraFormatters.formatMacroGrams(item.effectiveFat)}g",
+                                            style = NutraTheme.typography.caption,
+                                            color = NutraTheme.colors.textSecondary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+
                                     Text(
-                                        text = "${item.unitLabel} (${item.effectiveGrams.roundToInt()} g) · P ${formatMacro(item.effectiveProtein)}g · K ${formatMacro(item.effectiveCarbs)}g · Y ${formatMacro(item.effectiveFat)}g",
-                                        style = NutraTheme.typography.caption,
-                                        color = NutraTheme.colors.textSecondary,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
+                                        text = "${NutraFormatters.formatInt(item.effectiveCalories)} kcal",
+                                        style = NutraTheme.typography.numberSmall,
+                                        color = if (item.included) NutraTheme.colors.textPrimary else NutraTheme.colors.textTertiary,
                                     )
                                 }
 
-                                Text(
-                                    text = "${formatInt(item.effectiveCalories)} kcal",
-                                    style = NutraTheme.typography.numberSmall,
-                                    color = if (item.included) NutraTheme.colors.textPrimary else NutraTheme.colors.textTertiary,
-                                )
-                            }
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                listOf(0.5f, 1f, 1.5f, 2f).forEach { mult ->
-                                    CompactMultiplierPill(
-                                        text = "${if (mult % 1f == 0f) mult.toInt() else mult}x",
-                                        selected = item.multiplier == mult,
-                                        onClick = { onUpdateMultiplier(item.id, mult) },
-                                        modifier = Modifier.weight(1f),
-                                        unselectedColor = pillUnselected,
-                                    )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    listOf(0.5f, 1f, 1.5f, 2f).forEach { mult ->
+                                        CompactMultiplierPill(
+                                            text = "${if (mult % 1f == 0f) mult.toInt() else mult}x",
+                                            selected = item.multiplier == mult,
+                                            onClick = { onUpdateMultiplier(item.id, mult) },
+                                            modifier = Modifier.weight(1f),
+                                            unselectedColor = pillUnselected,
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -1370,15 +1483,13 @@ private fun AiAnalyzeTab(
                 NutraDivider()
                 NutraBottomActionBar(includeNavigationInsets = false) {
                     NutraButton(
-                        text = "${mealType.title} öğününe ekle · ${formatInt(totalSelectedCalories)} kcal",
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.Confirm)
-                            onCommitItems()
-                        },
+                        text = "${mealType.title} öğününe ekle · ${NutraFormatters.formatInt(totalSelectedCalories)} kcal",
+                        onClick = onCommitItems,
                         style = NutraButtonStyle.Primary,
                         size = NutraButtonSize.Medium,
                         leadingIcon = Icons.Rounded.Check,
                         enabled = selectedCount > 0,
+                        hapticFeedback = HapticFeedbackType.Confirm,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
@@ -1550,13 +1661,15 @@ private fun CustomFoodCreatorTab(
         fatPerServing: Float,
     ) -> Unit,
 ) {
-    val haptic = LocalHapticFeedback.current
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
 
     val parsedGrams = NutraFormatters.parseLocalizedFloat(draft.unitGrams)
     val parsedCalories = draft.calories.toIntOrNull()
     val parsedProtein = NutraFormatters.parseLocalizedFloat(draft.protein) ?: 0f
     val parsedCarbs = NutraFormatters.parseLocalizedFloat(draft.carbs) ?: 0f
     val parsedFat = NutraFormatters.parseLocalizedFloat(draft.fat) ?: 0f
+    val macroEstimatedCalories = ((parsedProtein * 4f) + (parsedCarbs * 4f) + (parsedFat * 9f)).roundToInt()
     val isGramsInvalid = draft.unitGrams.isNotEmpty() && (parsedGrams == null || parsedGrams !in 1f..5000f)
     val isCaloriesInvalid = draft.calories.isNotEmpty() && (parsedCalories == null || parsedCalories !in 0..20000)
     val isFormValid = draft.name.isNotBlank() &&
@@ -1564,6 +1677,21 @@ private fun CustomFoodCreatorTab(
         parsedCalories in 0..20000 &&
         parsedGrams != null &&
         parsedGrams in 1f..5000f
+
+    fun submitCustomFood() {
+        val safeGrams = parsedGrams ?: return
+        val safeCalories = parsedCalories ?: return
+        if (!isFormValid) return
+        onCreateAndLog(
+            draft.name,
+            draft.unitLabel,
+            safeGrams,
+            safeCalories,
+            parsedProtein,
+            parsedCarbs,
+            parsedFat,
+        )
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Column(
@@ -1584,6 +1712,8 @@ private fun CustomFoodCreatorTab(
                 onValueChange = { onDraftChange(draft.copy(name = it)) },
                 label = "Besin veya yemek adı",
                 placeholder = "Örn: Anne köftesi",
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Next) }),
             )
 
             Row(
@@ -1595,6 +1725,8 @@ private fun CustomFoodCreatorTab(
                     onValueChange = { onDraftChange(draft.copy(unitLabel = it)) },
                     label = "Porsiyon adı",
                     placeholder = "1 Porsiyon",
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                    keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Next) }),
                     modifier = Modifier.weight(1.2f),
                 )
                 NutraTextField(
@@ -1606,7 +1738,11 @@ private fun CustomFoodCreatorTab(
                     placeholder = "100",
                     suffix = "g",
                     isError = isGramsInvalid,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Decimal,
+                        imeAction = ImeAction.Next,
+                    ),
+                    keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Next) }),
                     modifier = Modifier.weight(0.8f),
                 )
             }
@@ -1629,7 +1765,11 @@ private fun CustomFoodCreatorTab(
                 placeholder = "240",
                 suffix = "kcal",
                 isError = isCaloriesInvalid,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Number,
+                    imeAction = ImeAction.Next,
+                ),
+                keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Next) }),
             )
 
             if (isCaloriesInvalid) {
@@ -1654,7 +1794,11 @@ private fun CustomFoodCreatorTab(
                     placeholder = "0",
                     suffix = "g",
                     compact = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Decimal,
+                        imeAction = ImeAction.Next,
+                    ),
+                    keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Next) }),
                     modifier = Modifier.weight(1f),
                 )
                 NutraTextField(
@@ -1666,7 +1810,11 @@ private fun CustomFoodCreatorTab(
                     placeholder = "0",
                     suffix = "g",
                     compact = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Decimal,
+                        imeAction = ImeAction.Next,
+                    ),
+                    keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Next) }),
                     modifier = Modifier.weight(1f),
                 )
                 NutraTextField(
@@ -1678,8 +1826,26 @@ private fun CustomFoodCreatorTab(
                     placeholder = "0",
                     suffix = "g",
                     compact = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Decimal,
+                        imeAction = ImeAction.Done,
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onDone = {
+                            keyboardController?.hide()
+                            if (isFormValid) submitCustomFood()
+                        },
+                    ),
                     modifier = Modifier.weight(1f),
+                )
+            }
+
+            if (macroEstimatedCalories > 0) {
+                Text(
+                    text = "Makro enerji karşılığı: ~${NutraFormatters.formatInt(macroEstimatedCalories)} kcal",
+                    style = NutraTheme.typography.caption,
+                    color = NutraTheme.colors.textTertiary,
+                    modifier = Modifier.padding(start = 4.dp),
                 )
             }
 
@@ -1690,23 +1856,11 @@ private fun CustomFoodCreatorTab(
         NutraBottomActionBar(includeNavigationInsets = false) {
             NutraButton(
                 text = "Kaydet ve ${mealType.title} öğününe ekle",
-                onClick = {
-                    val safeGrams = parsedGrams ?: return@NutraButton
-                    val safeCalories = parsedCalories ?: return@NutraButton
-                    haptic.performHapticFeedback(HapticFeedbackType.Confirm)
-                    onCreateAndLog(
-                        draft.name,
-                        draft.unitLabel,
-                        safeGrams,
-                        safeCalories,
-                        parsedProtein,
-                        parsedCarbs,
-                        parsedFat,
-                    )
-                },
+                onClick = ::submitCustomFood,
                 style = NutraButtonStyle.Primary,
                 size = NutraButtonSize.Medium,
                 enabled = isFormValid,
+                hapticFeedback = HapticFeedbackType.Confirm,
                 modifier = Modifier.fillMaxWidth(),
             )
         }

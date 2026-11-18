@@ -1,6 +1,7 @@
 package com.nutra.app.domain.model
 
 import androidx.compose.runtime.Immutable
+import com.nutra.app.core.designsystem.NutraFormatters
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
 import kotlin.math.roundToInt
@@ -158,20 +159,12 @@ data class MealLogItem(
     val fatGrams: Float,
     val timestampMillis: Long,
 ) {
-    val formattedQuantity: String
-        get() {
-            if (unitLabel == "1 Gram") {
-                return "${totalGrams.roundToInt()} g"
-            }
-            val multStr = if (multiplier % 1f == 0f) {
-                multiplier.toInt().toString()
-            } else {
-                String.format(java.util.Locale.US, "%.2f", multiplier)
-                    .trimEnd('0')
-                    .trimEnd('.')
-            }
-            return "${multStr}x $unitLabel (${totalGrams.roundToInt()} g)"
-        }
+    @Transient
+    val formattedQuantity: String = if (unitLabel == "1 Gram") {
+        "${totalGrams.roundToInt()} g"
+    } else {
+        "${NutraFormatters.formatMultiplier(multiplier)}x $unitLabel (${totalGrams.roundToInt()} g)"
+    }
 }
 
 @Immutable
@@ -207,10 +200,27 @@ data class MealSummary(
     val mealType: MealType,
     val items: List<MealLogItem>,
 ) {
-    val totalCalories: Int get() = items.sumOf { it.calories }
-    val totalProtein: Float get() = items.sumOf { it.proteinGrams.toDouble() }.toFloat()
-    val totalCarbs: Float get() = items.sumOf { it.carbsGrams.toDouble() }.toFloat()
-    val totalFat: Float get() = items.sumOf { it.fatGrams.toDouble() }.toFloat()
+    val totalCalories: Int
+    val totalProtein: Float
+    val totalCarbs: Float
+    val totalFat: Float
+
+    init {
+        var cal = 0
+        var p = 0.0
+        var c = 0.0
+        var f = 0.0
+        for (item in items) {
+            cal += item.calories
+            p += item.proteinGrams
+            c += item.carbsGrams
+            f += item.fatGrams
+        }
+        totalCalories = cal
+        totalProtein = p.toFloat()
+        totalCarbs = c.toFloat()
+        totalFat = f.toFloat()
+    }
 }
 
 @Immutable
@@ -220,10 +230,27 @@ data class DailyNutritionSummary(
     val meals: List<MealSummary>,
     val waterMl: Int,
 ) {
-    val consumedCalories: Int get() = meals.sumOf { it.totalCalories }
-    val consumedProtein: Float get() = meals.sumOf { it.totalProtein.toDouble() }.toFloat()
-    val consumedCarbs: Float get() = meals.sumOf { it.totalCarbs.toDouble() }.toFloat()
-    val consumedFat: Float get() = meals.sumOf { it.totalFat.toDouble() }.toFloat()
+    val consumedCalories: Int
+    val consumedProtein: Float
+    val consumedCarbs: Float
+    val consumedFat: Float
+
+    init {
+        var cal = 0
+        var p = 0.0
+        var c = 0.0
+        var f = 0.0
+        for (meal in meals) {
+            cal += meal.totalCalories
+            p += meal.totalProtein
+            c += meal.totalCarbs
+            f += meal.totalFat
+        }
+        consumedCalories = cal
+        consumedProtein = p.toFloat()
+        consumedCarbs = c.toFloat()
+        consumedFat = f.toFloat()
+    }
 }
 
 @Immutable
@@ -248,10 +275,29 @@ data class SmartComboSuggestion(
     val items: List<ComboFoodEntry>,
     val coOccurrenceCount: Int,
 ) {
-    val totalCalories: Int get() = items.sumOf { it.calories }
-    val totalProtein: Float get() = items.sumOf { it.proteinGrams.toDouble() }.toFloat()
-    val totalCarbs: Float get() = items.sumOf { it.carbsGrams.toDouble() }.toFloat()
-    val totalFat: Float get() = items.sumOf { it.fatGrams.toDouble() }.toFloat()
+    val totalCalories: Int
+    val totalProtein: Float
+    val totalCarbs: Float
+    val totalFat: Float
+    val itemsPreview: String
+
+    init {
+        var cal = 0
+        var p = 0.0
+        var c = 0.0
+        var f = 0.0
+        for (item in items) {
+            cal += item.calories
+            p += item.proteinGrams
+            c += item.carbsGrams
+            f += item.fatGrams
+        }
+        totalCalories = cal
+        totalProtein = p.toFloat()
+        totalCarbs = c.toFloat()
+        totalFat = f.toFloat()
+        itemsPreview = items.joinToString(" · ") { it.foodName }
+    }
 }
 
 @Immutable

@@ -9,3 +9,6 @@ HSPLcom/nutra/app/domain/model/**;->**(**)**
 HSPLcom/nutra/app/domain/repository/NutritionRepository;->**(**)**
 HSPLcom/nutra/app/domain/repository/NutritionRepository$**;->**(**)**
 HSPLcom/nutra/app/feature/dashboard/**;->**(**)**
+HSPLcom/nutra/app/feature/logging/**;->**(**)**
+HSPLcom/nutra/app/feature/analytics/**;->**(**)**
+HSPLcom/nutra/app/feature/profile/**;->**(**)**

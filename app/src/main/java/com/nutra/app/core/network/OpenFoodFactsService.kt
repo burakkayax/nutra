@@ -4,6 +4,7 @@ import com.nutra.app.domain.model.AppResult
 import com.nutra.app.domain.model.FoodCategory
 import com.nutra.app.domain.model.FoodItem
 import com.nutra.app.domain.model.ServingUnit
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -45,13 +46,15 @@ class OpenFoodFactsService @Inject constructor(
                 .get()
                 .build()
 
-            okHttpClient.newCall(request).execute().use { response ->
+            okHttpClient.newCall(request).await().use { response ->
                 if (!response.isSuccessful) {
                     return@withContext AppResult.Error("Barkod sunucusuna ulaşılamadı (Kod: ${response.code}).")
                 }
                 val bodyStr = response.body?.string().orEmpty()
                 parseProductResponse(cleaned, bodyStr)
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: IOException) {
             AppResult.Error("Barkod sorgulanırken internet bağlantısı kurulamadı. Yerel barkodları (örn. 8690526011012) çevrimdışı kullanabilirsiniz.", e)
         } catch (e: Exception) {

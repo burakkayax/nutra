@@ -13,10 +13,8 @@ import com.nutra.app.R
 
 val InterFontFamily = FontFamily(
     Font(R.font.inter_regular, FontWeight.Normal, FontStyle.Normal),
-    Font(R.font.inter_italic, FontWeight.Normal, FontStyle.Italic),
     Font(R.font.inter_semibold, FontWeight.SemiBold, FontStyle.Normal),
     Font(R.font.inter_bold, FontWeight.Bold, FontStyle.Normal),
-    Font(R.font.inter_semibold_italic, FontWeight.SemiBold, FontStyle.Italic),
 )
 
 private const val TABULAR = "tnum, cv05, ss01"

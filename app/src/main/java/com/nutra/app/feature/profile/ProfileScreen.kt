@@ -3,6 +3,7 @@ package com.nutra.app.feature.profile
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,13 +14,18 @@ import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -31,10 +37,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -43,6 +52,7 @@ import com.nutra.app.core.designsystem.NutraButton
 import com.nutra.app.core.designsystem.NutraButtonSize
 import com.nutra.app.core.designsystem.NutraButtonStyle
 import com.nutra.app.core.designsystem.NutraCard
+import com.nutra.app.core.designsystem.NutraChip
 import com.nutra.app.core.designsystem.NutraDialog
 import com.nutra.app.core.designsystem.NutraDivider
 import com.nutra.app.core.designsystem.NutraFormatters
@@ -64,9 +74,11 @@ import kotlinx.coroutines.delay
 import java.time.LocalDate
 import kotlin.math.roundToInt
 
-private fun formatInt(value: Int): String = NutraFormatters.formatInt(value)
-
-private fun formatKg(value: Float): String = NutraFormatters.formatKg(value)
+private val GEMINI_MODEL_PRESETS = listOf(
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-pro",
+)
 
 private enum class ProfileGoalField(
     val dialogTitle: String,
@@ -101,7 +113,6 @@ fun ProfileScreen(
     val profile = state.profile
     val goals = profile.goals
     val context = LocalContext.current
-    val haptic = LocalHapticFeedback.current
     val layoutDirection = LocalLayoutDirection.current
 
     var showGeminiDialog by remember { mutableStateOf(false) }
@@ -195,12 +206,12 @@ fun ProfileScreen(
                     ) {
                         BodyStatColumn(
                             label = "Mevcut",
-                            value = "${formatKg(profile.currentWeightKg)} kg",
+                            value = "${NutraFormatters.formatKg(profile.currentWeightKg)} kg",
                             modifier = Modifier.weight(1f),
                         )
                         BodyStatColumn(
                             label = "Hedef",
-                            value = "${formatKg(profile.targetWeightKg)} kg",
+                            value = "${NutraFormatters.formatKg(profile.targetWeightKg)} kg",
                             modifier = Modifier.weight(1f),
                         )
                         BodyStatColumn(
@@ -225,26 +236,18 @@ fun ProfileScreen(
                         actionLabel = "Oto hesapla",
                         actionIcon = Icons.Rounded.Refresh,
                         actionContainerColor = colors.surfaceElevated,
-                        onAction = {
-                            haptic.performHapticFeedback(HapticFeedbackType.Confirm)
-                            viewModel.recalculateWithMifflinStJeor()
-                        },
+                        actionHaptic = HapticFeedbackType.Confirm,
+                        onAction = viewModel::recalculateWithMifflinStJeor,
                     )
 
                     NutraCard(contentPadding = PaddingValues(horizontal = NutraTheme.spacing.card, vertical = NutraTheme.spacing.lg)) {
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             NutraMetricStepperRow(
                                 label = "Kalori",
-                                valueText = "${formatInt(goals.calories)} kcal",
+                                valueText = "${NutraFormatters.formatInt(goals.calories)} kcal",
                                 accentColor = colors.accent,
-                                onDecrement = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    viewModel.adjustCalorieGoal(-50)
-                                },
-                                onIncrement = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    viewModel.adjustCalorieGoal(50)
-                                },
+                                onDecrement = { viewModel.adjustCalorieGoal(-50) },
+                                onIncrement = { viewModel.adjustCalorieGoal(50) },
                                 onValueClick = { activeGoalField = ProfileGoalField.CALORIES },
                             )
                             NutraDivider()
@@ -252,14 +255,8 @@ fun ProfileScreen(
                                 label = "Protein",
                                 valueText = "${goals.proteinGrams} g",
                                 accentColor = colors.protein,
-                                onDecrement = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    viewModel.adjustProteinGoal(-5)
-                                },
-                                onIncrement = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    viewModel.adjustProteinGoal(5)
-                                },
+                                onDecrement = { viewModel.adjustProteinGoal(-5) },
+                                onIncrement = { viewModel.adjustProteinGoal(5) },
                                 onValueClick = { activeGoalField = ProfileGoalField.PROTEIN },
                             )
                             NutraDivider()
@@ -267,14 +264,8 @@ fun ProfileScreen(
                                 label = "Karbonhidrat",
                                 valueText = "${goals.carbsGrams} g",
                                 accentColor = colors.carbs,
-                                onDecrement = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    viewModel.adjustCarbsGoal(-5)
-                                },
-                                onIncrement = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    viewModel.adjustCarbsGoal(5)
-                                },
+                                onDecrement = { viewModel.adjustCarbsGoal(-5) },
+                                onIncrement = { viewModel.adjustCarbsGoal(5) },
                                 onValueClick = { activeGoalField = ProfileGoalField.CARBS },
                             )
                             NutraDivider()
@@ -282,29 +273,17 @@ fun ProfileScreen(
                                 label = "Yağ",
                                 valueText = "${goals.fatGrams} g",
                                 accentColor = colors.fat,
-                                onDecrement = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    viewModel.adjustFatGoal(-5)
-                                },
-                                onIncrement = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    viewModel.adjustFatGoal(5)
-                                },
+                                onDecrement = { viewModel.adjustFatGoal(-5) },
+                                onIncrement = { viewModel.adjustFatGoal(5) },
                                 onValueClick = { activeGoalField = ProfileGoalField.FAT },
                             )
                             NutraDivider()
                             NutraMetricStepperRow(
                                 label = "Su",
-                                valueText = "${formatInt(goals.waterMl)} ml",
+                                valueText = "${NutraFormatters.formatInt(goals.waterMl)} ml",
                                 accentColor = colors.water,
-                                onDecrement = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    viewModel.adjustWaterGoal(-250)
-                                },
-                                onIncrement = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    viewModel.adjustWaterGoal(250)
-                                },
+                                onDecrement = { viewModel.adjustWaterGoal(-250) },
+                                onIncrement = { viewModel.adjustWaterGoal(250) },
                                 onValueClick = { activeGoalField = ProfileGoalField.WATER },
                             )
                         }
@@ -412,11 +391,19 @@ fun ProfileScreen(
                                 )
                             },
                             trailing = {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                                    contentDescription = null,
-                                    tint = colors.textTertiary,
-                                )
+                                if (state.isBackupBusy) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(18.dp),
+                                        color = colors.accent,
+                                        strokeWidth = 2.dp,
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                                        contentDescription = null,
+                                        tint = colors.textTertiary,
+                                    )
+                                }
                             },
                             onClick = if (state.isBackupBusy) {
                                 null
@@ -438,11 +425,19 @@ fun ProfileScreen(
                                 )
                             },
                             trailing = {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                                    contentDescription = null,
-                                    tint = colors.textTertiary,
-                                )
+                                if (state.isBackupBusy) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(18.dp),
+                                        color = colors.accent,
+                                        strokeWidth = 2.dp,
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                                        contentDescription = null,
+                                        tint = colors.textTertiary,
+                                    )
+                                }
                             },
                             onClick = if (state.isBackupBusy) {
                                 null
@@ -475,7 +470,6 @@ fun ProfileScreen(
             initialModel = profile.geminiModel,
             onDismiss = { showGeminiDialog = false },
             onSave = { apiKey, model ->
-                haptic.performHapticFeedback(HapticFeedbackType.Confirm)
                 viewModel.saveGeminiConfig(apiKey, model)
                 showGeminiDialog = false
             },
@@ -549,6 +543,8 @@ private fun GeminiConfigDialog(
     onDismiss: () -> Unit,
     onSave: (apiKey: String, model: String) -> Unit,
 ) {
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
     var apiKeyInput by rememberSaveable(initialApiKey) { mutableStateOf(initialApiKey) }
     var modelInput by rememberSaveable(initialModel) { mutableStateOf(initialModel) }
 
@@ -585,6 +581,8 @@ private fun GeminiConfigDialog(
                     null
                 },
                 visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Next) }),
                 singleLine = true,
             )
             NutraTextField(
@@ -592,8 +590,29 @@ private fun GeminiConfigDialog(
                 onValueChange = { modelInput = it },
                 label = "Model",
                 placeholder = "gemini-2.5-flash",
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(
+                    onDone = {
+                        keyboardController?.hide()
+                        onSave(apiKeyInput, modelInput)
+                    },
+                ),
                 singleLine = true,
             )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                GEMINI_MODEL_PRESETS.forEach { preset ->
+                    NutraChip(
+                        text = preset,
+                        selected = modelInput.trim().equals(preset, ignoreCase = true),
+                        onClick = { modelInput = preset },
+                    )
+                }
+            }
         }
     }
 }

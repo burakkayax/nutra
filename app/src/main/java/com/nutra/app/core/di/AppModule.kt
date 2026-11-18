@@ -28,6 +28,19 @@ object AppModule {
         }
     }
 
+    val MIGRATION_2_3 = object : Migration(2, 3) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("DROP INDEX IF EXISTS `index_meal_logs_dateIso`")
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_meal_logs_dateIso_timestampMillis` ON `meal_logs` (`dateIso`, `timestampMillis`)",
+            )
+            db.execSQL("DROP INDEX IF EXISTS `index_weight_logs_dateIso`")
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_weight_logs_dateIso_timestampMillis` ON `weight_logs` (`dateIso`, `timestampMillis`)",
+            )
+        }
+    }
+
     @Provides
     @Singleton
     fun provideNutraDatabase(
@@ -37,19 +50,25 @@ object AppModule {
         NutraDatabase::class.java,
         "nutra_database.db",
     )
-        .addMigrations(MIGRATION_1_2)
+        .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
         .addCallback(
             object : RoomDatabase.Callback() {
                 override fun onCreate(db: SupportSQLiteDatabase) {
                     super.onCreate(db)
                     val entities = TurkishFoodSeedCatalog.toEntities()
-                    for (entity in entities) {
-                        db.insert("food_items", SQLiteDatabase.CONFLICT_REPLACE, entity.toContentValues())
+                    db.beginTransactionNonExclusive()
+                    try {
+                        for (entity in entities) {
+                            db.insert("food_items", SQLiteDatabase.CONFLICT_REPLACE, entity.toContentValues())
+                        }
+                        db.setTransactionSuccessful()
+                    } finally {
+                        db.endTransaction()
                     }
                 }
             },
         )
-        .fallbackToDestructiveMigration(dropAllTables = true)
+        .fallbackToDestructiveMigrationOnDowngrade(dropAllTables = true)
         .build()
 
     @Provides

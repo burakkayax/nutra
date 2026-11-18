@@ -43,17 +43,12 @@ data class NutraColors(
 
     // Data colors
     val protein: Color,
-    val proteinSoft: Color,
     val carbs: Color,
-    val carbsSoft: Color,
     val fat: Color,
-    val fatSoft: Color,
     val water: Color,
-    val waterSoft: Color,
 
     // Status
     val warning: Color,
-    val warningSoft: Color,
     val danger: Color,
     val dangerSoft: Color,
     val favorite: Color,
@@ -81,16 +76,11 @@ val LightNutraColors = NutraColors(
     onAccent = Color(0xFFFFFFFF),
 
     protein = Color(0xFFEF5F5B),
-    proteinSoft = Color(0xFFFDECEB),
     carbs = Color(0xFFF0A23B),
-    carbsSoft = Color(0xFFFDF1E1),
     fat = Color(0xFF6B7BF2),
-    fatSoft = Color(0xFFECEEFD),
     water = Color(0xFF2F9BEF),
-    waterSoft = Color(0xFFE5F2FD),
 
     warning = Color(0xFFE5822F),
-    warningSoft = Color(0xFFFCEEE2),
     danger = Color(0xFFE5484D),
     dangerSoft = Color(0xFFFCE9EA),
     favorite = Color(0xFFE5484D),
@@ -118,16 +108,11 @@ val DarkNutraColors = NutraColors(
     onAccent = Color(0xFF06140C),
 
     protein = Color(0xFFFF7A72),
-    proteinSoft = Color(0xFF3A1D1B),
     carbs = Color(0xFFFFB95C),
-    carbsSoft = Color(0xFF392A16),
     fat = Color(0xFF8D99FF),
-    fatSoft = Color(0xFF22254A),
     water = Color(0xFF5BB5FF),
-    waterSoft = Color(0xFF142B40),
 
     warning = Color(0xFFFF9A4D),
-    warningSoft = Color(0xFF3A2414),
     danger = Color(0xFFFF6369),
     dangerSoft = Color(0xFF3B1819),
     favorite = Color(0xFFFF6369),

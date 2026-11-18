@@ -40,9 +40,6 @@ object NutraIcons {
     val LocalCafe: ImageVector
         @Composable get() = ImageVector.vectorResource(R.drawable.ic_local_cafe_rounded)
 
-    val ExpandLess: ImageVector
-        @Composable get() = ImageVector.vectorResource(R.drawable.ic_expand_less_rounded)
-
     val ExpandMore: ImageVector
         @Composable get() = ImageVector.vectorResource(R.drawable.ic_expand_more_rounded)
 

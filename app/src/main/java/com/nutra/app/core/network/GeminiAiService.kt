@@ -10,6 +10,7 @@ import com.nutra.app.domain.model.AiAnalyzedFoodItem
 import com.nutra.app.domain.model.AppResult
 import com.nutra.app.domain.model.FoodItem
 import com.nutra.app.domain.usecase.TurkishTextNormalizer
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -181,7 +182,7 @@ class GeminiAiService @Inject constructor(
         }
     }
 
-    private fun callGeminiStructuredApi(
+    private suspend fun callGeminiStructuredApi(
         promptText: String,
         imageBytes: ByteArray?,
         imageMimeType: String,
@@ -302,21 +303,13 @@ class GeminiAiService @Inject constructor(
                 .post(body)
                 .build()
 
-            okHttpClient.newCall(request).execute().use { response ->
+            okHttpClient.newCall(request).await().use { response ->
                 val rawBody = response.body?.string().orEmpty()
                 if (!response.isSuccessful) {
                     return AppResult.Error("Gemini API yanıt vermedi (Kod: ${response.code}). Lütfen API anahtarınızı kontrol edin.")
                 }
 
-                val root = json.parseToJsonElement(rawBody) as? JsonObject
-                    ?: return AppResult.Error("AI yanıtı çözümlenemedi.")
-                val firstCandidate = (root["candidates"] as? JsonArray)?.firstOrNull() as? JsonObject
-                val content = firstCandidate?.get("content") as? JsonObject
-                val firstPart = (content?.get("parts") as? JsonArray)?.firstOrNull() as? JsonObject
-                val textContent = (firstPart?.get("text") as? JsonPrimitive)
-                    ?.takeIf { it.isString }
-                    ?.content
-                    ?.takeIf { it.isNotBlank() }
+                val textContent = extractStructuredText(rawBody)
                     ?: return AppResult.Error("AI yanıtı çözümlenemedi.")
 
                 val parsed = json.decodeFromString<GeminiFoodAnalysisResponseDto>(textContent)
@@ -342,9 +335,44 @@ class GeminiAiService @Inject constructor(
                 }
                 AppResult.Success(mapped)
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             AppResult.Error("AI bağlantısı sırasında hata oluştu: ${e.localizedMessage ?: "Bilinmeyen hata"}", e)
         }
+    }
+
+    internal fun extractStructuredText(rawBody: String): String? {
+        val root = runCatching { json.parseToJsonElement(rawBody) as? JsonObject }.getOrNull() ?: return null
+        val firstCandidate = (root["candidates"] as? JsonArray)?.firstOrNull() as? JsonObject ?: return null
+        val content = firstCandidate["content"] as? JsonObject ?: return null
+        val parts = content["parts"] as? JsonArray ?: return null
+
+        val nonThoughtTexts = buildList {
+            for (element in parts) {
+                val part = element as? JsonObject ?: continue
+                val isThought = (part["thought"] as? JsonPrimitive)?.content?.toBooleanStrictOrNull() == true
+                if (isThought) continue
+                val text = (part["text"] as? JsonPrimitive)
+                    ?.takeIf { it.isString }
+                    ?.content
+                    ?.takeIf { it.isNotBlank() }
+                if (text != null) add(text)
+            }
+        }
+        val joined = nonThoughtTexts.joinToString("\n").trim()
+        if (joined.isEmpty()) return null
+        return stripMarkdownCodeFences(joined)
+    }
+
+    private fun stripMarkdownCodeFences(text: String): String {
+        val trimmed = text.trim()
+        if (!trimmed.startsWith("```")) return trimmed
+        val firstNewline = trimmed.indexOf('\n')
+        if (firstNewline == -1) return trimmed.removePrefix("```").removeSuffix("```").trim()
+        val body = trimmed.substring(firstNewline + 1)
+        val closingIndex = body.lastIndexOf("```")
+        return if (closingIndex >= 0) body.substring(0, closingIndex).trim() else body.trim()
     }
 
     /**
@@ -449,11 +477,12 @@ class GeminiAiService @Inject constructor(
         for (food in catalogFoods) {
             val normName = food.normalizedName.ifBlank { TurkishTextNormalizer.normalize(food.name) }
             val normSub = food.normalizedSearchText.ifBlank { TurkishTextNormalizer.normalize(food.subtitle) }
+            val nameWords = normName.split(' ')
             var score = 0
             if (normName == query) score += 100
             if (normName.contains(query)) score += 60
             for (token in tokens) {
-                if (normName.split(' ').any { it == token }) score += 30
+                if (nameWords.any { it == token }) score += 30
                 else if (normName.contains(token)) score += 18
                 else if (normSub.contains(token)) score += 6
             }

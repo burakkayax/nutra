@@ -52,6 +52,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
@@ -80,10 +81,6 @@ import com.nutra.app.domain.model.BiologicalSex
 import com.nutra.app.domain.model.GoalType
 import kotlin.math.roundToInt
 
-private fun formatInt(value: Int): String = NutraFormatters.formatInt(value)
-
-private fun formatKg(value: Float): String = NutraFormatters.formatKg(value)
-
 private enum class OnboardingNumericField(
     val dialogTitle: String,
     val unit: String,
@@ -110,7 +107,6 @@ fun OnboardingScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val colors = NutraTheme.colors
-    val haptic = LocalHapticFeedback.current
     var activeField by remember { mutableStateOf<OnboardingNumericField?>(null) }
 
     BackHandler(enabled = state.stepIndex > 0) {
@@ -144,10 +140,7 @@ fun OnboardingScreen(
                     NutraIconButton(
                         icon = Icons.AutoMirrored.Rounded.ArrowBack,
                         contentDescription = "Geri",
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            viewModel.previousStep()
-                        },
+                        onClick = viewModel::previousStep,
                         size = 40.dp,
                         iconSize = 20.dp,
                     )
@@ -166,13 +159,11 @@ fun OnboardingScreen(
 
                 NutraButton(
                     text = "Hızlı Başla",
-                    onClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.Confirm)
-                        viewModel.completeOnboarding(onOnboardingFinished)
-                    },
+                    onClick = { viewModel.completeOnboarding(onOnboardingFinished) },
                     style = NutraButtonStyle.Secondary,
                     size = NutraButtonSize.Small,
                     enabled = !state.isCompleting,
+                    hapticFeedback = HapticFeedbackType.Confirm,
                 )
             }
 
@@ -182,7 +173,7 @@ fun OnboardingScreen(
             ) {
                 repeat(3) { idx ->
                     val filled = idx <= state.stepIndex
-                    val barColor by animateColorAsState(
+                    val barColorState = animateColorAsState(
                         targetValue = if (filled) colors.ink else colors.surfaceMuted,
                         animationSpec = tween(220),
                         label = "stepBar$idx",
@@ -192,7 +183,7 @@ fun OnboardingScreen(
                             .weight(1f)
                             .height(4.dp)
                             .clip(NutraTheme.shapes.pill)
-                            .background(barColor),
+                            .drawBehind { drawRect(barColorState.value) },
                     )
                 }
             }
@@ -214,10 +205,7 @@ fun OnboardingScreen(
             when (step) {
                 0 -> GoalSelectionStep(
                     selectedGoal = state.goalType,
-                    onSelectGoal = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        viewModel.selectGoalType(it)
-                    },
+                    onSelectGoal = viewModel::selectGoalType,
                 )
 
                 1 -> BodyMetricsStep(
@@ -227,10 +215,7 @@ fun OnboardingScreen(
                     onAdjustHeight = viewModel::adjustHeight,
                     onAdjustCurrentWeight = viewModel::adjustCurrentWeight,
                     onAdjustTargetWeight = viewModel::adjustTargetWeight,
-                    onSelectActivity = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        viewModel.selectActivityLevel(it)
-                    },
+                    onSelectActivity = viewModel::selectActivityLevel,
                     onEditField = { activeField = it },
                 )
 
@@ -260,10 +245,8 @@ fun OnboardingScreen(
                 text = if (isLast) "Başlayalım" else "Devam",
                 onClick = {
                     if (isLast) {
-                        haptic.performHapticFeedback(HapticFeedbackType.Confirm)
                         viewModel.completeOnboarding(onOnboardingFinished)
                     } else {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         viewModel.nextStep()
                     }
                 },
@@ -272,6 +255,7 @@ fun OnboardingScreen(
                 trailingIcon = if (isLast) Icons.Rounded.Check else Icons.AutoMirrored.Rounded.ArrowForward,
                 loading = isLast && state.isCompleting,
                 enabled = !state.isCompleting,
+                hapticFeedback = if (isLast) HapticFeedbackType.Confirm else HapticFeedbackType.TextHandleMove,
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -282,8 +266,8 @@ fun OnboardingScreen(
         val currentValue = when (editingField) {
             OnboardingNumericField.AGE -> state.age.toString()
             OnboardingNumericField.HEIGHT -> state.heightCm.toString()
-            OnboardingNumericField.CURRENT_WEIGHT -> formatKg(state.currentWeightKg)
-            OnboardingNumericField.TARGET_WEIGHT -> formatKg(state.targetWeightKg)
+            OnboardingNumericField.CURRENT_WEIGHT -> NutraFormatters.formatKg(state.currentWeightKg)
+            OnboardingNumericField.TARGET_WEIGHT -> NutraFormatters.formatKg(state.targetWeightKg)
             OnboardingNumericField.CALORIES -> state.customGoals.calories.toString()
             OnboardingNumericField.PROTEIN -> state.customGoals.proteinGrams.toString()
             OnboardingNumericField.CARBS -> state.customGoals.carbsGrams.toString()
@@ -398,8 +382,6 @@ private fun BodyMetricsStep(
     onSelectActivity: (ActivityLevel) -> Unit,
     onEditField: (OnboardingNumericField) -> Unit,
 ) {
-    val haptic = LocalHapticFeedback.current
-
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -431,14 +413,8 @@ private fun BodyMetricsStep(
                     NutraMetricStepperRow(
                         label = "Yaş",
                         valueText = "${state.age} yaş",
-                        onDecrement = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onAdjustAge(-1)
-                        },
-                        onIncrement = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onAdjustAge(1)
-                        },
+                        onDecrement = { onAdjustAge(-1) },
+                        onIncrement = { onAdjustAge(1) },
                         onValueClick = { onEditField(OnboardingNumericField.AGE) },
                         valueMinWidth = 80.dp,
                     )
@@ -446,44 +422,26 @@ private fun BodyMetricsStep(
                     NutraMetricStepperRow(
                         label = "Boy",
                         valueText = "${state.heightCm} cm",
-                        onDecrement = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onAdjustHeight(-1)
-                        },
-                        onIncrement = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onAdjustHeight(1)
-                        },
+                        onDecrement = { onAdjustHeight(-1) },
+                        onIncrement = { onAdjustHeight(1) },
                         onValueClick = { onEditField(OnboardingNumericField.HEIGHT) },
                         valueMinWidth = 80.dp,
                     )
                     NutraDivider()
                     NutraMetricStepperRow(
                         label = "Mevcut kilo",
-                        valueText = "${formatKg(state.currentWeightKg)} kg",
-                        onDecrement = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onAdjustCurrentWeight(-0.5f)
-                        },
-                        onIncrement = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onAdjustCurrentWeight(0.5f)
-                        },
+                        valueText = "${NutraFormatters.formatKg(state.currentWeightKg)} kg",
+                        onDecrement = { onAdjustCurrentWeight(-0.5f) },
+                        onIncrement = { onAdjustCurrentWeight(0.5f) },
                         onValueClick = { onEditField(OnboardingNumericField.CURRENT_WEIGHT) },
                         valueMinWidth = 80.dp,
                     )
                     NutraDivider()
                     NutraMetricStepperRow(
                         label = "Hedef kilo",
-                        valueText = "${formatKg(state.targetWeightKg)} kg",
-                        onDecrement = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onAdjustTargetWeight(-0.5f)
-                        },
-                        onIncrement = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onAdjustTargetWeight(0.5f)
-                        },
+                        valueText = "${NutraFormatters.formatKg(state.targetWeightKg)} kg",
+                        onDecrement = { onAdjustTargetWeight(-0.5f) },
+                        onIncrement = { onAdjustTargetWeight(0.5f) },
                         onValueClick = { onEditField(OnboardingNumericField.TARGET_WEIGHT) },
                         valueMinWidth = 80.dp,
                     )
@@ -547,13 +505,11 @@ private fun DailyPlanReviewStep(
                 {
                     NutraButton(
                         text = "Sıfırla",
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.Confirm)
-                            onReset()
-                        },
+                        onClick = onReset,
                         style = NutraButtonStyle.Secondary,
                         size = NutraButtonSize.Small,
                         leadingIcon = Icons.Rounded.Refresh,
+                        hapticFeedback = HapticFeedbackType.Confirm,
                     )
                 }
             } else {
@@ -581,10 +537,7 @@ private fun DailyPlanReviewStep(
                 NutraStepperButton(
                     icon = NutraIcons.Remove,
                     contentDescription = "50 kcal azalt",
-                    onClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onAdjustCalories(-50)
-                    },
+                    onClick = { onAdjustCalories(-50) },
                     size = 44.dp,
                 )
 
@@ -605,7 +558,7 @@ private fun DailyPlanReviewStep(
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
                         Text(
-                            text = formatInt(goals.calories),
+                            text = NutraFormatters.formatInt(goals.calories),
                             style = NutraTheme.typography.display,
                             color = colors.textPrimary,
                             maxLines = 1,
@@ -634,10 +587,7 @@ private fun DailyPlanReviewStep(
                 NutraStepperButton(
                     icon = Icons.Rounded.Add,
                     contentDescription = "50 kcal artır",
-                    onClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onAdjustCalories(50)
-                    },
+                    onClick = { onAdjustCalories(50) },
                     size = 44.dp,
                 )
             }
@@ -690,14 +640,8 @@ private fun DailyPlanReviewStep(
                     label = "Protein",
                     valueText = "${goals.proteinGrams} g",
                     accentColor = colors.protein,
-                    onDecrement = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onAdjustProtein(-5)
-                    },
-                    onIncrement = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onAdjustProtein(5)
-                    },
+                    onDecrement = { onAdjustProtein(-5) },
+                    onIncrement = { onAdjustProtein(5) },
                     onValueClick = { onEditField(OnboardingNumericField.PROTEIN) },
                 )
                 NutraDivider()
@@ -705,14 +649,8 @@ private fun DailyPlanReviewStep(
                     label = "Karbonhidrat",
                     valueText = "${goals.carbsGrams} g",
                     accentColor = colors.carbs,
-                    onDecrement = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onAdjustCarbs(-5)
-                    },
-                    onIncrement = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onAdjustCarbs(5)
-                    },
+                    onDecrement = { onAdjustCarbs(-5) },
+                    onIncrement = { onAdjustCarbs(5) },
                     onValueClick = { onEditField(OnboardingNumericField.CARBS) },
                 )
                 NutraDivider()
@@ -720,29 +658,17 @@ private fun DailyPlanReviewStep(
                     label = "Yağ",
                     valueText = "${goals.fatGrams} g",
                     accentColor = colors.fat,
-                    onDecrement = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onAdjustFat(-5)
-                    },
-                    onIncrement = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onAdjustFat(5)
-                    },
+                    onDecrement = { onAdjustFat(-5) },
+                    onIncrement = { onAdjustFat(5) },
                     onValueClick = { onEditField(OnboardingNumericField.FAT) },
                 )
                 NutraDivider()
                 NutraMetricStepperRow(
                     label = "Su hedefi",
-                    valueText = "${formatInt(goals.waterMl)} ml",
+                    valueText = "${NutraFormatters.formatInt(goals.waterMl)} ml",
                     accentColor = colors.water,
-                    onDecrement = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onAdjustWater(-250)
-                    },
-                    onIncrement = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onAdjustWater(250)
-                    },
+                    onDecrement = { onAdjustWater(-250) },
+                    onIncrement = { onAdjustWater(250) },
                     onValueClick = { onEditField(OnboardingNumericField.WATER) },
                 )
             }

@@ -3,7 +3,9 @@ package com.nutra.app.feature.dashboard
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateIntAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.expandVertically
@@ -14,9 +16,12 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,6 +37,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
@@ -50,13 +57,16 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -89,13 +99,9 @@ import com.nutra.app.domain.model.MealSummary
 import com.nutra.app.domain.model.MealType
 import com.nutra.app.feature.logging.AddFoodModalSheet
 import kotlinx.coroutines.delay
-import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.format.TextStyle
-import java.time.temporal.TemporalAdjusters
 import kotlin.math.roundToInt
-
-private fun formatInt(value: Int): String = NutraFormatters.formatInt(value)
 
 @Composable
 fun DashboardScreen(
@@ -137,10 +143,10 @@ fun DashboardScreen(
                 top = contentPadding.calculateTopPadding() + 28.dp,
                 bottom = contentPadding.calculateBottomPadding() + 16.dp,
             ),
-            verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.xl),
+            verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.md),
         ) {
             item(key = "header") {
-                Column {
+                Column(modifier = Modifier.padding(bottom = NutraTheme.spacing.sm)) {
                     DashboardHeader(
                         today = state.today,
                         selectedDate = state.selectedDate,
@@ -156,7 +162,7 @@ fun DashboardScreen(
                         Box(modifier = Modifier.padding(top = NutraTheme.spacing.lg)) {
                             WeekDateStrip(
                                 today = state.today,
-                                weekDays = state.weekDays,
+                                weekStart = state.weekStart,
                                 selectedDate = state.selectedDate,
                                 onSelectDate = viewModel::selectDate,
                                 onPreviousWeek = { viewModel.shiftWeek(-1) },
@@ -169,54 +175,54 @@ fun DashboardScreen(
             }
 
             item(key = "hero_summary") {
-                HeroNutritionCard(
-                    consumedCalories = state.dailySummary.consumedCalories,
-                    targetCalories = state.dailySummary.goals.calories,
-                    consumedProtein = state.dailySummary.consumedProtein,
-                    targetProtein = state.dailySummary.goals.proteinGrams,
-                    consumedCarbs = state.dailySummary.consumedCarbs,
-                    targetCarbs = state.dailySummary.goals.carbsGrams,
-                    consumedFat = state.dailySummary.consumedFat,
-                    targetFat = state.dailySummary.goals.fatGrams,
-                )
+                Box(modifier = Modifier.padding(bottom = NutraTheme.spacing.sm)) {
+                    HeroNutritionCard(
+                        consumedCalories = state.dailySummary.consumedCalories,
+                        targetCalories = state.dailySummary.goals.calories,
+                        consumedProtein = state.dailySummary.consumedProtein,
+                        targetProtein = state.dailySummary.goals.proteinGrams,
+                        consumedCarbs = state.dailySummary.consumedCarbs,
+                        targetCarbs = state.dailySummary.goals.carbsGrams,
+                        consumedFat = state.dailySummary.consumedFat,
+                        targetFat = state.dailySummary.goals.fatGrams,
+                    )
+                }
             }
 
             item(key = "water_card") {
-                WaterTrackerCard(
-                    currentWaterMl = state.dailySummary.waterMl,
-                    targetWaterMl = state.dailySummary.goals.waterMl,
-                    onAddWater = { delta ->
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        viewModel.addWater(delta)
-                    },
-                )
+                Box(modifier = Modifier.padding(bottom = NutraTheme.spacing.sm)) {
+                    WaterTrackerCard(
+                        currentWaterMl = state.dailySummary.waterMl,
+                        targetWaterMl = state.dailySummary.goals.waterMl,
+                        onAddWater = viewModel::addWater,
+                    )
+                }
             }
 
-            item(key = "meals_section") {
-                Column(verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.md)) {
-                    NutraSectionHeader(title = "Öğünler")
-                    state.dailySummary.meals.forEach { mealSummary ->
-                        key(mealSummary.mealType.name) {
-                            MealCard(
-                                mealSummary = mealSummary,
-                                isExpanded = state.expandedMeals.contains(mealSummary.mealType),
-                                onToggleExpand = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    viewModel.toggleMealExpanded(mealSummary.mealType)
-                                },
-                                onAddFoodClick = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    viewModel.openAddFoodModal(mealSummary.mealType)
-                                },
-                                onEditLogItem = viewModel::openEditLoggedItem,
-                                onDeleteLogItem = { item ->
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    viewModel.deleteLoggedItem(item)
-                                },
-                            )
-                        }
-                    }
-                }
+            item(key = "meals_header") {
+                NutraSectionHeader(title = "Öğünler")
+            }
+
+            items(
+                items = state.dailySummary.meals,
+                key = { it.mealType.name },
+                contentType = { "meal_card" },
+            ) { mealSummary ->
+                MealCard(
+                    mealSummary = mealSummary,
+                    isExpanded = state.expandedMeals.contains(mealSummary.mealType),
+                    onToggleExpand = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        viewModel.toggleMealExpanded(mealSummary.mealType)
+                    },
+                    onAddFoodClick = { viewModel.openAddFoodModal(mealSummary.mealType) },
+                    onEditLogItem = viewModel::openEditLoggedItem,
+                    onDeleteLogItem = { item ->
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        viewModel.deleteLoggedItem(item)
+                    },
+                    modifier = Modifier.animateItem(),
+                )
             }
         }
 
@@ -257,11 +263,9 @@ fun DashboardScreen(
             item = editingItem,
             onDismiss = viewModel::closeEditLoggedItem,
             onUpdateMultiplier = { newMult ->
-                haptic.performHapticFeedback(HapticFeedbackType.Confirm)
                 viewModel.updateLoggedItemMultiplier(editingItem, newMult)
             },
             onDelete = {
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 viewModel.deleteLoggedItem(editingItem)
             },
         )
@@ -275,6 +279,7 @@ fun DashboardScreen(
             state = loggingState,
             searchQuery = searchQuery,
             onDismiss = viewModel::closeAddFoodModal,
+            onDismissSheetFeedback = viewModel::dismissSheetFeedback,
             onSelectMealType = viewModel::selectLoggingMealType,
             onSelectTab = viewModel::selectLoggingTab,
             onSearchQueryChange = viewModel::updateSearchQuery,
@@ -368,7 +373,7 @@ private fun DashboardHeader(
 @Composable
 private fun WeekDateStrip(
     today: LocalDate,
-    weekDays: List<LocalDate>,
+    weekStart: LocalDate,
     selectedDate: LocalDate,
     onSelectDate: (LocalDate) -> Unit,
     onPreviousWeek: () -> Unit,
@@ -376,6 +381,8 @@ private fun WeekDateStrip(
     onJumpToToday: () -> Unit,
 ) {
     val haptic = LocalHapticFeedback.current
+    val latestOnPrevWeek by rememberUpdatedState(onPreviousWeek)
+    val latestOnNextWeek by rememberUpdatedState(onNextWeek)
     val monthLabel = remember(selectedDate) {
         "${
             selectedDate.month.getDisplayName(TextStyle.FULL, NutraFormatters.TR_LOCALE)
@@ -448,10 +455,6 @@ private fun WeekDateStrip(
             }
         }
 
-        val weekStart = remember(weekDays, selectedDate) {
-            weekDays.firstOrNull() ?: selectedDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
-        }
-
         AnimatedContent(
             targetState = weekStart,
             transitionSpec = {
@@ -460,6 +463,27 @@ private fun WeekDateStrip(
                     fadeIn(tween(160))) togetherWith
                     (slideOutHorizontally(tween(160)) { if (forward) -it / 6 else it / 6 } +
                         fadeOut(tween(120)))
+            },
+            modifier = Modifier.pointerInput(Unit) {
+                var accumulatedDrag = 0f
+                val thresholdPx = 48.dp.toPx()
+                detectHorizontalDragGestures(
+                    onDragStart = { accumulatedDrag = 0f },
+                    onDragEnd = {
+                        if (accumulatedDrag <= -thresholdPx) {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            latestOnNextWeek()
+                        } else if (accumulatedDrag >= thresholdPx) {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            latestOnPrevWeek()
+                        }
+                        accumulatedDrag = 0f
+                    },
+                    onDragCancel = { accumulatedDrag = 0f },
+                    onHorizontalDrag = { _, dragAmount ->
+                        accumulatedDrag += dragAmount
+                    },
+                )
             },
             label = "weekStripTransition",
         ) { renderedWeekStart ->
@@ -504,7 +528,8 @@ private fun WeekDateStrip(
                         modifier = Modifier
                             .weight(1f)
                             .clip(NutraTheme.shapes.md)
-                            .clickable(
+                            .selectable(
+                                selected = isSelected,
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null,
                                 role = Role.Tab,
@@ -557,7 +582,17 @@ private fun HeroNutritionCard(
     val safeTarget = targetCalories.coerceAtLeast(1)
     val isOver = consumedCalories > safeTarget
     val deltaCalories = if (isOver) consumedCalories - safeTarget else safeTarget - consumedCalories
-    val completionPercent = ((consumedCalories.toFloat() / safeTarget) * 100f).roundToInt()
+    val animatedConsumed by animateIntAsState(
+        targetValue = consumedCalories,
+        animationSpec = tween(240),
+        label = "heroCalories",
+    )
+    val animatedDelta by animateIntAsState(
+        targetValue = deltaCalories,
+        animationSpec = tween(240),
+        label = "heroDelta",
+    )
+    val completionPercent = ((animatedConsumed.toFloat() / safeTarget) * 100f).roundToInt()
     val progress = consumedCalories.toFloat() / safeTarget
     val barColor by animateColorAsState(
         targetValue = if (isOver) NutraTheme.colors.warning else NutraTheme.colors.accent,
@@ -588,13 +623,13 @@ private fun HeroNutritionCard(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Text(
-                        text = formatInt(consumedCalories),
+                        text = NutraFormatters.formatInt(animatedConsumed),
                         style = NutraTheme.typography.numberHero,
                         color = NutraTheme.colors.textPrimary,
                         modifier = Modifier.alignByBaseline(),
                     )
                     Text(
-                        text = "/ ${formatInt(safeTarget)} kcal",
+                        text = "/ ${NutraFormatters.formatInt(safeTarget)} kcal",
                         style = NutraTheme.typography.body,
                         color = NutraTheme.colors.textSecondary,
                         modifier = Modifier.alignByBaseline(),
@@ -617,7 +652,7 @@ private fun HeroNutritionCard(
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     Text(
-                        text = "${formatInt(deltaCalories)} kcal",
+                        text = "${NutraFormatters.formatInt(animatedDelta)} kcal",
                         style = NutraTheme.typography.numberSmall,
                         color = if (isOver) NutraTheme.colors.warning else NutraTheme.colors.textPrimary,
                     )
@@ -691,7 +726,14 @@ private fun WaterTrackerCard(
     onAddWater: (Int) -> Unit,
 ) {
     val safeTarget = targetWaterMl.coerceAtLeast(1)
+    val animatedWater by animateIntAsState(
+        targetValue = currentWaterMl,
+        animationSpec = tween(220),
+        label = "waterMl",
+    )
     val fraction = (currentWaterMl.toFloat() / safeTarget.toFloat()).coerceIn(0f, 1f)
+    val actualPercent = ((animatedWater.toFloat() / safeTarget.toFloat()) * 100f).roundToInt()
+    val isGoalReached = currentWaterMl >= safeTarget
 
     NutraCard(
         modifier = Modifier.fillMaxWidth(),
@@ -715,21 +757,21 @@ private fun WaterTrackerCard(
                     color = NutraTheme.colors.textPrimary,
                 )
                 Text(
-                    text = "%${(fraction * 100).roundToInt()} tamamlandı",
+                    text = "%$actualPercent tamamlandı",
                     style = NutraTheme.typography.caption,
-                    color = NutraTheme.colors.textTertiary,
+                    color = if (isGoalReached) NutraTheme.colors.accent else NutraTheme.colors.textTertiary,
                 )
             }
 
             Row {
                 Text(
-                    text = formatInt(currentWaterMl),
+                    text = NutraFormatters.formatInt(animatedWater),
                     style = NutraTheme.typography.numberMedium,
                     color = NutraTheme.colors.textPrimary,
                     modifier = Modifier.alignByBaseline(),
                 )
                 Text(
-                    text = " / ${formatInt(safeTarget)} ml",
+                    text = " / ${NutraFormatters.formatInt(safeTarget)} ml",
                     style = NutraTheme.typography.caption,
                     color = NutraTheme.colors.textTertiary,
                     modifier = Modifier.alignByBaseline(),
@@ -784,12 +826,32 @@ private fun WaterQuickPill(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val haptic = LocalHapticFeedback.current
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val pressScaleState = animateFloatAsState(
+        targetValue = if (isPressed) 0.95f else 1f,
+        animationSpec = spring(dampingRatio = 0.78f, stiffness = 700f),
+        label = "waterPillScale",
+    )
     Column(
         modifier = modifier
             .height(48.dp)
+            .graphicsLayer {
+                val s = pressScaleState.value
+                scaleX = s
+                scaleY = s
+            }
             .clip(NutraTheme.shapes.pill)
             .background(NutraTheme.colors.surfaceMuted)
-            .clickable(role = Role.Button, onClick = onClick),
+            .clickable(
+                interactionSource = interactionSource,
+                indication = LocalIndication.current,
+                role = Role.Button,
+            ) {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onClick()
+            },
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
@@ -816,7 +878,9 @@ private fun MealCard(
     onAddFoodClick: () -> Unit,
     onEditLogItem: (MealLogItem) -> Unit,
     onDeleteLogItem: (MealLogItem) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
+    val haptic = LocalHapticFeedback.current
     val hasItems = mealSummary.items.isNotEmpty()
     val mealIcon = when (mealSummary.mealType) {
         MealType.BREAKFAST -> NutraIcons.WbSunny
@@ -824,9 +888,14 @@ private fun MealCard(
         MealType.DINNER -> NutraIcons.DinnerDining
         MealType.SNACK -> NutraIcons.LocalCafe
     }
+    val chevronRotationState = animateFloatAsState(
+        targetValue = if (isExpanded) 180f else 0f,
+        animationSpec = tween(200),
+        label = "mealChevron",
+    )
 
     NutraCard(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         contentPadding = PaddingValues(horizontal = NutraTheme.spacing.card, vertical = NutraTheme.spacing.lg),
     ) {
         Row(
@@ -837,7 +906,12 @@ private fun MealCard(
                     indication = null,
                     role = Role.Button,
                 ) {
-                    if (hasItems) onToggleExpand() else onAddFoodClick()
+                    if (hasItems) {
+                        onToggleExpand()
+                    } else {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onAddFoodClick()
+                    }
                 },
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
@@ -872,10 +946,12 @@ private fun MealCard(
                         )
                         if (hasItems) {
                             Icon(
-                                imageVector = if (isExpanded) NutraIcons.ExpandLess else NutraIcons.ExpandMore,
+                                imageVector = NutraIcons.ExpandMore,
                                 contentDescription = if (isExpanded) "Daralt" else "Genişlet",
                                 tint = NutraTheme.colors.textTertiary,
-                                modifier = Modifier.size(18.dp),
+                                modifier = Modifier
+                                    .size(18.dp)
+                                    .graphicsLayer { rotationZ = chevronRotationState.value },
                             )
                         }
                     }
@@ -900,7 +976,7 @@ private fun MealCard(
             ) {
                 if (hasItems) {
                     Text(
-                        text = "${formatInt(mealSummary.totalCalories)} kcal",
+                        text = "${NutraFormatters.formatInt(mealSummary.totalCalories)} kcal",
                         style = NutraTheme.typography.numberSmall,
                         color = NutraTheme.colors.textPrimary,
                     )
@@ -923,9 +999,7 @@ private fun MealCard(
             exit = shrinkVertically(tween(180)) + fadeOut(tween(120)),
         ) {
             Column(
-                modifier = Modifier
-                    .padding(top = 14.dp)
-                    .animateContentSize(tween(180)),
+                modifier = Modifier.padding(top = 14.dp),
             ) {
                 NutraDivider()
                 mealSummary.items.forEachIndexed { idx, item ->
@@ -955,6 +1029,13 @@ private fun MealCard(
                                         imageVector = NutraIcons.DeleteOutline,
                                         contentDescription = "Sil",
                                         tint = NutraTheme.colors.danger,
+                                        modifier = Modifier.graphicsLayer {
+                                            val p = dismissState.progress.coerceIn(0f, 1f)
+                                            val scale = 0.8f + (0.3f * p)
+                                            scaleX = scale
+                                            scaleY = scale
+                                            alpha = 0.45f + (0.55f * p)
+                                        },
                                     )
                                 }
                             },
@@ -991,7 +1072,7 @@ private fun MealCard(
                                     )
                                 }
                                 Text(
-                                    text = "${formatInt(item.calories)} kcal",
+                                    text = "${NutraFormatters.formatInt(item.calories)} kcal",
                                     style = NutraTheme.typography.numberSmall,
                                     color = NutraTheme.colors.textPrimary,
                                 )
@@ -1014,6 +1095,7 @@ private fun EditLoggedFoodPortionDialog(
     onUpdateMultiplier: (Float) -> Unit,
     onDelete: () -> Unit,
 ) {
+    val haptic = LocalHapticFeedback.current
     val isRawGramMode = item.unitLabel == "1 Gram"
     var multiplier by remember(item) {
         mutableFloatStateOf(
@@ -1049,7 +1131,7 @@ private fun EditLoggedFoodPortionDialog(
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text(
-                text = "${formatInt(previewCalories)} kcal",
+                text = "${NutraFormatters.formatInt(previewCalories)} kcal",
                 style = NutraTheme.typography.numberLarge,
                 color = NutraTheme.colors.accent,
                 textAlign = TextAlign.Center,
@@ -1083,7 +1165,10 @@ private fun EditLoggedFoodPortionDialog(
                             .height(40.dp)
                             .clip(NutraTheme.shapes.pill)
                             .drawBehind { drawRect(bgState.value) }
-                            .clickable(role = Role.RadioButton) { multiplier = preset }
+                            .selectable(selected = isSelected, role = Role.RadioButton) {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                multiplier = preset
+                            }
                             .padding(horizontal = 6.dp),
                         contentAlignment = Alignment.Center,
                     ) {
@@ -1123,7 +1208,10 @@ private fun EditLoggedFoodPortionDialog(
                         .clip(NutraTheme.shapes.pill)
                         .then(
                             if (isRawGramMode) {
-                                Modifier.clickable(role = Role.Button) { showManualGramDialog = true }
+                                Modifier.clickable(role = Role.Button) {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    showManualGramDialog = true
+                                }
                             } else {
                                 Modifier
                             },
@@ -1160,6 +1248,7 @@ private fun EditLoggedFoodPortionDialog(
                     onClick = onDelete,
                     style = NutraButtonStyle.Destructive,
                     size = NutraButtonSize.Medium,
+                    hapticFeedback = HapticFeedbackType.LongPress,
                     modifier = Modifier.weight(0.42f),
                 )
                 NutraButton(
@@ -1167,6 +1256,7 @@ private fun EditLoggedFoodPortionDialog(
                     onClick = { onUpdateMultiplier(multiplier) },
                     style = NutraButtonStyle.Primary,
                     size = NutraButtonSize.Medium,
+                    hapticFeedback = HapticFeedbackType.Confirm,
                     modifier = Modifier.weight(0.58f),
                 )
             }

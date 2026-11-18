@@ -12,9 +12,18 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.indication
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,6 +45,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -59,11 +69,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
@@ -76,12 +87,19 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
@@ -95,13 +113,16 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared enums
 // ─────────────────────────────────────────────────────────────────────────────
 
-enum class NutraButtonStyle { Primary, Secondary, Accent, Ghost, Destructive }
+enum class NutraButtonStyle { Primary, Secondary, Destructive }
 
 enum class NutraButtonSize(val height: Dp, val horizontalPadding: Dp, val iconSize: Dp) {
     Large(56.dp, 24.dp, 20.dp),
@@ -111,19 +132,21 @@ enum class NutraButtonSize(val height: Dp, val horizontalPadding: Dp, val iconSi
 
 /** Animation spec used for all progress indicators. */
 private val ProgressSpring = spring<Float>(dampingRatio = 0.9f, stiffness = 260f)
+private val PressScaleSpring = spring<Float>(dampingRatio = 0.78f, stiffness = 700f)
 
 private fun Modifier.nutraRoundedStroke(
-    color: Color,
+    color: () -> Color,
     cornerRadius: Dp,
     strokeWidth: Dp = 1.5.dp,
 ): Modifier = drawWithContent {
     drawContent()
-    if (color.alpha > 0f) {
+    val strokeColor = color()
+    if (strokeColor.alpha > 0f) {
         val strokePx = strokeWidth.toPx()
         val half = strokePx / 2f
         val radius = cornerRadius.toPx()
         drawRoundRect(
-            color = color,
+            color = strokeColor,
             topLeft = Offset(half, half),
             size = Size(size.width - strokePx, size.height - strokePx),
             cornerRadius = CornerRadius(radius, radius),
@@ -226,6 +249,7 @@ fun NutraSectionHeader(
     actionIcon: ImageVector? = null,
     actionContainerColor: Color = NutraTheme.colors.surface,
     actionContentColor: Color = NutraTheme.colors.textPrimary,
+    actionHaptic: HapticFeedbackType? = HapticFeedbackType.TextHandleMove,
 ) {
     val haptic = LocalHapticFeedback.current
     Row(
@@ -263,7 +287,7 @@ fun NutraSectionHeader(
                     .clip(NutraTheme.shapes.pill)
                     .background(actionContainerColor)
                     .clickable(role = Role.Button) {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        if (actionHaptic != null) haptic.performHapticFeedback(actionHaptic)
                         onAction()
                     }
                     .padding(horizontal = 14.dp, vertical = 8.dp),
@@ -320,6 +344,7 @@ fun NutraButton(
     trailingIcon: ImageVector? = null,
     enabled: Boolean = true,
     loading: Boolean = false,
+    hapticFeedback: HapticFeedbackType? = HapticFeedbackType.TextHandleMove,
 ) {
     val colors = NutraTheme.colors
     val haptic = LocalHapticFeedback.current
@@ -330,39 +355,46 @@ fun NutraButton(
             colors.ink to colors.onInk
         }
         NutraButtonStyle.Secondary -> colors.surfaceMuted to colors.textPrimary
-        NutraButtonStyle.Accent -> colors.accent to colors.onAccent
-        NutraButtonStyle.Ghost -> Color.Transparent to colors.textPrimary
         NutraButtonStyle.Destructive -> colors.dangerSoft to colors.danger
     }
-    val horizontalPad = if (style == NutraButtonStyle.Ghost) 8.dp else size.horizontalPadding
     val isActive = enabled && !loading
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val pressScaleState = animateFloatAsState(
+        targetValue = if (isPressed && isActive) 0.97f else 1f,
+        animationSpec = PressScaleSpring,
+        label = "btnPressScale",
+    )
     Surface(
         onClick = {
-            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            if (hapticFeedback != null) haptic.performHapticFeedback(hapticFeedback)
             onClick()
         },
         enabled = isActive,
+        interactionSource = interactionSource,
         modifier = modifier
             .heightIn(min = size.height)
-            .alpha(if (enabled) 1f else 0.4f),
+            .graphicsLayer {
+                alpha = if (enabled) 1f else 0.4f
+                val s = pressScaleState.value
+                scaleX = s
+                scaleY = s
+            },
         shape = NutraTheme.shapes.pill,
         color = container,
         contentColor = content,
     ) {
-        Row(
+        Box(
             modifier = Modifier
                 .defaultMinSize(minHeight = size.height)
-                .padding(horizontal = horizontalPad),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
+                .padding(horizontal = size.horizontalPadding),
+            contentAlignment = Alignment.Center,
         ) {
-            if (loading) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(size.iconSize),
-                    color = content,
-                    strokeWidth = 2.dp,
-                )
-            } else {
+            Row(
+                modifier = Modifier.graphicsLayer { alpha = if (loading) 0f else 1f },
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 if (leadingIcon != null) {
                     Icon(leadingIcon, contentDescription = null, modifier = Modifier.size(size.iconSize))
                     Spacer(Modifier.width(8.dp))
@@ -377,6 +409,13 @@ fun NutraButton(
                     Spacer(Modifier.width(8.dp))
                     Icon(trailingIcon, contentDescription = null, modifier = Modifier.size(size.iconSize))
                 }
+            }
+            if (loading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(size.iconSize),
+                    color = content,
+                    strokeWidth = 2.dp,
+                )
             }
         }
     }
@@ -394,16 +433,34 @@ fun NutraIconButton(
     containerColor: Color = NutraTheme.colors.surfaceMuted,
     contentColor: Color = NutraTheme.colors.textPrimary,
     enabled: Boolean = true,
+    hapticFeedback: HapticFeedbackType? = HapticFeedbackType.TextHandleMove,
 ) {
     val haptic = LocalHapticFeedback.current
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val pressScaleState = animateFloatAsState(
+        targetValue = if (isPressed && enabled) 0.92f else 1f,
+        animationSpec = PressScaleSpring,
+        label = "iconBtnPressScale",
+    )
     Box(
         modifier = modifier
             .size(size)
-            .alpha(if (enabled) 1f else 0.35f)
+            .graphicsLayer {
+                alpha = if (enabled) 1f else 0.35f
+                val s = pressScaleState.value
+                scaleX = s
+                scaleY = s
+            }
             .clip(CircleShape)
             .background(containerColor)
-            .clickable(enabled = enabled, role = Role.Button) {
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = LocalIndication.current,
+                enabled = enabled,
+                role = Role.Button,
+            ) {
+                if (hapticFeedback != null) haptic.performHapticFeedback(hapticFeedback)
                 onClick()
             },
         contentAlignment = Alignment.Center,
@@ -551,7 +608,7 @@ fun NutraChip(
             .height(40.dp)
             .clip(NutraTheme.shapes.pill)
             .drawBehind { drawRect(bgState.value) }
-            .clickable(role = Role.Tab) {
+            .selectable(selected = selected, role = Role.Tab) {
                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 onClick()
             }
@@ -633,7 +690,7 @@ fun <T> NutraSegmentedControl(
                         .weight(1f)
                         .fillMaxHeight()
                         .clip(NutraTheme.shapes.pill)
-                        .clickable(role = Role.Tab) {
+                        .selectable(selected = isSelected, role = Role.Tab) {
                             if (!isSelected) {
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 onItemSelected(item)
@@ -665,12 +722,12 @@ fun NutraSelectionIndicator(
     iconSize: Dp = 14.dp,
 ) {
     val colors = NutraTheme.colors
-    val bg by animateColorAsState(
+    val bgState = animateColorAsState(
         targetValue = if (selected) colors.ink else Color.Transparent,
         animationSpec = tween(160),
         label = "selCircleBg",
     )
-    val border by animateColorAsState(
+    val borderState = animateColorAsState(
         targetValue = if (selected) colors.ink else colors.divider,
         animationSpec = tween(160),
         label = "selCircleBorder",
@@ -678,9 +735,19 @@ fun NutraSelectionIndicator(
     Box(
         modifier = modifier
             .size(size)
-            .clip(CircleShape)
-            .background(bg)
-            .border(1.5.dp, border, CircleShape),
+            .drawBehind {
+                val radius = this.size.minDimension / 2f
+                val strokePx = 1.5.dp.toPx()
+                val fill = bgState.value
+                if (fill.alpha > 0f) {
+                    drawCircle(color = fill, radius = radius)
+                }
+                drawCircle(
+                    color = borderState.value,
+                    radius = (radius - strokePx / 2f).coerceAtLeast(0f),
+                    style = Stroke(width = strokePx),
+                )
+            },
         contentAlignment = Alignment.Center,
     ) {
         AnimatedVisibility(
@@ -724,8 +791,8 @@ fun NutraSelectableCard(
             .fillMaxWidth()
             .clip(NutraTheme.shapes.lg)
             .background(NutraTheme.colors.surface)
-            .nutraRoundedStroke(borderColorState.value, cornerRadius = 24.dp, strokeWidth = 1.5.dp)
-            .clickable(role = Role.RadioButton) {
+            .nutraRoundedStroke(color = { borderColorState.value }, cornerRadius = 24.dp, strokeWidth = 1.5.dp)
+            .selectable(selected = selected, role = Role.RadioButton) {
                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 onClick()
             }
@@ -790,16 +857,86 @@ fun NutraStepperButton(
     containerColor: Color = NutraTheme.colors.surfaceMuted,
     enabled: Boolean = true,
 ) {
-    NutraIconButton(
-        icon = icon,
-        contentDescription = contentDescription,
-        onClick = onClick,
-        modifier = modifier,
-        size = size,
-        iconSize = 18.dp,
-        containerColor = containerColor,
-        enabled = enabled,
+    val haptic = LocalHapticFeedback.current
+    val scope = rememberCoroutineScope()
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val pressScaleState = animateFloatAsState(
+        targetValue = if (isPressed && enabled) 0.92f else 1f,
+        animationSpec = PressScaleSpring,
+        label = "stepperPressScale",
     )
+    val latestOnClick by rememberUpdatedState(onClick)
+    val latestEnabled by rememberUpdatedState(enabled)
+
+    Box(
+        modifier = modifier
+            .size(size)
+            .graphicsLayer {
+                alpha = if (enabled) 1f else 0.35f
+                val s = pressScaleState.value
+                scaleX = s
+                scaleY = s
+            }
+            .clip(CircleShape)
+            .background(containerColor)
+            .indication(interactionSource, LocalIndication.current)
+            .semantics(mergeDescendants = true) {
+                role = Role.Button
+                if (contentDescription != null) {
+                    this.contentDescription = contentDescription
+                }
+                if (enabled) {
+                    onClick {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        latestOnClick()
+                        true
+                    }
+                } else {
+                    disabled()
+                }
+            }
+            .pointerInput(enabled) {
+                if (!enabled) return@pointerInput
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val press = PressInteraction.Press(down.position)
+                    val pressEmitJob = scope.launch { interactionSource.emit(press) }
+                    var didRepeat = false
+                    val repeatJob = scope.launch {
+                        delay(360L)
+                        var ticks = 0
+                        while (isActive && latestEnabled) {
+                            didRepeat = true
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            latestOnClick()
+                            ticks++
+                            delay(if (ticks >= 8) 55L else 95L)
+                        }
+                    }
+                    val up = waitForUpOrCancellation()
+                    repeatJob.cancel()
+                    scope.launch {
+                        pressEmitJob.join()
+                        interactionSource.emit(
+                            if (up != null) PressInteraction.Release(press) else PressInteraction.Cancel(press),
+                        )
+                    }
+                    if (up != null && !didRepeat && latestEnabled) {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        latestOnClick()
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = NutraTheme.colors.textPrimary,
+            modifier = Modifier.size(18.dp),
+        )
+    }
 }
 
 /** Label on the left, − [pillbox value] + on the right. */
@@ -896,6 +1033,17 @@ fun NutraTextField(
     visualTransformation: VisualTransformation = VisualTransformation.None,
 ) {
     val colors = NutraTheme.colors
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    val strokeColorState = animateColorAsState(
+        targetValue = when {
+            isError -> colors.danger
+            isFocused -> colors.ink.copy(alpha = 0.32f)
+            else -> Color.Transparent
+        },
+        animationSpec = tween(150),
+        label = "textFieldStroke",
+    )
     val startPad = if (compact) 12.dp else 16.dp
     val endPad = when {
         trailing != null && singleLine -> 6.dp
@@ -913,6 +1061,7 @@ fun NutraTextField(
             singleLine = singleLine,
             minLines = minLines,
             maxLines = maxLines,
+            interactionSource = interactionSource,
             textStyle = textStyle.copy(color = colors.textPrimary),
             cursorBrush = SolidColor(colors.accent),
             keyboardOptions = keyboardOptions,
@@ -927,7 +1076,7 @@ fun NutraTextField(
                         .clip(NutraTheme.shapes.md)
                         .background(colors.surfaceMuted)
                         .nutraRoundedStroke(
-                            color = if (isError) colors.danger else Color.Transparent,
+                            color = { strokeColorState.value },
                             cornerRadius = 16.dp,
                             strokeWidth = 1.5.dp,
                         )
@@ -1063,7 +1212,7 @@ fun NutraEmptyState(
 
 /** Ink snackbar. Animate it in with [NutraSnackbarHost]. */
 @Composable
-fun NutraSnackbar(
+private fun NutraSnackbar(
     message: String,
     modifier: Modifier = Modifier,
     actionLabel: String? = null,
@@ -1114,6 +1263,13 @@ fun NutraSnackbar(
     }
 }
 
+private data class SnackbarSnapshot(
+    val message: String,
+    val actionLabel: String?,
+    val onAction: (() -> Unit)?,
+    val icon: ImageVector?,
+)
+
 @Composable
 fun NutraSnackbarHost(
     visible: Boolean,
@@ -1123,13 +1279,28 @@ fun NutraSnackbarHost(
     onAction: (() -> Unit)? = null,
     icon: ImageVector? = null,
 ) {
+    var cached by remember { mutableStateOf<SnackbarSnapshot?>(null) }
+    if (visible && message.isNotBlank()) {
+        cached = SnackbarSnapshot(
+            message = message,
+            actionLabel = actionLabel,
+            onAction = onAction,
+            icon = icon,
+        )
+    }
     AnimatedVisibility(
-        visible = visible,
+        visible = visible && cached != null,
         modifier = modifier,
         enter = fadeIn(tween(180)) + slideInVertically(spring(stiffness = 500f)) { it / 2 },
         exit = fadeOut(tween(150)) + slideOutVertically(tween(150)) { it / 2 },
     ) {
-        NutraSnackbar(message = message, actionLabel = actionLabel, onAction = onAction, icon = icon)
+        val snapshot = cached ?: return@AnimatedVisibility
+        NutraSnackbar(
+            message = snapshot.message,
+            actionLabel = snapshot.actionLabel,
+            onAction = snapshot.onAction,
+            icon = snapshot.icon,
+        )
     }
 }
 
@@ -1186,6 +1357,7 @@ fun NutraDialog(
     onDismiss: (() -> Unit)? = onDismissRequest,
     destructive: Boolean = false,
     confirmEnabled: Boolean = true,
+    confirmHaptic: HapticFeedbackType? = if (destructive) HapticFeedbackType.LongPress else HapticFeedbackType.Confirm,
     content: (@Composable ColumnScope.() -> Unit)? = null,
 ) {
     Dialog(onDismissRequest = onDismissRequest, properties = DialogProperties(usePlatformDefaultWidth = false)) {
@@ -1223,6 +1395,7 @@ fun NutraDialog(
                                 style = if (destructive) NutraButtonStyle.Destructive else NutraButtonStyle.Primary,
                                 size = NutraButtonSize.Medium,
                                 enabled = confirmEnabled,
+                                hapticFeedback = confirmHaptic,
                                 modifier = Modifier.weight(1f),
                             )
                         }
@@ -1289,10 +1462,15 @@ fun NutraNumericInputDialog(
     val parsed = NutraFormatters.parseLocalizedDouble(fieldValue.text)
     val isValid = parsed != null && parsed in minValue..maxValue
     val showError = fieldValue.text.isNotEmpty() && !isValid
+    val strokeColorState = animateColorAsState(
+        targetValue = if (showError) colors.danger else colors.ink.copy(alpha = 0.25f),
+        animationSpec = tween(150),
+        label = "numericStroke",
+    )
 
-    fun submitIfValid() {
+    fun submitIfValid(triggerHaptic: Boolean = false) {
         if (parsed != null && isValid) {
-            haptic.performHapticFeedback(HapticFeedbackType.Confirm)
+            if (triggerHaptic) haptic.performHapticFeedback(HapticFeedbackType.Confirm)
             onConfirm(parsed)
         }
     }
@@ -1301,7 +1479,7 @@ fun NutraNumericInputDialog(
         onDismissRequest = onDismiss,
         title = title,
         confirmText = "Uygula",
-        onConfirm = ::submitIfValid,
+        onConfirm = { submitIfValid(triggerHaptic = false) },
         confirmEnabled = isValid,
         dismissText = "Vazgeç",
         onDismiss = onDismiss,
@@ -1338,7 +1516,7 @@ fun NutraNumericInputDialog(
                     imeAction = ImeAction.Done,
                 ),
                 keyboardActions = KeyboardActions(
-                    onDone = { submitIfValid() },
+                    onDone = { submitIfValid(triggerHaptic = true) },
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1351,7 +1529,7 @@ fun NutraNumericInputDialog(
                             .clip(NutraTheme.shapes.md)
                             .background(colors.surfaceMuted)
                             .nutraRoundedStroke(
-                                color = if (showError) colors.danger else Color.Transparent,
+                                color = { strokeColorState.value },
                                 cornerRadius = 16.dp,
                                 strokeWidth = 1.5.dp,
                             )

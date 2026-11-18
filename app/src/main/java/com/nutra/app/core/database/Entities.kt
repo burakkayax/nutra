@@ -135,7 +135,7 @@ data class FoodItemEntity(
 @Entity(
     tableName = "meal_logs",
     indices = [
-        Index(value = ["dateIso"]),
+        Index(value = ["dateIso", "timestampMillis"]),
         Index(value = ["mealType"]),
         Index(value = ["foodId"]),
         Index(value = ["timestampMillis"]),
@@ -202,7 +202,7 @@ data class WaterLogEntity(
 
 @Entity(
     tableName = "weight_logs",
-    indices = [Index(value = ["dateIso"])],
+    indices = [Index(value = ["dateIso", "timestampMillis"])],
 )
 data class WeightLogEntity(
     @PrimaryKey(autoGenerate = true)

@@ -6,13 +6,14 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -49,7 +50,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithCache
@@ -63,6 +63,7 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -70,6 +71,7 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -78,35 +80,24 @@ import com.nutra.app.core.designsystem.NutraButton
 import com.nutra.app.core.designsystem.NutraButtonSize
 import com.nutra.app.core.designsystem.NutraButtonStyle
 import com.nutra.app.core.designsystem.NutraCard
+import com.nutra.app.core.designsystem.NutraColors
 import com.nutra.app.core.designsystem.NutraDialog
 import com.nutra.app.core.designsystem.NutraDivider
 import com.nutra.app.core.designsystem.NutraDot
 import com.nutra.app.core.designsystem.NutraEmptyState
 import com.nutra.app.core.designsystem.NutraFormatters
-import com.nutra.app.core.designsystem.NutraIconButton
 import com.nutra.app.core.designsystem.NutraIcons
 import com.nutra.app.core.designsystem.NutraNumericInputDialog
 import com.nutra.app.core.designsystem.NutraScreenHeader
 import com.nutra.app.core.designsystem.NutraSegmentedControl
+import com.nutra.app.core.designsystem.NutraStepperButton
 import com.nutra.app.core.designsystem.NutraTheme
-import com.nutra.app.core.designsystem.NutraColors
 import com.nutra.app.domain.model.DailyAnalyticsPoint
 import com.nutra.app.domain.model.GoalType
 import com.nutra.app.domain.model.MacroGoals
-import com.nutra.app.domain.model.UserProfile
 import com.nutra.app.domain.model.WeightTrendPoint
 import kotlin.math.abs
 import kotlin.math.roundToInt
-
-private fun formatInt(value: Int): String = NutraFormatters.formatInt(value)
-
-private fun formatKg(value: Float): String = NutraFormatters.formatKg(value)
-
-private fun formatWaterLitres(ml: Int): String = NutraFormatters.formatWaterLitres(ml)
-
-private fun formatShortDate(dateIso: String?): String = NutraFormatters.formatShortDate(dateIso)
-
-private fun formatShortWeekday(dateIso: String): String = NutraFormatters.formatShortWeekday(dateIso)
 
 @Composable
 fun AnalyticsScreen(
@@ -232,9 +223,9 @@ private fun AnalyticsLoadingSkeleton(
 ) {
     val colors = NutraTheme.colors
     val layoutDirection = LocalLayoutDirection.current
-    val placeholderHeights = listOf(180.dp, 112.dp, 180.dp, 180.dp)
+    val placeholderHeights = remember { listOf(180.dp, 112.dp, 180.dp, 180.dp) }
     val infiniteTransition = rememberInfiniteTransition(label = "analyticsSkeletonPulse")
-    val pulseAlpha by infiniteTransition.animateFloat(
+    val pulseAlphaState = infiniteTransition.animateFloat(
         initialValue = 0.5f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
@@ -277,7 +268,7 @@ private fun AnalyticsLoadingSkeleton(
                     modifier = Modifier
                         .fillMaxWidth(0.38f)
                         .height(14.dp)
-                        .alpha(pulseAlpha)
+                        .graphicsLayer { alpha = pulseAlphaState.value }
                         .clip(NutraTheme.shapes.pill)
                         .background(colors.surfaceMuted),
                 )
@@ -286,7 +277,7 @@ private fun AnalyticsLoadingSkeleton(
                     modifier = Modifier
                         .fillMaxWidth(0.54f)
                         .height(26.dp)
-                        .alpha(pulseAlpha)
+                        .graphicsLayer { alpha = pulseAlphaState.value }
                         .clip(NutraTheme.shapes.sm)
                         .background(colors.surfaceMuted),
                 )
@@ -295,7 +286,7 @@ private fun AnalyticsLoadingSkeleton(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(chartHeight)
-                        .alpha(pulseAlpha)
+                        .graphicsLayer { alpha = pulseAlphaState.value }
                         .clip(NutraTheme.shapes.sm)
                         .background(colors.surfaceMuted),
                 )
@@ -317,6 +308,7 @@ private fun HapticScrubbingCalorieChartCard(
     onScrub: (Int?) -> Unit,
 ) {
     val colors = NutraTheme.colors
+    val hasAnyCalories = remember(points) { points.any { it.calories > 0 } }
 
     NutraCard {
         Row(
@@ -330,7 +322,7 @@ private fun HapticScrubbingCalorieChartCard(
             ) {
                 Text(
                     text = if (scrubbedIndex != null && activePoint != null) {
-                        formatShortDate(activePoint.dateIso)
+                        NutraFormatters.formatShortDate(activePoint.dateIso)
                     } else {
                         "Kalori geçmişi"
                     },
@@ -341,13 +333,13 @@ private fun HapticScrubbingCalorieChartCard(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Text(
-                        text = formatInt(activePoint?.calories ?: 0),
+                        text = NutraFormatters.formatInt(activePoint?.calories ?: 0),
                         style = NutraTheme.typography.numberLarge,
                         color = colors.textPrimary,
                         modifier = Modifier.alignByBaseline(),
                     )
                     Text(
-                        text = "/ ${formatInt(activePoint?.targetCalories ?: targetCalories)} kcal",
+                        text = "/ ${NutraFormatters.formatInt(activePoint?.targetCalories ?: targetCalories)} kcal",
                         style = NutraTheme.typography.body,
                         color = colors.textSecondary,
                         modifier = Modifier.alignByBaseline(),
@@ -356,15 +348,15 @@ private fun HapticScrubbingCalorieChartCard(
             }
 
             Text(
-                text = "Ort. ${formatInt(averageCalories)} kcal",
+                text = "Ort. ${NutraFormatters.formatInt(averageCalories)} kcal",
                 style = NutraTheme.typography.caption,
                 color = colors.textSecondary,
             )
         }
 
-        if (points.isEmpty()) {
+        if (!hasAnyCalories) {
             NutraEmptyState(
-                icon = NutraIcons.MonitorWeight,
+                icon = NutraIcons.InsightsOutlined,
                 title = "Henüz kalori kaydı yok",
                 message = "Bugün sekmesinden öğün eklediğinde grafik oluşur.",
                 modifier = Modifier.padding(top = 16.dp),
@@ -394,7 +386,7 @@ private fun HapticScrubbingCalorieChartCard(
             selectedRange = selectedRange,
             lastAnimatedRange = lastAnimatedRange,
             onRevealRangeAnimated = onRevealRangeAnimated,
-            targetSummaryText = "Hedef: ${formatInt(targetCalories)} kcal",
+            targetSummaryText = "Hedef: ${NutraFormatters.formatInt(targetCalories)} kcal",
             onScrub = onScrub,
         )
     }
@@ -413,6 +405,7 @@ private fun HapticScrubbingWaterChartCard(
     onScrub: (Int?) -> Unit,
 ) {
     val colors = NutraTheme.colors
+    val hasAnyWater = remember(points) { points.any { it.waterMl > 0 } }
 
     NutraCard {
         Row(
@@ -426,7 +419,7 @@ private fun HapticScrubbingWaterChartCard(
             ) {
                 Text(
                     text = if (scrubbedIndex != null && activePoint != null) {
-                        formatShortDate(activePoint.dateIso)
+                        NutraFormatters.formatShortDate(activePoint.dateIso)
                     } else {
                         "Su geçmişi"
                     },
@@ -437,13 +430,13 @@ private fun HapticScrubbingWaterChartCard(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Text(
-                        text = formatInt(activePoint?.waterMl ?: 0),
+                        text = NutraFormatters.formatInt(activePoint?.waterMl ?: 0),
                         style = NutraTheme.typography.numberLarge,
                         color = colors.textPrimary,
                         modifier = Modifier.alignByBaseline(),
                     )
                     Text(
-                        text = "/ ${formatInt(targetWaterMl)} ml",
+                        text = "/ ${NutraFormatters.formatInt(targetWaterMl)} ml",
                         style = NutraTheme.typography.body,
                         color = colors.textSecondary,
                         modifier = Modifier.alignByBaseline(),
@@ -452,13 +445,13 @@ private fun HapticScrubbingWaterChartCard(
             }
 
             Text(
-                text = "Ort. ${formatWaterLitres(averageWaterMl)}",
+                text = "Ort. ${NutraFormatters.formatWaterLitres(averageWaterMl)}",
                 style = NutraTheme.typography.caption,
                 color = colors.textSecondary,
             )
         }
 
-        if (points.isEmpty()) {
+        if (!hasAnyWater) {
             NutraEmptyState(
                 icon = NutraIcons.WaterDrop,
                 title = "Henüz su kaydı yok",
@@ -486,7 +479,7 @@ private fun HapticScrubbingWaterChartCard(
             selectedRange = selectedRange,
             lastAnimatedRange = lastAnimatedRange,
             onRevealRangeAnimated = onRevealRangeAnimated,
-            targetSummaryText = "Hedef: ${formatInt(targetWaterMl)} ml",
+            targetSummaryText = "Hedef: ${NutraFormatters.formatInt(targetWaterMl)} ml",
             onScrub = onScrub,
         )
     }
@@ -551,7 +544,7 @@ private fun HapticScrubbingBarChart(
                 points.forEachIndexed { index, pt ->
                     val isActive = scrubbedIndex == index
                     Text(
-                        text = formatShortWeekday(pt.dateIso),
+                        text = NutraFormatters.formatShortWeekday(pt.dateIso),
                         style = NutraTheme.typography.caption,
                         color = if (isActive) colors.textPrimary else colors.textTertiary,
                         textAlign = TextAlign.Center,
@@ -560,13 +553,13 @@ private fun HapticScrubbingBarChart(
                 }
             } else {
                 Text(
-                    text = formatShortDate(points.firstOrNull()?.dateIso),
+                    text = NutraFormatters.formatShortDate(points.firstOrNull()?.dateIso),
                     style = NutraTheme.typography.caption,
                     color = colors.textTertiary,
                 )
                 if (scrubbedIndex != null && activePoint != null) {
                     Text(
-                        text = formatShortDate(activePoint.dateIso),
+                        text = NutraFormatters.formatShortDate(activePoint.dateIso),
                         style = NutraTheme.typography.labelSmall,
                         color = colors.textPrimary,
                     )
@@ -578,7 +571,7 @@ private fun HapticScrubbingBarChart(
                     )
                 }
                 Text(
-                    text = formatShortDate(points.lastOrNull()?.dateIso),
+                    text = NutraFormatters.formatShortDate(points.lastOrNull()?.dateIso),
                     style = NutraTheme.typography.caption,
                     color = colors.textTertiary,
                 )
@@ -626,7 +619,7 @@ private fun BarChartCanvas(
             .padding(top = 20.dp)
             .height(156.dp),
     ) {
-        Canvas(
+        Spacer(
             modifier = Modifier
                 .fillMaxSize()
                 .pointerInput(points.size) {
@@ -666,55 +659,69 @@ private fun BarChartCanvas(
                             latestOnScrub(null)
                         },
                     )
-                },
-        ) {
-            val targetY = size.height * (1f - (targetValue / maxChartValue).coerceIn(0f, 1f))
-            drawLine(
-                color = subtleTertiary,
-                start = Offset(0f, targetY),
-                end = Offset(size.width, targetY),
-                strokeWidth = 1.dp.toPx(),
-                pathEffect = dashEffect,
-            )
-
-            val count = points.size
-            if (count == 0) return@Canvas
-            val slotWidth = size.width / count.toFloat()
-            val maxBarWidth = when (selectedRange) {
-                AnalyticsRangeOption.DAYS_7 -> 22.dp.toPx()
-                AnalyticsRangeOption.DAYS_14 -> 12.dp.toPx()
-                AnalyticsRangeOption.DAYS_30 -> 6.dp.toPx()
-            }
-            val barWidth = (slotWidth * 0.56f).coerceIn(3.dp.toPx(), maxBarWidth)
-            val minStubHeight = 6.dp.toPx()
-            val corner = CornerRadius(barWidth / 2f, barWidth / 2f)
-            val activeIdx = scrubbedIndexState.value
-            val growth = barGrowthState.value
-
-            for (index in 0 until count) {
-                val pt = points[index]
-                val value = valueProvider(pt)
-                val isSelected = activeIdx == null || activeIdx == index
-                val x = index * slotWidth + (slotWidth - barWidth) / 2f
-                val rawHeight = if (value > 0) {
-                    val targetHeight = (size.height * (value / maxChartValue).coerceIn(0f, 1f))
-                    (targetHeight * growth).coerceAtLeast(minStubHeight)
-                } else {
-                    minStubHeight
                 }
-                val y = size.height - rawHeight
+                .drawWithCache {
+                    val count = points.size
+                    val targetY = size.height * (1f - (targetValue / maxChartValue).coerceIn(0f, 1f))
+                    val strokePx = 1.dp.toPx()
+                    val minStubHeight = 6.dp.toPx()
+                    val slotWidth = if (count > 0) size.width / count.toFloat() else 0f
+                    val maxBarWidth = when (selectedRange) {
+                        AnalyticsRangeOption.DAYS_7 -> 22.dp.toPx()
+                        AnalyticsRangeOption.DAYS_14 -> 12.dp.toPx()
+                        AnalyticsRangeOption.DAYS_30 -> 6.dp.toPx()
+                    }
+                    val barWidth = (slotWidth * 0.56f).coerceIn(3.dp.toPx(), maxBarWidth)
+                    val corner = CornerRadius(barWidth / 2f, barWidth / 2f)
 
-                val baseColor = barColorProvider(pt)
-                val finalColor = if (isSelected) baseColor else baseColor.copy(alpha = 0.28f)
+                    val barX = FloatArray(count)
+                    val targetHeights = FloatArray(count)
+                    val activeColors = Array(count) { Color.Transparent }
+                    val dimmedColors = Array(count) { Color.Transparent }
+                    for (index in 0 until count) {
+                        val pt = points[index]
+                        val value = valueProvider(pt)
+                        barX[index] = index * slotWidth + (slotWidth - barWidth) / 2f
+                        targetHeights[index] = if (value > 0) {
+                            size.height * (value / maxChartValue).coerceIn(0f, 1f)
+                        } else {
+                            0f
+                        }
+                        val baseColor = barColorProvider(pt)
+                        activeColors[index] = baseColor
+                        dimmedColors[index] = baseColor.copy(alpha = 0.28f)
+                    }
 
-                drawRoundRect(
-                    color = finalColor,
-                    topLeft = Offset(x, y),
-                    size = Size(barWidth, rawHeight),
-                    cornerRadius = corner,
-                )
-            }
-        }
+                    onDrawBehind {
+                        drawLine(
+                            color = subtleTertiary,
+                            start = Offset(0f, targetY),
+                            end = Offset(size.width, targetY),
+                            strokeWidth = strokePx,
+                            pathEffect = dashEffect,
+                        )
+                        if (count == 0) return@onDrawBehind
+
+                        val activeIdx = scrubbedIndexState.value
+                        val growth = barGrowthState.value
+                        for (index in 0 until count) {
+                            val tHeight = targetHeights[index]
+                            val rawHeight = if (tHeight > 0f) {
+                                (tHeight * growth).coerceAtLeast(minStubHeight)
+                            } else {
+                                minStubHeight
+                            }
+                            val isSelected = activeIdx == null || activeIdx == index
+                            drawRoundRect(
+                                color = if (isSelected) activeColors[index] else dimmedColors[index],
+                                topLeft = Offset(barX[index], size.height - rawHeight),
+                                size = Size(barWidth, rawHeight),
+                                cornerRadius = corner,
+                            )
+                        }
+                    }
+                },
+        )
     }
 }
 
@@ -760,7 +767,7 @@ private fun MacroSplitComparisonCard(
                 )
                 Text(
                     text = if (activeDay != null && totalActualKcal > 0f) {
-                        "${formatShortDate(activeDay.dateIso)} · Hedef oranlarla karşılaştırma"
+                        "${NutraFormatters.formatShortDate(activeDay.dateIso)} · Hedef oranlarla karşılaştırma"
                     } else {
                         "Seçili gün için makro verisi bekleniyor"
                     },
@@ -838,7 +845,7 @@ private fun StackedRatioBar(
     carbsRatio: Float,
     fatRatio: Float,
     hasData: Boolean,
-    height: androidx.compose.ui.unit.Dp,
+    height: Dp,
     alpha: Float,
 ) {
     val colors = NutraTheme.colors
@@ -847,20 +854,32 @@ private fun StackedRatioBar(
     val fColor = colors.fat.copy(alpha = alpha)
     val trackColor = colors.surfaceMuted
 
+    val ratioSpring = remember { spring<Float>(dampingRatio = 0.88f, stiffness = 360f) }
+    val animPState = animateFloatAsState(if (hasData) proteinRatio else 0f, ratioSpring, label = "macroRatioP")
+    val animCState = animateFloatAsState(if (hasData) carbsRatio else 0f, ratioSpring, label = "macroRatioC")
+    val animFState = animateFloatAsState(if (hasData) fatRatio else 0f, ratioSpring, label = "macroRatioF")
+
     Spacer(
         modifier = Modifier
             .fillMaxWidth()
             .height(height)
             .clip(NutraTheme.shapes.pill)
             .drawBehind {
-                if (!hasData) {
+                val pRaw = animPState.value
+                val cRaw = animCState.value
+                val fRaw = animFState.value
+                if (!hasData && pRaw + cRaw + fRaw < 0.01f) {
                     drawRect(color = trackColor)
                     return@drawBehind
                 }
-                val pVal = if (proteinRatio > 0.005f) proteinRatio.coerceAtLeast(0.01f) else 0f
-                val cVal = if (carbsRatio > 0.005f) carbsRatio.coerceAtLeast(0.01f) else 0f
-                val fVal = if (fatRatio > 0.005f) fatRatio.coerceAtLeast(0.01f) else 0f
-                val total = (pVal + cVal + fVal).coerceAtLeast(0.001f)
+                val pVal = if (pRaw > 0.005f) pRaw.coerceAtLeast(0.01f) else 0f
+                val cVal = if (cRaw > 0.005f) cRaw.coerceAtLeast(0.01f) else 0f
+                val fVal = if (fRaw > 0.005f) fRaw.coerceAtLeast(0.01f) else 0f
+                val total = (pVal + cVal + fVal)
+                if (total <= 0.001f) {
+                    drawRect(color = trackColor)
+                    return@drawBehind
+                }
 
                 val gapPx = 2.dp.toPx()
                 val activeCount = (if (pVal > 0f) 1 else 0) + (if (cVal > 0f) 1 else 0) + (if (fVal > 0f) 1 else 0)
@@ -941,7 +960,7 @@ private fun MacroSplitColumn(
 private fun WeightTrendBezierCard(
     points: List<WeightTrendPoint>,
     scrubbedIndex: Int?,
-    profile: UserProfile,
+    profile: AnalyticsProfileSlice,
     onScrub: (Int?) -> Unit,
     onAddWeightClick: () -> Unit,
 ) {
@@ -963,7 +982,7 @@ private fun WeightTrendBezierCard(
                     color = colors.textPrimary,
                 )
                 Text(
-                    text = "7 günlük ortalama · Hedef ${formatKg(profile.targetWeightKg)} kg",
+                    text = "7 günlük ortalama · Hedef ${NutraFormatters.formatKg(profile.targetWeightKg)} kg",
                     style = NutraTheme.typography.caption,
                     color = colors.textSecondary,
                 )
@@ -1007,12 +1026,12 @@ private fun WeightTrendBezierCard(
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
-                        text = formatShortDate(only.dateIso),
+                        text = NutraFormatters.formatShortDate(only.dateIso),
                         style = NutraTheme.typography.caption,
                         color = colors.textSecondary,
                     )
                     Text(
-                        text = "${formatKg(only.rawWeightKg)} kg",
+                        text = "${NutraFormatters.formatKg(only.rawWeightKg)} kg",
                         style = NutraTheme.typography.numberLarge,
                         color = colors.textPrimary,
                     )
@@ -1055,7 +1074,7 @@ private fun WeightTrendBezierCard(
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             Text(
-                text = "${formatShortDate(activePoint.dateIso)} · Trend",
+                text = "${NutraFormatters.formatShortDate(activePoint.dateIso)} · Trend",
                 style = NutraTheme.typography.caption,
                 color = if (scrubbedIndex != null) colors.accent else colors.textSecondary,
             )
@@ -1063,13 +1082,13 @@ private fun WeightTrendBezierCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
-                    text = "${formatKg(activePoint.emaTrendKg)} kg",
+                    text = "${NutraFormatters.formatKg(activePoint.emaTrendKg)} kg",
                     style = NutraTheme.typography.numberLarge,
                     color = colors.textPrimary,
                     modifier = Modifier.alignByBaseline(),
                 )
                 Text(
-                    text = "$deltaSign${formatKg(deltaFromStart)} kg",
+                    text = "$deltaSign${NutraFormatters.formatKg(deltaFromStart)} kg",
                     style = NutraTheme.typography.labelSmall,
                     color = deltaColor,
                     modifier = Modifier.alignByBaseline(),
@@ -1114,19 +1133,19 @@ private fun WeightTrendBezierCard(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = formatShortDate(points.first().dateIso),
+                text = NutraFormatters.formatShortDate(points.first().dateIso),
                 style = NutraTheme.typography.caption,
                 color = colors.textTertiary,
             )
             if (scrubbedIndex != null) {
                 Text(
-                    text = formatShortDate(activePoint.dateIso),
+                    text = NutraFormatters.formatShortDate(activePoint.dateIso),
                     style = NutraTheme.typography.labelSmall,
                     color = colors.textPrimary,
                 )
             }
             Text(
-                text = formatShortDate(points.last().dateIso),
+                text = NutraFormatters.formatShortDate(points.last().dateIso),
                 style = NutraTheme.typography.caption,
                 color = if (scrubbedIndex == null) colors.textSecondary else colors.textTertiary,
             )
@@ -1386,10 +1405,7 @@ private fun LogWeightDialog(
         title = "Tartı ekle",
         message = "Bugünkü kilonu kaydederek trend eğrini güncel tut.",
         confirmText = "Kaydet",
-        onConfirm = {
-            haptic.performHapticFeedback(HapticFeedbackType.Confirm)
-            onSave(weight)
-        },
+        onConfirm = { onSave(weight) },
         dismissText = "Vazgeç",
         onDismiss = onDismiss,
     ) {
@@ -1410,7 +1426,7 @@ private fun LogWeightDialog(
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text = "${formatKg(weight)} kg",
+                    text = "${NutraFormatters.formatKg(weight)} kg",
                     style = NutraTheme.typography.numberLarge,
                     color = colors.textPrimary,
                 )
@@ -1423,7 +1439,7 @@ private fun LogWeightDialog(
             ) {
                 listOf(-1.0f, -0.5f, 0.5f, 1.0f).forEach { delta ->
                     val prefix = if (delta > 0f) "+" else ""
-                    val label = "$prefix${formatKg(delta)}"
+                    val label = "$prefix${NutraFormatters.formatKg(delta)}"
                     Box(
                         modifier = Modifier
                             .weight(1f)
@@ -1447,7 +1463,7 @@ private fun LogWeightDialog(
                 }
             }
 
-            // 0.1 kg precision stepper
+            // 0.1 kg precision stepper (supports press-and-hold auto-repeat)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1457,14 +1473,13 @@ private fun LogWeightDialog(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                NutraIconButton(
+                NutraStepperButton(
                     icon = NutraIcons.Remove,
                     contentDescription = "0.1 kg azalt",
                     onClick = {
                         weight = (((weight - 0.1f) * 10f).roundToInt() / 10f).coerceIn(35f, 250f)
                     },
                     size = 40.dp,
-                    iconSize = 18.dp,
                     containerColor = colors.surfaceElevated,
                 )
                 Text(
@@ -1472,14 +1487,13 @@ private fun LogWeightDialog(
                     style = NutraTheme.typography.caption,
                     color = colors.textSecondary,
                 )
-                NutraIconButton(
+                NutraStepperButton(
                     icon = Icons.Rounded.Add,
                     contentDescription = "0.1 kg artır",
                     onClick = {
                         weight = (((weight + 0.1f) * 10f).roundToInt() / 10f).coerceIn(35f, 250f)
                     },
                     size = 40.dp,
-                    iconSize = 18.dp,
                     containerColor = colors.surfaceElevated,
                 )
             }
@@ -1489,7 +1503,7 @@ private fun LogWeightDialog(
     if (showManualInput) {
         NutraNumericInputDialog(
             title = "Tartı",
-            initialValue = formatKg(weight),
+            initialValue = NutraFormatters.formatKg(weight),
             unit = "kg",
             rangeHint = "35,0 – 250,0 kg",
             minValue = 35.0,

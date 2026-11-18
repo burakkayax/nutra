@@ -2,6 +2,7 @@ package com.nutra.app.feature.profile
 
 import android.content.ContentResolver
 import android.net.Uri
+import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nutra.app.core.datastore.UserPreferencesDataStore
@@ -27,10 +28,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.time.LocalDate
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
+import kotlin.math.abs
 
+@Immutable
 data class ProfileUiState(
     val isLoading: Boolean = true,
     val profile: UserProfile = UserProfile(),
@@ -229,6 +233,7 @@ class ProfileViewModel @Inject constructor(
                 calorieScalingBaseline = null
                 lastCalorieScaledGoals = null
             }
+            val previousWeight = preferencesDataStore.getSnapshot().currentWeightKg
             val updatedGoals = if (recalculateGoals) {
                 calculatorUseCase.calculateGoals(
                     sex = sex,
@@ -255,6 +260,9 @@ class ProfileViewModel @Inject constructor(
                 goalType = goalType,
                 updatedGoals = updatedGoals,
             )
+            if (abs(currentWeightKg - previousWeight) >= 0.05f) {
+                nutritionRepository.logWeight(LocalDate.now().toString(), currentWeightKg)
+            }
             emitFeedback(
                 if (recalculateGoals) {
                     "Vücut profili güncellendi ve hedefler yeniden hesaplandı"
@@ -330,18 +338,6 @@ class ProfileViewModel @Inject constructor(
                     return@launch
                 }
                 importBackupJsonInternal(raw)
-            } finally {
-                isBackupBusyFlow.value = false
-            }
-        }
-    }
-
-    fun importBackupJson(rawJson: String) {
-        if (isBackupBusyFlow.value) return
-        isBackupBusyFlow.value = true
-        viewModelScope.launch {
-            try {
-                importBackupJsonInternal(rawJson)
             } finally {
                 isBackupBusyFlow.value = false
             }
