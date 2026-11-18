@@ -50,7 +50,7 @@ class OpenFoodFactsService @Inject constructor(
                 if (!response.isSuccessful) {
                     return@withContext AppResult.Error("Barkod sunucusuna ulaşılamadı (Kod: ${response.code}).")
                 }
-                val bodyStr = response.body?.string().orEmpty()
+                val bodyStr = response.body.string()
                 parseProductResponse(cleaned, bodyStr)
             }
         } catch (e: CancellationException) {

@@ -304,7 +304,7 @@ class GeminiAiService @Inject constructor(
                 .build()
 
             okHttpClient.newCall(request).await().use { response ->
-                val rawBody = response.body?.string().orEmpty()
+                val rawBody = response.body.string()
                 if (!response.isSuccessful) {
                     return AppResult.Error("Gemini API yanıt vermedi (Kod: ${response.code}). Lütfen API anahtarınızı kontrol edin.")
                 }
