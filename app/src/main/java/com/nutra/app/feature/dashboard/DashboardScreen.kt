@@ -3,6 +3,7 @@ package com.nutra.app.feature.dashboard
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.expandVertically
@@ -88,8 +89,10 @@ import com.nutra.app.domain.model.MealSummary
 import com.nutra.app.domain.model.MealType
 import com.nutra.app.feature.logging.AddFoodModalSheet
 import kotlinx.coroutines.delay
+import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.format.TextStyle
+import java.time.temporal.TemporalAdjusters
 import kotlin.math.roundToInt
 
 private fun formatInt(value: Int): String = NutraFormatters.formatInt(value)
@@ -289,6 +292,7 @@ fun DashboardScreen(
             onCommitAiItems = viewModel::commitAiAnalyzedItems,
             onBarcodeInputChange = viewModel::updateBarcodeInput,
             onLookupBarcode = viewModel::lookupBarcode,
+            onCustomFoodDraftChange = viewModel::updateCustomFoodDraft,
             onCreateAndLogCustomFood = viewModel::createAndLogCustomFood,
         )
     }
@@ -444,8 +448,12 @@ private fun WeekDateStrip(
             }
         }
 
+        val weekStart = remember(weekDays, selectedDate) {
+            weekDays.firstOrNull() ?: selectedDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+        }
+
         AnimatedContent(
-            targetState = weekDays.firstOrNull() ?: selectedDate,
+            targetState = weekStart,
             transitionSpec = {
                 val forward = targetState >= initialState
                 (slideInHorizontally(tween(200)) { if (forward) it / 6 else -it / 6 } +
@@ -454,12 +462,15 @@ private fun WeekDateStrip(
                         fadeOut(tween(120)))
             },
             label = "weekStripTransition",
-        ) { _ ->
+        ) { renderedWeekStart ->
+            val renderedWeekDays = remember(renderedWeekStart) {
+                (0L..6L).map { renderedWeekStart.plusDays(it) }
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                weekDays.forEach { day ->
+                renderedWeekDays.forEach { day ->
                     val isSelected = day == selectedDate
                     val isDayToday = day == today
 
@@ -911,17 +922,23 @@ private fun MealCard(
             enter = expandVertically(tween(220)) + fadeIn(tween(180)),
             exit = shrinkVertically(tween(180)) + fadeOut(tween(120)),
         ) {
-            Column(modifier = Modifier.padding(top = 14.dp)) {
+            Column(
+                modifier = Modifier
+                    .padding(top = 14.dp)
+                    .animateContentSize(tween(180)),
+            ) {
                 NutraDivider()
                 mealSummary.items.forEachIndexed { idx, item ->
                     key(item.id) {
                         val dismissState = rememberSwipeToDismissBoxState()
+                        var dismissDispatched by remember(item.id, item.timestampMillis) { mutableStateOf(false) }
 
                         SwipeToDismissBox(
                             state = dismissState,
                             enableDismissFromStartToEnd = false,
                             onDismiss = { value ->
-                                if (value == SwipeToDismissBoxValue.EndToStart) {
+                                if (value == SwipeToDismissBoxValue.EndToStart && !dismissDispatched) {
+                                    dismissDispatched = true
                                     onDeleteLogItem(item)
                                 }
                             },

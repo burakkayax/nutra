@@ -70,7 +70,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -101,6 +101,7 @@ import com.nutra.app.feature.profile.EditBodyProfileScreen
 import com.nutra.app.feature.profile.ProfileScreen
 import com.nutra.app.feature.profile.ProfileViewModel
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
@@ -168,7 +169,16 @@ class MainActivity : ComponentActivity() {
             .distinctUntilChanged()
 
         setContent {
-            val rootConfig by rootConfigFlow.collectAsStateWithLifecycle(initialValue = null)
+            val initialConfig = remember {
+                preferencesDataStore.currentCachedProfile()?.let { profile ->
+                    RootAppConfig(
+                        onboardingCompleted = profile.onboardingCompleted,
+                        themePreference = profile.themePreference,
+                        useDynamicColor = profile.useDynamicColor,
+                    )
+                }
+            }
+            val rootConfig by rootConfigFlow.collectAsStateWithLifecycle(initialValue = initialConfig)
 
             val config = rootConfig
             if (config == null) {
@@ -264,10 +274,18 @@ fun NutraAppRoot(
             }
 
             LaunchedEffect(Unit) {
+                delay(180)
                 withFrameNanos { }
                 prewarmAnalytics = true
+                delay(120)
                 withFrameNanos { }
                 prewarmProfile = true
+            }
+
+            LaunchedEffect(activeTab) {
+                if (activeTab == PrimaryDestination.DASHBOARD) {
+                    dashboardViewModel.refreshToday()
+                }
             }
 
             val mountAnalytics = hasVisitedAnalytics || prewarmAnalytics || activeTab == PrimaryDestination.ANALYTICS
@@ -314,6 +332,11 @@ fun NutraAppRoot(
                         TabSlotBox(isSelected = activeTab == PrimaryDestination.ANALYTICS && !showEditBodyProfile) {
                             saveableStateHolder.SaveableStateProvider(PrimaryDestination.ANALYTICS) {
                                 val analyticsViewModel: AnalyticsViewModel = hiltViewModel()
+                                LaunchedEffect(activeTab) {
+                                    if (activeTab == PrimaryDestination.ANALYTICS) {
+                                        analyticsViewModel.refreshToday()
+                                    }
+                                }
                                 AnalyticsScreen(
                                     viewModel = analyticsViewModel,
                                     contentPadding = contentPadding,
@@ -402,7 +425,7 @@ fun NutraAppRoot(
 }
 
 /**
- * Keeps mounted tab state alive off-screen while skipping placement and accessibility when unselected.
+ * Keeps mounted tab state alive off-screen while skipping measure/placement, focus, and accessibility when hidden.
  */
 @Composable
 private fun TabSlotBox(
@@ -411,32 +434,40 @@ private fun TabSlotBox(
 ) {
     val alphaState = animateFloatAsState(
         targetValue = if (isSelected) 1f else 0f,
-        animationSpec = tween(durationMillis = 160),
+        animationSpec = tween(durationMillis = 150),
         label = "tabAlpha",
     )
 
     val baseModifier = Modifier
         .fillMaxSize()
         .zIndex(if (isSelected) 1f else 0f)
+        .focusProperties { canFocus = isSelected }
         .graphicsLayer { alpha = alphaState.value }
         .layout { measurable, constraints ->
-            val placeable = measurable.measure(constraints)
-            layout(placeable.width, placeable.height) {
-                if (isSelected || alphaState.value > 0.01f) {
+            val shouldLayout = isSelected || alphaState.value > 0.01f
+            if (!shouldLayout) {
+                layout(0, 0) {}
+            } else {
+                val placeable = measurable.measure(constraints)
+                layout(placeable.width, placeable.height) {
                     placeable.place(0, 0)
                 }
             }
         }
-        .pointerInput(isSelected) {
-            if (!isSelected) {
-                awaitPointerEventScope {
-                    while (true) {
-                        val event = awaitPointerEvent(PointerEventPass.Initial)
-                        event.changes.forEach { it.consume() }
+        .then(
+            if (isSelected) {
+                Modifier
+            } else {
+                Modifier.pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            event.changes.forEach { it.consume() }
+                        }
                     }
                 }
-            }
-        }
+            },
+        )
 
     Box(
         modifier = if (isSelected) {
@@ -460,7 +491,14 @@ private fun NutraBottomBar(
 ) {
     val haptic = LocalHapticFeedback.current
     val colors = NutraTheme.colors
-    val shadowElevation = if (colors.isDark) 0.dp else 12.dp
+    val shadowElevation = if (colors.isDark) 0.dp else 6.dp
+    val borderStroke = remember(colors.isDark, colors.segmentThumb, colors.divider) {
+        if (colors.isDark) {
+            BorderStroke(1.dp, colors.segmentThumb.copy(alpha = 0.65f))
+        } else {
+            BorderStroke(1.dp, colors.divider.copy(alpha = 0.75f))
+        }
+    }
     val scrimBrush = remember(colors.background) {
         Brush.verticalGradient(
             0f to Color.Transparent,
@@ -481,16 +519,11 @@ private fun NutraBottomBar(
             modifier = Modifier
                 .widthIn(max = 328.dp)
                 .fillMaxWidth()
-                .height(64.dp)
-                .shadow(
-                    elevation = shadowElevation,
-                    shape = NutraTheme.shapes.pill,
-                    ambientColor = Color.Black.copy(alpha = 0.06f),
-                    spotColor = Color.Black.copy(alpha = 0.10f),
-                ),
+                .height(64.dp),
             shape = NutraTheme.shapes.pill,
             color = if (colors.isDark) colors.surfaceElevated else colors.surface,
-            border = if (colors.isDark) BorderStroke(1.dp, colors.segmentThumb.copy(alpha = 0.65f)) else null,
+            shadowElevation = shadowElevation,
+            border = borderStroke,
         ) {
             Row(
                 modifier = Modifier

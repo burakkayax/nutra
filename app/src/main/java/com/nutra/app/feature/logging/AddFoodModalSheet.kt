@@ -110,6 +110,7 @@ import com.nutra.app.domain.model.FoodCategory
 import com.nutra.app.domain.model.FoodItem
 import com.nutra.app.domain.model.MealType
 import com.nutra.app.domain.model.SmartComboSuggestion
+import com.nutra.app.feature.dashboard.CustomFoodDraft
 import com.nutra.app.feature.dashboard.LoggingSheetUiState
 import com.nutra.app.feature.dashboard.LoggingTabMode
 import kotlin.math.roundToInt
@@ -161,6 +162,7 @@ fun AddFoodModalSheet(
     onCommitAiItems: () -> Unit,
     onBarcodeInputChange: (String) -> Unit,
     onLookupBarcode: (String?) -> Unit,
+    onCustomFoodDraftChange: (CustomFoodDraft) -> Unit,
     onCreateAndLogCustomFood: (String, String, Float, Int, Float, Float, Float) -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -331,6 +333,8 @@ fun AddFoodModalSheet(
                                 )
                                 LoggingTabMode.CUSTOM -> CustomFoodCreatorTab(
                                     mealType = activeMeal,
+                                    draft = state.customFoodDraft,
+                                    onDraftChange = onCustomFoodDraftChange,
                                     onCreateAndLog = onCreateAndLogCustomFood,
                                 )
                             }
@@ -564,7 +568,7 @@ private fun CatalogFoodResultsList(
         modifier = modifier,
         contentPadding = PaddingValues(bottom = 24.dp),
     ) {
-        item(key = "catalog_top_section") {
+        item(key = "catalog_top_section", contentType = "top_section") {
             Column(modifier = Modifier.fillMaxWidth()) {
                 if (showSmartCombos) {
                     NutraSectionHeader(
@@ -588,18 +592,19 @@ private fun CatalogFoodResultsList(
                                 shape = NutraTheme.shapes.md,
                                 contentPadding = PaddingValues(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(10.dp),
-                                modifier = Modifier.width(244.dp),
+                                modifier = Modifier.width(268.dp),
                             ) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically,
+                                    verticalAlignment = Alignment.Top,
                                 ) {
                                     Text(
                                         text = combo.title,
                                         style = NutraTheme.typography.titleSmall,
                                         color = NutraTheme.colors.textPrimary,
-                                        maxLines = 1,
+                                        minLines = 2,
+                                        maxLines = 2,
                                         overflow = TextOverflow.Ellipsis,
                                         modifier = Modifier
                                             .weight(1f)
@@ -656,7 +661,7 @@ private fun CatalogFoodResultsList(
         }
 
         if (!isCatalogLoading && rankedFoods.isEmpty()) {
-            item(key = "empty_catalog") {
+            item(key = "empty_catalog", contentType = "empty_state") {
                 NutraEmptyState(
                     icon = NutraIcons.SearchOff,
                     title = "Eşleşen besin bulunamadı",
@@ -664,7 +669,11 @@ private fun CatalogFoodResultsList(
                 )
             }
         } else if (rankedFoods.isNotEmpty()) {
-            itemsIndexed(rankedFoods, key = { _, item -> item.id }) { index, food ->
+            itemsIndexed(
+                items = rankedFoods,
+                key = { _, item -> item.id },
+                contentType = { _, _ -> "food_row" },
+            ) { index, food ->
                 val summaryLine = remember(
                     food.id,
                     food.caloriesPer100g,
@@ -780,7 +789,8 @@ private fun PortionPickerContent(
     val selectedUnit = units.getOrElse(selectedUnitIndex) { units.first() }
     val isRawGramMode = selectedUnit.label == "1 Gram"
     val parsedCustomGrams = NutraFormatters.parseLocalizedFloat(customGramInput)
-    val isCustomGramValid = !isRawGramMode || (parsedCustomGrams != null && parsedCustomGrams >= 1f)
+    val isCustomGramValid = !isRawGramMode || (parsedCustomGrams != null && parsedCustomGrams in 1f..3000f)
+    val showRawGramError = isRawGramMode && customGramInput.isNotEmpty() && !isCustomGramValid
 
     val effectiveGrams = if (isRawGramMode) {
         parsedCustomGrams?.coerceIn(1f, 3000f) ?: food.defaultUnitGrams
@@ -936,17 +946,27 @@ private fun PortionPickerContent(
 
             // Quantity control
             if (isRawGramMode) {
-                NutraTextField(
-                    value = customGramInput,
-                    onValueChange = {
-                        customGramInput = NutraFormatters.sanitizeNumericInput(it, allowDecimal = true)
-                    },
-                    label = "Gramaj",
-                    placeholder = "100",
-                    suffix = "g",
-                    isError = customGramInput.isNotEmpty() && !isCustomGramValid,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    NutraTextField(
+                        value = customGramInput,
+                        onValueChange = {
+                            customGramInput = NutraFormatters.sanitizeNumericInput(it, allowDecimal = true)
+                        },
+                        label = "Gramaj",
+                        placeholder = "100",
+                        suffix = "g",
+                        isError = showRawGramError,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    )
+                    if (showRawGramError) {
+                        Text(
+                            text = "1 – 3.000 g arası bir değer girin",
+                            style = NutraTheme.typography.caption,
+                            color = NutraTheme.colors.danger,
+                            modifier = Modifier.padding(start = 4.dp),
+                        )
+                    }
+                }
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(
@@ -1097,10 +1117,12 @@ private fun CompactMultiplierPill(
     val haptic = LocalHapticFeedback.current
     val bgState = animateColorAsState(
         targetValue = if (selected) NutraTheme.colors.ink else unselectedColor,
+        animationSpec = tween(150),
         label = "multBg",
     )
     val fg by animateColorAsState(
         targetValue = if (selected) NutraTheme.colors.onInk else NutraTheme.colors.textSecondary,
+        animationSpec = tween(150),
         label = "multFg",
     )
     Box(
@@ -1516,6 +1538,8 @@ private fun BarcodeLookupTab(
 @Composable
 private fun CustomFoodCreatorTab(
     mealType: MealType,
+    draft: CustomFoodDraft,
+    onDraftChange: (CustomFoodDraft) -> Unit,
     onCreateAndLog: (
         name: String,
         unitLabel: String,
@@ -1527,25 +1551,19 @@ private fun CustomFoodCreatorTab(
     ) -> Unit,
 ) {
     val haptic = LocalHapticFeedback.current
-    var name by remember { mutableStateOf("") }
-    var unitLabel by remember { mutableStateOf("1 Porsiyon") }
-    var unitGrams by remember { mutableStateOf("100") }
-    var calories by remember { mutableStateOf("") }
-    var protein by remember { mutableStateOf("") }
-    var carbs by remember { mutableStateOf("") }
-    var fat by remember { mutableStateOf("") }
 
-    val parsedGrams = NutraFormatters.parseLocalizedFloat(unitGrams)
-    val parsedCalories = calories.toIntOrNull()
-    val parsedProtein = NutraFormatters.parseLocalizedFloat(protein) ?: 0f
-    val parsedCarbs = NutraFormatters.parseLocalizedFloat(carbs) ?: 0f
-    val parsedFat = NutraFormatters.parseLocalizedFloat(fat) ?: 0f
-    val isGramsInvalid = unitGrams.isNotEmpty() && (parsedGrams == null || parsedGrams < 1f)
-    val isFormValid = name.isNotBlank() &&
+    val parsedGrams = NutraFormatters.parseLocalizedFloat(draft.unitGrams)
+    val parsedCalories = draft.calories.toIntOrNull()
+    val parsedProtein = NutraFormatters.parseLocalizedFloat(draft.protein) ?: 0f
+    val parsedCarbs = NutraFormatters.parseLocalizedFloat(draft.carbs) ?: 0f
+    val parsedFat = NutraFormatters.parseLocalizedFloat(draft.fat) ?: 0f
+    val isGramsInvalid = draft.unitGrams.isNotEmpty() && (parsedGrams == null || parsedGrams !in 1f..5000f)
+    val isCaloriesInvalid = draft.calories.isNotEmpty() && (parsedCalories == null || parsedCalories !in 0..20000)
+    val isFormValid = draft.name.isNotBlank() &&
         parsedCalories != null &&
-        parsedCalories >= 0 &&
+        parsedCalories in 0..20000 &&
         parsedGrams != null &&
-        parsedGrams >= 1f
+        parsedGrams in 1f..5000f
 
     Column(modifier = Modifier.fillMaxSize()) {
         Column(
@@ -1562,8 +1580,8 @@ private fun CustomFoodCreatorTab(
             )
 
             NutraTextField(
-                value = name,
-                onValueChange = { name = it },
+                value = draft.name,
+                onValueChange = { onDraftChange(draft.copy(name = it)) },
                 label = "Besin veya yemek adı",
                 placeholder = "Örn: Anne köftesi",
             )
@@ -1573,16 +1591,16 @@ private fun CustomFoodCreatorTab(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 NutraTextField(
-                    value = unitLabel,
-                    onValueChange = { unitLabel = it },
+                    value = draft.unitLabel,
+                    onValueChange = { onDraftChange(draft.copy(unitLabel = it)) },
                     label = "Porsiyon adı",
                     placeholder = "1 Porsiyon",
                     modifier = Modifier.weight(1.2f),
                 )
                 NutraTextField(
-                    value = unitGrams,
+                    value = draft.unitGrams,
                     onValueChange = {
-                        unitGrams = NutraFormatters.sanitizeNumericInput(it, allowDecimal = true)
+                        onDraftChange(draft.copy(unitGrams = NutraFormatters.sanitizeNumericInput(it, allowDecimal = true)))
                     },
                     label = "Gramaj",
                     placeholder = "100",
@@ -1593,23 +1611,44 @@ private fun CustomFoodCreatorTab(
                 )
             }
 
+            if (isGramsInvalid) {
+                Text(
+                    text = "Gramaj 1 – 5.000 g arasında olmalıdır",
+                    style = NutraTheme.typography.caption,
+                    color = NutraTheme.colors.danger,
+                    modifier = Modifier.padding(start = 4.dp),
+                )
+            }
+
             NutraTextField(
-                value = calories,
-                onValueChange = { calories = NutraFormatters.sanitizeNumericInput(it, allowDecimal = false) },
+                value = draft.calories,
+                onValueChange = {
+                    onDraftChange(draft.copy(calories = NutraFormatters.sanitizeNumericInput(it, allowDecimal = false)))
+                },
                 label = "Kalori",
                 placeholder = "240",
                 suffix = "kcal",
+                isError = isCaloriesInvalid,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             )
+
+            if (isCaloriesInvalid) {
+                Text(
+                    text = "Kalori 0 – 20.000 kcal arasında olmalıdır",
+                    style = NutraTheme.typography.caption,
+                    color = NutraTheme.colors.danger,
+                    modifier = Modifier.padding(start = 4.dp),
+                )
+            }
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 NutraTextField(
-                    value = protein,
+                    value = draft.protein,
                     onValueChange = {
-                        protein = NutraFormatters.sanitizeNumericInput(it, allowDecimal = true)
+                        onDraftChange(draft.copy(protein = NutraFormatters.sanitizeNumericInput(it, allowDecimal = true)))
                     },
                     label = "Protein",
                     placeholder = "0",
@@ -1619,9 +1658,9 @@ private fun CustomFoodCreatorTab(
                     modifier = Modifier.weight(1f),
                 )
                 NutraTextField(
-                    value = carbs,
+                    value = draft.carbs,
                     onValueChange = {
-                        carbs = NutraFormatters.sanitizeNumericInput(it, allowDecimal = true)
+                        onDraftChange(draft.copy(carbs = NutraFormatters.sanitizeNumericInput(it, allowDecimal = true)))
                     },
                     label = "Karb",
                     placeholder = "0",
@@ -1631,9 +1670,9 @@ private fun CustomFoodCreatorTab(
                     modifier = Modifier.weight(1f),
                 )
                 NutraTextField(
-                    value = fat,
+                    value = draft.fat,
                     onValueChange = {
-                        fat = NutraFormatters.sanitizeNumericInput(it, allowDecimal = true)
+                        onDraftChange(draft.copy(fat = NutraFormatters.sanitizeNumericInput(it, allowDecimal = true)))
                     },
                     label = "Yağ",
                     placeholder = "0",
@@ -1656,8 +1695,8 @@ private fun CustomFoodCreatorTab(
                     val safeCalories = parsedCalories ?: return@NutraButton
                     haptic.performHapticFeedback(HapticFeedbackType.Confirm)
                     onCreateAndLog(
-                        name,
-                        unitLabel,
+                        draft.name,
+                        draft.unitLabel,
                         safeGrams,
                         safeCalories,
                         parsedProtein,

@@ -226,21 +226,6 @@ data class DailyNutritionSummary(
     val consumedFat: Float get() = meals.sumOf { it.totalFat.toDouble() }.toFloat()
 }
 
-enum class DayGoalStatus {
-    EMPTY,
-    PARTIAL,
-    ON_TARGET,
-    OVER_BUDGET,
-}
-
-@Immutable
-data class DayStatusIndicator(
-    val dateIso: String,
-    val consumedCalories: Int,
-    val targetCalories: Int,
-    val status: DayGoalStatus,
-)
-
 @Immutable
 @Serializable
 data class ComboFoodEntry(

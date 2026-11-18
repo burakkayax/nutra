@@ -7,16 +7,23 @@ import com.nutra.app.domain.model.ServingUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.floatOrNull
 import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.roundToInt
+
+private fun JsonElement?.asNonBlankStringOrNull(): String? =
+    (this as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
+
+private fun JsonElement?.asFiniteFloatOrNull(): Float? =
+    (this as? JsonPrimitive)?.floatOrNull?.takeIf { it.isFinite() }
 
 @Singleton
 class OpenFoodFactsService @Inject constructor(
@@ -43,57 +50,61 @@ class OpenFoodFactsService @Inject constructor(
                     return@withContext AppResult.Error("Barkod sunucusuna ulaşılamadı (Kod: ${response.code}).")
                 }
                 val bodyStr = response.body?.string().orEmpty()
-                val root = json.parseToJsonElement(bodyStr).jsonObject
-                val status = root["status"]?.jsonPrimitive?.intOrNull ?: 0
-                if (status != 1) {
-                    return@withContext AppResult.Error("Bu barkoda ($cleaned) ait ürün OpenFoodFacts veritabanında bulunamadı.")
-                }
-
-                val product = root["product"]?.jsonObject
-                    ?: return@withContext AppResult.Error("Ürün detayı okunamadı.")
-
-                val name = product["product_name_tr"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
-                    ?: product["product_name"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
-                    ?: "Barkodlu Ürün ($cleaned)"
-
-                val brands = product["brands"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
-                    ?: "Paketli Ürün"
-
-                val nutriments = product["nutriments"]?.jsonObject
-                val energyKcal = nutriments?.get("energy-kcal_100g")?.jsonPrimitive?.floatOrNull?.takeIf { it.isFinite() }
-                    ?: nutriments?.get("energy-kcal")?.jsonPrimitive?.floatOrNull?.takeIf { it.isFinite() }
-                    ?: nutriments?.get("energy_100g")?.jsonPrimitive?.floatOrNull?.takeIf { it.isFinite() }?.div(4.184f)
-                val kcal100 = energyKcal?.roundToInt() ?: 150
-
-                val protein100 = nutriments?.get("proteins_100g")?.jsonPrimitive?.floatOrNull?.takeIf { it.isFinite() } ?: 5f
-                val carbs100 = nutriments?.get("carbohydrates_100g")?.jsonPrimitive?.floatOrNull?.takeIf { it.isFinite() } ?: 20f
-                val fat100 = nutriments?.get("fat_100g")?.jsonPrimitive?.floatOrNull?.takeIf { it.isFinite() } ?: 5f
-
-                val servingGrams = product["serving_quantity"]?.jsonPrimitive?.floatOrNull
-                    ?.takeIf { it.isFinite() }
-                    ?.coerceIn(10f, 500f)
-                    ?: 100f
-
-                val item = FoodItem(
-                    name = name,
-                    subtitle = brands,
-                    category = FoodCategory.CUSTOM,
-                    caloriesPer100g = kcal100.coerceAtLeast(0),
-                    proteinPer100g = protein100.coerceAtLeast(0f),
-                    carbsPer100g = carbs100.coerceAtLeast(0f),
-                    fatPer100g = fat100.coerceAtLeast(0f),
-                    defaultUnitLabel = if (servingGrams == 100f) "100 Gram" else "1 Paket/Porsiyon (${servingGrams.roundToInt()}g)",
-                    defaultUnitGrams = servingGrams,
-                    alternateUnits = listOf(ServingUnit("100 Gram", 100f)),
-                    barcode = cleaned,
-                    isCustom = true,
-                )
-                AppResult.Success(item)
+                parseProductResponse(cleaned, bodyStr)
             }
         } catch (e: IOException) {
             AppResult.Error("Barkod sorgulanırken internet bağlantısı kurulamadı. Yerel barkodları (örn. 8690526011012) çevrimdışı kullanabilirsiniz.", e)
         } catch (e: Exception) {
             AppResult.Error("Barkod verisi işlenirken hata oluştu. Lütfen tekrar deneyin.", e)
         }
+    }
+
+    internal fun parseProductResponse(cleanedBarcode: String, bodyStr: String): AppResult<FoodItem> {
+        val root = json.parseToJsonElement(bodyStr) as? JsonObject
+            ?: return AppResult.Error("Ürün verisi okunamadı.")
+        val status = (root["status"] as? JsonPrimitive)?.intOrNull ?: 0
+        if (status != 1) {
+            return AppResult.Error("Bu barkoda ($cleanedBarcode) ait ürün OpenFoodFacts veritabanında bulunamadı.")
+        }
+
+        val product = root["product"] as? JsonObject
+            ?: return AppResult.Error("Ürün detayı okunamadı.")
+
+        val name = product["product_name_tr"].asNonBlankStringOrNull()
+            ?: product["product_name"].asNonBlankStringOrNull()
+            ?: "Barkodlu Ürün ($cleanedBarcode)"
+
+        val brands = product["brands"].asNonBlankStringOrNull()
+            ?: "Paketli Ürün"
+
+        val nutriments = product["nutriments"] as? JsonObject
+        val energyKcal = nutriments?.get("energy-kcal_100g").asFiniteFloatOrNull()
+            ?: nutriments?.get("energy-kcal").asFiniteFloatOrNull()
+            ?: nutriments?.get("energy_100g").asFiniteFloatOrNull()?.div(4.184f)
+        val kcal100 = energyKcal?.roundToInt() ?: 150
+
+        val protein100 = nutriments?.get("proteins_100g").asFiniteFloatOrNull() ?: 5f
+        val carbs100 = nutriments?.get("carbohydrates_100g").asFiniteFloatOrNull() ?: 20f
+        val fat100 = nutriments?.get("fat_100g").asFiniteFloatOrNull() ?: 5f
+
+        val servingGrams = product["serving_quantity"].asFiniteFloatOrNull()
+            ?.coerceIn(10f, 500f)
+            ?: 100f
+
+        val item = FoodItem(
+            name = name,
+            subtitle = brands,
+            category = FoodCategory.CUSTOM,
+            caloriesPer100g = kcal100.coerceAtLeast(0),
+            proteinPer100g = protein100.coerceAtLeast(0f),
+            carbsPer100g = carbs100.coerceAtLeast(0f),
+            fatPer100g = fat100.coerceAtLeast(0f),
+            defaultUnitLabel = if (servingGrams == 100f) "100 Gram" else "1 Paket/Porsiyon (${servingGrams.roundToInt()}g)",
+            defaultUnitGrams = servingGrams,
+            alternateUnits = listOf(ServingUnit("100 Gram", 100f)),
+            barcode = cleanedBarcode,
+            isCustom = true,
+        )
+        return AppResult.Success(item)
     }
 }

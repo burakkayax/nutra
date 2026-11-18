@@ -13,25 +13,23 @@ private data class ScoredFood(
     val score: Double,
 )
 
+/**
+ * Pre-aggregated historical usage statistics for a specific [MealType],
+ * allowing repeated search and category filtering without re-scanning historical logs.
+ */
+data class MealUsageStats(
+    val mealSpecificCounts: Map<Long, Int>,
+    val mealSpecificLatestTime: Map<Long, Long>,
+    val globalCounts: Map<Long, Int>,
+    val maxTimestamp: Long,
+)
+
 class ContextualMealRankerAndComboEngine @Inject constructor() {
 
-    /**
-     * Ranks foods specifically for the active [mealType], prioritizing:
-     * 1. Recent & frequent items logged in this specific [mealType]
-     * 2. User favorites & custom foods
-     * 3. Natural meal affinity ([FoodItem.preferredMealTypes])
-     * 4. Overall usage frequency
-     */
-    fun rankFoodsForMeal(
-        allFoods: List<FoodItem>,
+    fun prepareMealUsageStats(
         historicalLogs: List<MealLogItem>,
         mealType: MealType,
-        query: String,
-        selectedCategory: FoodCategory,
-    ): List<FoodItem> {
-        val normQuery = TurkishTextNormalizer.normalize(query)
-        val queryTokens = TurkishTextNormalizer.tokenizeNormalized(normQuery)
-
+    ): MealUsageStats {
         val mealSpecificCounts = HashMap<Long, Int>()
         val mealSpecificLatestTime = HashMap<Long, Long>()
         val globalCounts = HashMap<Long, Int>()
@@ -51,6 +49,48 @@ class ContextualMealRankerAndComboEngine @Inject constructor() {
                 }
             }
         }
+        return MealUsageStats(
+            mealSpecificCounts = mealSpecificCounts,
+            mealSpecificLatestTime = mealSpecificLatestTime,
+            globalCounts = globalCounts,
+            maxTimestamp = maxTimestamp,
+        )
+    }
+
+    /**
+     * Ranks foods specifically for the active [mealType], prioritizing:
+     * 1. Recent & frequent items logged in this specific [mealType]
+     * 2. User favorites & custom foods
+     * 3. Natural meal affinity ([FoodItem.preferredMealTypes])
+     * 4. Overall usage frequency
+     */
+    fun rankFoodsForMeal(
+        allFoods: List<FoodItem>,
+        historicalLogs: List<MealLogItem>,
+        mealType: MealType,
+        query: String,
+        selectedCategory: FoodCategory,
+    ): List<FoodItem> = rankFoodsWithStats(
+        allFoods = allFoods,
+        stats = prepareMealUsageStats(historicalLogs, mealType),
+        mealType = mealType,
+        query = query,
+        selectedCategory = selectedCategory,
+    )
+
+    fun rankFoodsWithStats(
+        allFoods: List<FoodItem>,
+        stats: MealUsageStats,
+        mealType: MealType,
+        query: String,
+        selectedCategory: FoodCategory,
+    ): List<FoodItem> {
+        val normQuery = TurkishTextNormalizer.normalize(query)
+        val queryTokens = TurkishTextNormalizer.tokenizeNormalized(normQuery)
+        val mealSpecificCounts = stats.mealSpecificCounts
+        val mealSpecificLatestTime = stats.mealSpecificLatestTime
+        val globalCounts = stats.globalCounts
+        val maxTimestamp = stats.maxTimestamp
 
         val scored = ArrayList<ScoredFood>(allFoods.size)
         for (food in allFoods) {

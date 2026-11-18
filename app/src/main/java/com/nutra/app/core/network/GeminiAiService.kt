@@ -15,12 +15,10 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
@@ -310,14 +308,15 @@ class GeminiAiService @Inject constructor(
                     return AppResult.Error("Gemini API yanıt vermedi (Kod: ${response.code}). Lütfen API anahtarınızı kontrol edin.")
                 }
 
-                val root = json.parseToJsonElement(rawBody).jsonObject
-                val textContent = root["candidates"]
-                    ?.jsonArray?.firstOrNull()
-                    ?.jsonObject?.get("content")
-                    ?.jsonObject?.get("parts")
-                    ?.jsonArray?.firstOrNull()
-                    ?.jsonObject?.get("text")
-                    ?.jsonPrimitive?.content
+                val root = json.parseToJsonElement(rawBody) as? JsonObject
+                    ?: return AppResult.Error("AI yanıtı çözümlenemedi.")
+                val firstCandidate = (root["candidates"] as? JsonArray)?.firstOrNull() as? JsonObject
+                val content = firstCandidate?.get("content") as? JsonObject
+                val firstPart = (content?.get("parts") as? JsonArray)?.firstOrNull() as? JsonObject
+                val textContent = (firstPart?.get("text") as? JsonPrimitive)
+                    ?.takeIf { it.isString }
+                    ?.content
+                    ?.takeIf { it.isNotBlank() }
                     ?: return AppResult.Error("AI yanıtı çözümlenemedi.")
 
                 val parsed = json.decodeFromString<GeminiFoodAnalysisResponseDto>(textContent)

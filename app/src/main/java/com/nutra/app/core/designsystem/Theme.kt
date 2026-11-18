@@ -100,7 +100,11 @@ fun NutraTheme(
     val backgroundArgb = colors.background.toArgb()
     if (!view.isInEditMode) {
         DisposableEffect(view, backgroundArgb) {
-            view.context.findActivity()?.window?.setBackgroundDrawable(backgroundArgb.toDrawable())
+            val window = view.context.findActivity()?.window
+            val currentBg = (window?.decorView?.background as? android.graphics.drawable.ColorDrawable)?.color
+            if (currentBg != backgroundArgb) {
+                window?.setBackgroundDrawable(backgroundArgb.toDrawable())
+            }
             onDispose {}
         }
     }

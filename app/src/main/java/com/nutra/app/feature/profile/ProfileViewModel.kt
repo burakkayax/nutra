@@ -27,12 +27,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 
 data class ProfileUiState(
     val isLoading: Boolean = true,
     val profile: UserProfile = UserProfile(),
+    val isBackupBusy: Boolean = false,
     val feedbackMessage: String? = null,
     val feedbackEventId: Long = 0L,
 )
@@ -46,19 +48,26 @@ class ProfileViewModel @Inject constructor(
 
     private val profileGoalBounds = MacroGoalBounds()
     private val goalsMutex = Mutex()
+    private val pendingEditCount = AtomicInteger(0)
+    private var latestOptimisticGoals: MacroGoals? = null
     private var calorieScalingBaseline: MacroGoals? = null
     private var lastCalorieScaledGoals: MacroGoals? = null
 
+    private val pendingGoalsFlow = MutableStateFlow<MacroGoals?>(null)
+    private val isBackupBusyFlow = MutableStateFlow(false)
     private val feedbackSeq = AtomicLong(0L)
     private val feedbackFlow = MutableStateFlow<Pair<String?, Long>>(null to 0L)
 
     val uiState: StateFlow<ProfileUiState> = combine(
         preferencesDataStore.userProfileFlow,
+        pendingGoalsFlow,
+        isBackupBusyFlow,
         feedbackFlow,
-    ) { profile, (message, eventId) ->
+    ) { profile, pendingGoals, isBackupBusy, (message, eventId) ->
         ProfileUiState(
             isLoading = false,
-            profile = profile,
+            profile = if (pendingGoals != null) profile.copy(goals = pendingGoals) else profile,
+            isBackupBusy = isBackupBusy,
             feedbackMessage = message,
             feedbackEventId = eventId,
         )
@@ -73,20 +82,16 @@ class ProfileViewModel @Inject constructor(
     }
 
     fun adjustCalorieGoal(delta: Int) {
-        viewModelScope.launch {
-            goalsMutex.withLock {
-                val current = preferencesDataStore.getSnapshot().goals
-                applyCalorieGoalLocked(current, current.calories + delta)
-            }
+        launchGoalEdit {
+            val current = currentGoalsLocked()
+            applyCalorieGoalLocked(current, current.calories + delta)
         }
     }
 
     fun setCalorieGoal(calories: Int) {
-        viewModelScope.launch {
-            goalsMutex.withLock {
-                val current = preferencesDataStore.getSnapshot().goals
-                applyCalorieGoalLocked(current, calories)
-            }
+        launchGoalEdit {
+            val current = currentGoalsLocked()
+            applyCalorieGoalLocked(current, calories)
         }
     }
 
@@ -115,36 +120,55 @@ class ProfileViewModel @Inject constructor(
     }
 
     fun adjustWaterGoal(delta: Int) {
-        viewModelScope.launch {
-            goalsMutex.withLock {
-                val current = preferencesDataStore.getSnapshot().goals
-                applyWaterGoalLocked(current, current.waterMl + delta)
-            }
+        launchGoalEdit {
+            val current = currentGoalsLocked()
+            applyWaterGoalLocked(current, current.waterMl + delta)
         }
     }
 
     fun setWaterGoal(waterMl: Int) {
+        launchGoalEdit {
+            val current = currentGoalsLocked()
+            applyWaterGoalLocked(current, waterMl)
+        }
+    }
+
+    private fun launchGoalEdit(block: suspend () -> Unit) {
+        pendingEditCount.incrementAndGet()
         viewModelScope.launch {
-            goalsMutex.withLock {
-                val current = preferencesDataStore.getSnapshot().goals
-                applyWaterGoalLocked(current, waterMl)
+            try {
+                goalsMutex.withLock {
+                    block()
+                }
+            } finally {
+                if (pendingEditCount.decrementAndGet() == 0) {
+                    latestOptimisticGoals = null
+                    pendingGoalsFlow.value = null
+                }
             }
         }
     }
 
+    private suspend fun currentGoalsLocked(): MacroGoals =
+        latestOptimisticGoals ?: preferencesDataStore.getSnapshot().goals
+
+    private suspend fun persistGoalsLocked(updated: MacroGoals) {
+        latestOptimisticGoals = updated
+        pendingGoalsFlow.value = updated
+        preferencesDataStore.updateGoals(updated)
+    }
+
     private fun updateMacroGoal(transform: (MacroGoals) -> MacroGoals) {
-        viewModelScope.launch {
-            goalsMutex.withLock {
-                calorieScalingBaseline = null
-                lastCalorieScaledGoals = null
-                val current = preferencesDataStore.getSnapshot().goals
-                val updated = calculatorUseCase.recalculateCaloriesFromMacros(
-                    goals = transform(current),
-                    bounds = profileGoalBounds,
-                )
-                preferencesDataStore.updateGoals(updated)
-                emitFeedback("Kalori hedefi ${formatTrInt(updated.calories)} kcal olarak güncellendi")
-            }
+        launchGoalEdit {
+            calorieScalingBaseline = null
+            lastCalorieScaledGoals = null
+            val current = currentGoalsLocked()
+            val updated = calculatorUseCase.recalculateCaloriesFromMacros(
+                goals = transform(current),
+                bounds = profileGoalBounds,
+            )
+            persistGoalsLocked(updated)
+            emitFeedback("Kalori hedefi ${formatTrInt(updated.calories)} kcal olarak güncellendi")
         }
     }
 
@@ -159,7 +183,7 @@ class ProfileViewModel @Inject constructor(
             bounds = profileGoalBounds,
         ).copy(waterMl = current.waterMl)
         lastCalorieScaledGoals = updated
-        preferencesDataStore.updateGoals(updated)
+        persistGoalsLocked(updated)
         emitFeedback("Makro hedefleri ${formatTrInt(updated.calories)} kcal için güncellendi")
     }
 
@@ -168,27 +192,25 @@ class ProfileViewModel @Inject constructor(
         val updated = current.copy(waterMl = nextWater)
         calorieScalingBaseline = calorieScalingBaseline?.copy(waterMl = nextWater)
         lastCalorieScaledGoals = lastCalorieScaledGoals?.copy(waterMl = nextWater)
-        preferencesDataStore.updateGoals(updated)
+        persistGoalsLocked(updated)
         emitFeedback("Su hedefi güncellendi")
     }
 
     fun recalculateWithMifflinStJeor() {
-        viewModelScope.launch {
-            goalsMutex.withLock {
-                calorieScalingBaseline = null
-                lastCalorieScaledGoals = null
-                val p = preferencesDataStore.getSnapshot()
-                val calculated = calculatorUseCase.calculateGoals(
-                    sex = p.sex,
-                    age = p.age,
-                    heightCm = p.heightCm,
-                    weightKg = p.currentWeightKg,
-                    activityLevel = p.activityLevel,
-                    goalType = p.goalType,
-                )
-                preferencesDataStore.updateGoals(calculated)
-                emitFeedback("Mifflin-St Jeor formülüne göre hedefler yenilendi")
-            }
+        launchGoalEdit {
+            calorieScalingBaseline = null
+            lastCalorieScaledGoals = null
+            val p = preferencesDataStore.getSnapshot()
+            val calculated = calculatorUseCase.calculateGoals(
+                sex = p.sex,
+                age = p.age,
+                heightCm = p.heightCm,
+                weightKg = p.currentWeightKg,
+                activityLevel = p.activityLevel,
+                goalType = p.goalType,
+            )
+            persistGoalsLocked(calculated)
+            emitFeedback("Mifflin-St Jeor formülüne göre hedefler yenilendi")
         }
     }
 
@@ -202,42 +224,44 @@ class ProfileViewModel @Inject constructor(
         goalType: GoalType,
         recalculateGoals: Boolean,
     ) {
-        viewModelScope.launch {
-            goalsMutex.withLock {
-                if (recalculateGoals) {
-                    calorieScalingBaseline = null
-                    lastCalorieScaledGoals = null
-                }
-                val updatedGoals = if (recalculateGoals) {
-                    calculatorUseCase.calculateGoals(
-                        sex = sex,
-                        age = age,
-                        heightCm = heightCm,
-                        weightKg = currentWeightKg,
-                        activityLevel = activityLevel,
-                        goalType = goalType,
-                    )
-                } else {
-                    null
-                }
-                preferencesDataStore.updateBodyMetricsAndGoal(
+        launchGoalEdit {
+            if (recalculateGoals) {
+                calorieScalingBaseline = null
+                lastCalorieScaledGoals = null
+            }
+            val updatedGoals = if (recalculateGoals) {
+                calculatorUseCase.calculateGoals(
                     sex = sex,
                     age = age,
                     heightCm = heightCm,
-                    currentWeightKg = currentWeightKg,
-                    targetWeightKg = targetWeightKg,
+                    weightKg = currentWeightKg,
                     activityLevel = activityLevel,
                     goalType = goalType,
-                    updatedGoals = updatedGoals,
                 )
-                emitFeedback(
-                    if (recalculateGoals) {
-                        "Vücut profili güncellendi ve hedefler yeniden hesaplandı"
-                    } else {
-                        "Vücut profili güncellendi"
-                    },
-                )
+            } else {
+                null
             }
+            if (updatedGoals != null) {
+                latestOptimisticGoals = updatedGoals
+                pendingGoalsFlow.value = updatedGoals
+            }
+            preferencesDataStore.updateBodyMetricsAndGoal(
+                sex = sex,
+                age = age,
+                heightCm = heightCm,
+                currentWeightKg = currentWeightKg,
+                targetWeightKg = targetWeightKg,
+                activityLevel = activityLevel,
+                goalType = goalType,
+                updatedGoals = updatedGoals,
+            )
+            emitFeedback(
+                if (recalculateGoals) {
+                    "Vücut profili güncellendi ve hedefler yeniden hesaplandı"
+                } else {
+                    "Vücut profili güncellendi"
+                },
+            )
         }
     }
 
@@ -257,61 +281,85 @@ class ProfileViewModel @Inject constructor(
     }
 
     fun exportBackupToUri(contentResolver: ContentResolver, uri: Uri) {
+        if (isBackupBusyFlow.value) return
+        isBackupBusyFlow.value = true
         viewModelScope.launch {
-            when (val res = nutritionRepository.exportBackupJson()) {
-                is AppResult.Success -> {
-                    val writeResult = withContext(Dispatchers.IO) {
-                        runCatching {
-                            val stream = runCatching { contentResolver.openOutputStream(uri, "wt") }.getOrNull()
-                                ?: contentResolver.openOutputStream(uri)
-                                ?: error("Dosya açılamadı")
-                            stream.use { out ->
-                                out.write(res.data.toByteArray(Charsets.UTF_8))
+            try {
+                when (val res = nutritionRepository.exportBackupJson()) {
+                    is AppResult.Success -> {
+                        val writeResult = withContext(Dispatchers.IO) {
+                            runCatching {
+                                val stream = runCatching { contentResolver.openOutputStream(uri, "wt") }.getOrNull()
+                                    ?: contentResolver.openOutputStream(uri)
+                                    ?: error("Dosya açılamadı")
+                                stream.use { out ->
+                                    out.write(res.data.toByteArray(Charsets.UTF_8))
+                                }
                             }
                         }
+                        emitFeedback(
+                            if (writeResult.isSuccess) {
+                                "Yedek dosyası kaydedildi"
+                            } else {
+                                "Yedek dosyası yazılamadı"
+                            },
+                        )
                     }
-                    emitFeedback(
-                        if (writeResult.isSuccess) {
-                            "Yedek dosyası kaydedildi"
-                        } else {
-                            "Yedek dosyası yazılamadı"
-                        },
-                    )
+                    is AppResult.Error -> {
+                        emitFeedback(res.message)
+                    }
                 }
-                is AppResult.Error -> {
-                    emitFeedback(res.message)
-                }
+            } finally {
+                isBackupBusyFlow.value = false
             }
         }
     }
 
     fun importBackupFromUri(contentResolver: ContentResolver, uri: Uri) {
+        if (isBackupBusyFlow.value) return
+        isBackupBusyFlow.value = true
         viewModelScope.launch {
-            val raw = withContext(Dispatchers.IO) {
-                runCatching {
-                    contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-                }.getOrNull()
+            try {
+                val raw = withContext(Dispatchers.IO) {
+                    runCatching {
+                        contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                    }.getOrNull()
+                }
+                if (raw.isNullOrBlank()) {
+                    emitFeedback("Yedek dosyası okunamadı")
+                    return@launch
+                }
+                importBackupJsonInternal(raw)
+            } finally {
+                isBackupBusyFlow.value = false
             }
-            if (raw.isNullOrBlank()) {
-                emitFeedback("Yedek dosyası okunamadı")
-                return@launch
-            }
-            importBackupJson(raw)
         }
     }
 
     fun importBackupJson(rawJson: String) {
+        if (isBackupBusyFlow.value) return
+        isBackupBusyFlow.value = true
         viewModelScope.launch {
-            goalsMutex.withLock {
-                when (val res = nutritionRepository.importBackupJson(rawJson)) {
-                    is AppResult.Success -> {
-                        calorieScalingBaseline = null
-                        lastCalorieScaledGoals = null
-                        emitFeedback("Yedek başarıyla geri yüklendi")
-                    }
-                    is AppResult.Error -> {
-                        emitFeedback(res.message)
-                    }
+            try {
+                importBackupJsonInternal(rawJson)
+            } finally {
+                isBackupBusyFlow.value = false
+            }
+        }
+    }
+
+    private suspend fun importBackupJsonInternal(rawJson: String) {
+        goalsMutex.withLock {
+            when (val res = nutritionRepository.importBackupJson(rawJson)) {
+                is AppResult.Success -> {
+                    latestOptimisticGoals = null
+                    pendingGoalsFlow.value = null
+                    calorieScalingBaseline = null
+                    lastCalorieScaledGoals = null
+                    emitFeedback("Yedek başarıyla geri yüklendi")
+                }
+                is AppResult.Error -> {
+                    emitFeedback(res.message)
                 }
             }
         }

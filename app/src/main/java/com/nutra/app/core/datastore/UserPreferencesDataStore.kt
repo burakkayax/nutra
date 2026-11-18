@@ -18,11 +18,17 @@ import com.nutra.app.domain.model.MacroGoals
 import com.nutra.app.domain.model.ThemePreference
 import com.nutra.app.domain.model.UserProfile
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.withContext
 import java.io.IOException
 import javax.inject.Inject
@@ -34,6 +40,8 @@ private val Context.nutraDataStore: DataStore<Preferences> by preferencesDataSto
 class UserPreferencesDataStore @Inject constructor(
     @param:ApplicationContext private val context: Context,
 ) {
+    private val dataStoreScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     private object Keys {
         val SEX = stringPreferencesKey("sex")
         val AGE = intPreferencesKey("age")
@@ -56,7 +64,14 @@ class UserPreferencesDataStore @Inject constructor(
         val GEMINI_MODEL = stringPreferencesKey("gemini_model")
     }
 
-    val userProfileFlow: Flow<UserProfile> = context.nutraDataStore.data
+    private companion object {
+        val SEX_BY_NAME: Map<String, BiologicalSex> = BiologicalSex.entries.associateBy { it.name }
+        val ACTIVITY_BY_NAME: Map<String, ActivityLevel> = ActivityLevel.entries.associateBy { it.name }
+        val GOAL_BY_NAME: Map<String, GoalType> = GoalType.entries.associateBy { it.name }
+        val THEME_BY_NAME: Map<String, ThemePreference> = ThemePreference.entries.associateBy { it.name }
+    }
+
+    private val sharedProfileFlow: SharedFlow<UserProfile> = context.nutraDataStore.data
         .catch { exception ->
             if (exception is IOException) {
                 emit(emptyPreferences())
@@ -64,49 +79,50 @@ class UserPreferencesDataStore @Inject constructor(
                 throw exception
             }
         }
-        .map { prefs ->
-            val sex = prefs[Keys.SEX]?.let {
-                runCatching { BiologicalSex.valueOf(it) }.getOrNull()
-            } ?: BiologicalSex.MALE
+        .map { prefs -> parseUserProfile(prefs) }
+        .distinctUntilChanged()
+        .shareIn(
+            scope = dataStoreScope,
+            started = SharingStarted.Eagerly,
+            replay = 1,
+        )
 
-            val activityLevel = prefs[Keys.ACTIVITY_LEVEL]?.let {
-                runCatching { ActivityLevel.valueOf(it) }.getOrNull()
-            } ?: ActivityLevel.MODERATE
+    val userProfileFlow: Flow<UserProfile> = sharedProfileFlow
 
-            val goalType = prefs[Keys.GOAL_TYPE]?.let {
-                runCatching { GoalType.valueOf(it) }.getOrNull()
-            } ?: GoalType.LOSE_WEIGHT
+    fun currentCachedProfile(): UserProfile? = sharedProfileFlow.replayCache.firstOrNull()
 
-            val themePref = prefs[Keys.THEME_PREFERENCE]?.let {
-                runCatching { ThemePreference.valueOf(it) }.getOrNull()
-            } ?: ThemePreference.SYSTEM
+    private fun parseUserProfile(prefs: Preferences): UserProfile {
+        val sex = prefs[Keys.SEX]?.let { SEX_BY_NAME[it] } ?: BiologicalSex.MALE
+        val activityLevel = prefs[Keys.ACTIVITY_LEVEL]?.let { ACTIVITY_BY_NAME[it] } ?: ActivityLevel.MODERATE
+        val goalType = prefs[Keys.GOAL_TYPE]?.let { GOAL_BY_NAME[it] } ?: GoalType.LOSE_WEIGHT
+        val themePref = prefs[Keys.THEME_PREFERENCE]?.let { THEME_BY_NAME[it] } ?: ThemePreference.SYSTEM
 
-            val goals = MacroGoals(
-                calories = prefs[Keys.GOAL_CALORIES] ?: 2100,
-                proteinGrams = prefs[Keys.GOAL_PROTEIN] ?: 140,
-                carbsGrams = prefs[Keys.GOAL_CARBS] ?: 220,
-                fatGrams = prefs[Keys.GOAL_FAT] ?: 70,
-                waterMl = prefs[Keys.GOAL_WATER_ML] ?: 2500,
-            )
+        val goals = MacroGoals(
+            calories = prefs[Keys.GOAL_CALORIES] ?: 2100,
+            proteinGrams = prefs[Keys.GOAL_PROTEIN] ?: 140,
+            carbsGrams = prefs[Keys.GOAL_CARBS] ?: 220,
+            fatGrams = prefs[Keys.GOAL_FAT] ?: 70,
+            waterMl = prefs[Keys.GOAL_WATER_ML] ?: 2500,
+        )
 
-            UserProfile(
-                sex = sex,
-                age = prefs[Keys.AGE] ?: 28,
-                heightCm = prefs[Keys.HEIGHT_CM] ?: 176,
-                currentWeightKg = prefs[Keys.CURRENT_WEIGHT_KG] ?: 75f,
-                targetWeightKg = prefs[Keys.TARGET_WEIGHT_KG] ?: 70f,
-                activityLevel = activityLevel,
-                goalType = goalType,
-                goals = goals,
-                onboardingCompleted = prefs[Keys.ONBOARDING_COMPLETED] ?: false,
-                themePreference = themePref,
-                useDynamicColor = prefs[Keys.USE_DYNAMIC_COLOR] ?: false,
-                geminiApiKey = prefs[Keys.GEMINI_API_KEY] ?: "",
-                geminiModel = prefs[Keys.GEMINI_MODEL] ?: "gemini-2.5-flash",
-            )
-        }
+        return UserProfile(
+            sex = sex,
+            age = prefs[Keys.AGE] ?: 28,
+            heightCm = prefs[Keys.HEIGHT_CM] ?: 176,
+            currentWeightKg = prefs[Keys.CURRENT_WEIGHT_KG] ?: 75f,
+            targetWeightKg = prefs[Keys.TARGET_WEIGHT_KG] ?: 70f,
+            activityLevel = activityLevel,
+            goalType = goalType,
+            goals = goals,
+            onboardingCompleted = prefs[Keys.ONBOARDING_COMPLETED] ?: false,
+            themePreference = themePref,
+            useDynamicColor = prefs[Keys.USE_DYNAMIC_COLOR] ?: false,
+            geminiApiKey = prefs[Keys.GEMINI_API_KEY] ?: "",
+            geminiModel = prefs[Keys.GEMINI_MODEL] ?: "gemini-2.5-flash",
+        )
+    }
 
-    suspend fun getSnapshot(): UserProfile = userProfileFlow.first()
+    suspend fun getSnapshot(): UserProfile = sharedProfileFlow.first()
 
     suspend fun saveOnboardingProfile(profile: UserProfile) {
         context.nutraDataStore.edit { prefs ->

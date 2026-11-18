@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -42,6 +43,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -58,6 +60,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -77,6 +80,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
@@ -532,8 +536,16 @@ fun NutraChip(
 ) {
     val haptic = LocalHapticFeedback.current
     val colors = NutraTheme.colors
-    val bgState = animateColorAsState(if (selected) colors.ink else colors.surfaceMuted, label = "chipBg")
-    val fg by animateColorAsState(if (selected) colors.onInk else colors.textSecondary, label = "chipFg")
+    val bgState = animateColorAsState(
+        targetValue = if (selected) colors.ink else colors.surfaceMuted,
+        animationSpec = tween(150),
+        label = "chipBg",
+    )
+    val fg by animateColorAsState(
+        targetValue = if (selected) colors.onInk else colors.textSecondary,
+        animationSpec = tween(150),
+        label = "chipFg",
+    )
     Row(
         modifier = modifier
             .height(40.dp)
@@ -1132,6 +1144,7 @@ fun NutraModalSheet(
     onDismissRequest: () -> Unit,
     modifier: Modifier = Modifier,
     sheetState: SheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    contentWindowInsets: @Composable () -> WindowInsets = { BottomSheetDefaults.windowInsets },
     content: @Composable ColumnScope.() -> Unit,
 ) {
     ModalBottomSheet(
@@ -1143,6 +1156,7 @@ fun NutraModalSheet(
         contentColor = NutraTheme.colors.textPrimary,
         scrimColor = NutraTheme.colors.scrim,
         tonalElevation = 0.dp,
+        contentWindowInsets = contentWindowInsets,
         dragHandle = {
             Box(
                 modifier = Modifier
@@ -1255,6 +1269,7 @@ fun NutraNumericInputDialog(
 ) {
     val colors = NutraTheme.colors
     val haptic = LocalHapticFeedback.current
+    val keyboardController = LocalSoftwareKeyboardController.current
     val focusRequester = remember { FocusRequester() }
     var fieldValue by remember(initialValue) {
         mutableStateOf(
@@ -1266,7 +1281,9 @@ fun NutraNumericInputDialog(
     }
 
     LaunchedEffect(Unit) {
+        withFrameNanos { }
         focusRequester.requestFocus()
+        keyboardController?.show()
     }
 
     val parsed = NutraFormatters.parseLocalizedDouble(fieldValue.text)

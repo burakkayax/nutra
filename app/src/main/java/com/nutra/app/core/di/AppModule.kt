@@ -1,11 +1,14 @@
 package com.nutra.app.core.di
 
 import android.content.Context
+import android.database.sqlite.SQLiteDatabase
 import androidx.room.Room
+import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.nutra.app.core.database.NutraDao
 import com.nutra.app.core.database.NutraDatabase
+import com.nutra.app.core.database.TurkishFoodSeedCatalog
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -35,6 +38,17 @@ object AppModule {
         "nutra_database.db",
     )
         .addMigrations(MIGRATION_1_2)
+        .addCallback(
+            object : RoomDatabase.Callback() {
+                override fun onCreate(db: SupportSQLiteDatabase) {
+                    super.onCreate(db)
+                    val entities = TurkishFoodSeedCatalog.toEntities()
+                    for (entity in entities) {
+                        db.insert("food_items", SQLiteDatabase.CONFLICT_REPLACE, entity.toContentValues())
+                    }
+                }
+            },
+        )
         .fallbackToDestructiveMigration(dropAllTables = true)
         .build()
 

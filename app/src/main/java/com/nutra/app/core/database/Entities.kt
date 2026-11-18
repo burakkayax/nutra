@@ -1,5 +1,6 @@
 package com.nutra.app.core.database
 
+import android.content.ContentValues
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -14,6 +15,8 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 private val entityJson = Json { ignoreUnknownKeys = true }
+private val FOOD_CATEGORY_BY_NAME: Map<String, FoodCategory> = FoodCategory.entries.associateBy { it.name }
+private val MEAL_TYPE_BY_NAME: Map<String, MealType> = MealType.entries.associateBy { it.name }
 
 @Entity(
     tableName = "food_items",
@@ -51,20 +54,20 @@ data class FoodItemEntity(
             }.getOrDefault(emptyList())
         }
 
-        val preferredMeals = if (preferredMealTypesCsv.isBlank()) {
-            emptySet()
-        } else {
-            preferredMealTypesCsv
-                .split(',')
-                .mapNotNull { token ->
-                    token.trim().takeIf { it.isNotEmpty() }?.let {
-                        runCatching { MealType.valueOf(it) }.getOrNull()
-                    }
-                }
-                .toSet()
+        val preferredMeals = when {
+            preferredMealTypesCsv.isBlank() -> emptySet()
+            !preferredMealTypesCsv.contains(',') -> {
+                MEAL_TYPE_BY_NAME[preferredMealTypesCsv.trim()]?.let { setOf(it) } ?: emptySet()
+            }
+            else -> {
+                preferredMealTypesCsv
+                    .split(',')
+                    .mapNotNull { token -> MEAL_TYPE_BY_NAME[token.trim()] }
+                    .toSet()
+            }
         }
 
-        val cat = runCatching { FoodCategory.valueOf(category) }.getOrDefault(FoodCategory.HOME_COOKED)
+        val cat = FOOD_CATEGORY_BY_NAME[category] ?: FoodCategory.HOME_COOKED
 
         return FoodItem(
             id = id,
@@ -87,6 +90,24 @@ data class FoodItemEntity(
                 TurkishTextNormalizer.normalize("$name $subtitle")
             },
         )
+    }
+
+    fun toContentValues(): ContentValues = ContentValues(15).apply {
+        put("name", name)
+        put("subtitle", subtitle)
+        put("normalizedSearchText", normalizedSearchText)
+        put("category", category)
+        put("caloriesPer100g", caloriesPer100g)
+        put("proteinPer100g", proteinPer100g)
+        put("carbsPer100g", carbsPer100g)
+        put("fatPer100g", fatPer100g)
+        put("defaultUnitLabel", defaultUnitLabel)
+        put("defaultUnitGrams", defaultUnitGrams)
+        put("alternateUnitsJson", alternateUnitsJson)
+        put("preferredMealTypesCsv", preferredMealTypesCsv)
+        if (barcode != null) put("barcode", barcode) else putNull("barcode")
+        put("isFavorite", if (isFavorite) 1 else 0)
+        put("isCustom", if (isCustom) 1 else 0)
     }
 
     companion object {
@@ -139,7 +160,7 @@ data class MealLogEntity(
     fun toDomain(): MealLogItem = MealLogItem(
         id = id,
         dateIso = dateIso,
-        mealType = runCatching { MealType.valueOf(mealType) }.getOrDefault(MealType.BREAKFAST),
+        mealType = MEAL_TYPE_BY_NAME[mealType] ?: MealType.BREAKFAST,
         foodId = foodId,
         foodName = foodName,
         unitLabel = unitLabel,

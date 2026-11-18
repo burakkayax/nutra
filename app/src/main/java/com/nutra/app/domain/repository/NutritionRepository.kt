@@ -14,8 +14,6 @@ import com.nutra.app.domain.model.AppResult
 import com.nutra.app.domain.model.ComboFoodEntry
 import com.nutra.app.domain.model.DailyAnalyticsPoint
 import com.nutra.app.domain.model.DailyNutritionSummary
-import com.nutra.app.domain.model.DayGoalStatus
-import com.nutra.app.domain.model.DayStatusIndicator
 import com.nutra.app.domain.model.FoodItem
 import com.nutra.app.domain.model.MealLogItem
 import com.nutra.app.domain.model.MealSummary
@@ -65,6 +63,9 @@ class NutritionRepository @Inject constructor(
     private val seedMutex = Mutex()
     private val waterMutex = Mutex()
     private val barcodeMutex = Mutex()
+    private val backupMutex = Mutex()
+    @Volatile
+    private var catalogVerified = false
     private val backupJson by lazy {
         Json {
             prettyPrint = true
@@ -82,9 +83,13 @@ class NutritionRepository @Inject constructor(
     }
 
     suspend fun ensureCatalogSeeded() = withContext(Dispatchers.IO) {
+        if (catalogVerified) return@withContext
         seedMutex.withLock {
-            if (nutraDao.getFoodCount() == 0) {
-                nutraDao.insertFoods(TurkishFoodSeedCatalog.toEntities())
+            if (!catalogVerified) {
+                if (nutraDao.getFoodCount() == 0) {
+                    nutraDao.insertFoods(TurkishFoodSeedCatalog.toEntities())
+                }
+                catalogVerified = true
             }
         }
     }
@@ -105,11 +110,15 @@ class NutritionRepository @Inject constructor(
             nutraDao.observeMealLogsForDate(dateIso),
             nutraDao.observeWaterForDate(dateIso),
         ) { goals, mealEntities, waterEntity ->
-            val domainLogs = mealEntities.map { it.toDomain() }
+            val buckets = Array(MealType.entries.size) { mutableListOf<MealLogItem>() }
+            for (entity in mealEntities) {
+                val item = entity.toDomain()
+                buckets[item.mealType.ordinal].add(item)
+            }
             val mealsByType = MealType.entries.map { type ->
                 MealSummary(
                     mealType = type,
-                    items = domainLogs.filter { it.mealType == type },
+                    items = buckets[type.ordinal],
                 )
             }
             DailyNutritionSummary(
@@ -118,33 +127,6 @@ class NutritionRepository @Inject constructor(
                 meals = mealsByType,
                 waterMl = waterEntity?.waterMl ?: 0,
             )
-        }.flowOn(Dispatchers.Default)
-
-    fun observeWeekStatusIndicators(
-        startDateIso: String,
-        endDateIso: String,
-    ): Flow<Map<String, DayStatusIndicator>> =
-        combine(
-            goalsFlow,
-            nutraDao.observeMealLogsInRange(startDateIso, endDateIso),
-        ) { goals, logs ->
-            val targetCal = goals.calories.coerceAtLeast(1)
-            val grouped = logs.groupBy { it.dateIso }
-            grouped.mapValues { (dateIso, dayLogs) ->
-                val consumed = dayLogs.sumOf { it.calories }
-                val status = when {
-                    consumed <= 0 -> DayGoalStatus.EMPTY
-                    consumed > (targetCal * 1.08f) -> DayGoalStatus.OVER_BUDGET
-                    consumed >= (targetCal * 0.75f) -> DayGoalStatus.ON_TARGET
-                    else -> DayGoalStatus.PARTIAL
-                }
-                DayStatusIndicator(
-                    dateIso = dateIso,
-                    consumedCalories = consumed,
-                    targetCalories = targetCal,
-                    status = status,
-                )
-            }
         }.flowOn(Dispatchers.Default)
 
     fun observeAnalyticsRange(
@@ -368,33 +350,36 @@ class NutritionRepository @Inject constructor(
     }
 
     suspend fun exportBackupJson(): AppResult<String> = withContext(Dispatchers.IO) {
-        try {
-            val profile = preferencesDataStore.getSnapshot()
-            val allFoods = nutraDao.getAllFoodsSnapshot().map { it.toDomain() }
-            val customFoods = allFoods.filter { it.isCustom || it.isFavorite }
-            val mealLogs = nutraDao.getAllMealLogsSnapshot().map { it.toDomain() }
-            val waterLogs = nutraDao.getAllWaterLogsSnapshot().associate { it.dateIso to it.waterMl }
-            val weightEntries = nutraDao.getAllWeightLogsSnapshot().map { it.toDomain() }
+        backupMutex.withLock {
+            try {
+                val profile = preferencesDataStore.getSnapshot()
+                val allFoods = nutraDao.getAllFoodsSnapshot().map { it.toDomain() }
+                val customFoods = allFoods.filter { it.isCustom || it.isFavorite }
+                val mealLogs = nutraDao.getAllMealLogsSnapshot().map { it.toDomain() }
+                val waterLogs = nutraDao.getAllWaterLogsSnapshot().associate { it.dateIso to it.waterMl }
+                val weightEntries = nutraDao.getAllWeightLogsSnapshot().map { it.toDomain() }
 
-            val payload = NutraBackupPayload(
-                version = 1,
-                exportedAtDateIso = LocalDate.now().toString(),
-                userProfile = profile,
-                customFoods = customFoods,
-                mealLogs = mealLogs,
-                waterLogs = waterLogs,
-                weightEntries = weightEntries,
-            )
-            AppResult.Success(backupJson.encodeToString(payload))
-        } catch (e: Exception) {
-            AppResult.Error("Yedekleme oluşturulurken hata oluştu: ${e.localizedMessage}", e)
+                val payload = NutraBackupPayload(
+                    version = 1,
+                    exportedAtDateIso = LocalDate.now().toString(),
+                    userProfile = profile,
+                    customFoods = customFoods,
+                    mealLogs = mealLogs,
+                    waterLogs = waterLogs,
+                    weightEntries = weightEntries,
+                )
+                AppResult.Success(backupJson.encodeToString(payload))
+            } catch (e: Exception) {
+                AppResult.Error("Yedekleme oluşturulurken hata oluştu: ${e.localizedMessage}", e)
+            }
         }
     }
 
     suspend fun importBackupJson(rawJson: String): AppResult<Unit> = withContext(Dispatchers.IO) {
-        try {
-            val payload = backupJson.decodeFromString<NutraBackupPayload>(rawJson)
-            ensureCatalogSeeded()
+        backupMutex.withLock {
+            try {
+                val payload = backupJson.decodeFromString<NutraBackupPayload>(rawJson)
+                ensureCatalogSeeded()
 
             database.withTransaction {
                 val existingFoods = nutraDao.getAllFoodsSnapshot()
@@ -460,7 +445,7 @@ class NutritionRepository @Inject constructor(
 
                 nutraDao.deleteAllMealLogs()
                 val mealEntities = payload.mealLogs
-                    .filter { isValidIsoDate(it.dateIso) }
+                    .filter { it.foodName.isNotBlank() && isValidIsoDate(it.dateIso) }
                     .map { log ->
                         val normFoodName = TurkishTextNormalizer.normalize(log.foodName)
                         val mappedId = log.foodId?.let { oldId ->
@@ -522,10 +507,11 @@ class NutritionRepository @Inject constructor(
                 }
             }
 
-            preferencesDataStore.restoreProfile(payload.userProfile)
-            AppResult.Success(Unit)
-        } catch (e: Exception) {
-            AppResult.Error("Yedek dosyası geçersiz veya okunamadı: ${e.localizedMessage}", e)
+                preferencesDataStore.restoreProfile(payload.userProfile)
+                AppResult.Success(Unit)
+            } catch (e: Exception) {
+                AppResult.Error("Yedek dosyası geçersiz veya okunamadı: ${e.localizedMessage}", e)
+            }
         }
     }
 

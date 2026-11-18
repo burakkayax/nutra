@@ -27,6 +27,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -402,7 +403,7 @@ fun ProfileScreen(
 
                         NutraListRow(
                             title = "Verileri dışa aktar",
-                            subtitle = "Kayıtları JSON yedeği olarak indir",
+                            subtitle = if (state.isBackupBusy) "İşleniyor..." else "Kayıtları JSON yedeği olarak indir",
                             leading = {
                                 NutraIconBadge(
                                     icon = NutraIcons.FileDownload,
@@ -417,8 +418,10 @@ fun ProfileScreen(
                                     tint = colors.textTertiary,
                                 )
                             },
-                            onClick = {
-                                exportLauncher.launch("nutra_yedek_${LocalDate.now()}.json")
+                            onClick = if (state.isBackupBusy) {
+                                null
+                            } else {
+                                { exportLauncher.launch("nutra_yedek_${LocalDate.now()}.json") }
                             },
                         )
 
@@ -426,7 +429,7 @@ fun ProfileScreen(
 
                         NutraListRow(
                             title = "Yedekten geri yükle",
-                            subtitle = "JSON dosyasından içe aktar",
+                            subtitle = if (state.isBackupBusy) "İşleniyor..." else "JSON dosyasından içe aktar",
                             leading = {
                                 NutraIconBadge(
                                     icon = NutraIcons.FileUpload,
@@ -441,8 +444,10 @@ fun ProfileScreen(
                                     tint = colors.textTertiary,
                                 )
                             },
-                            onClick = {
-                                importLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
+                            onClick = if (state.isBackupBusy) {
+                                null
+                            } else {
+                                { importLauncher.launch(arrayOf("application/json", "text/plain", "*/*")) }
                             },
                         )
                     }
@@ -544,8 +549,8 @@ private fun GeminiConfigDialog(
     onDismiss: () -> Unit,
     onSave: (apiKey: String, model: String) -> Unit,
 ) {
-    var apiKeyInput by remember(initialApiKey) { mutableStateOf(initialApiKey) }
-    var modelInput by remember(initialModel) { mutableStateOf(initialModel) }
+    var apiKeyInput by rememberSaveable(initialApiKey) { mutableStateOf(initialApiKey) }
+    var modelInput by rememberSaveable(initialModel) { mutableStateOf(initialModel) }
 
     NutraDialog(
         onDismissRequest = onDismiss,
