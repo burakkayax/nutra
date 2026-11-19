@@ -85,6 +85,24 @@ data class ProfileUiState(
     val feedback: ProfileFeedback? = null,
 )
 
+@Immutable
+private data class PendingBodyProfile(
+    val sex: BiologicalSex,
+    val age: Int,
+    val heightCm: Int,
+    val currentWeightKg: Float,
+    val targetWeightKg: Float,
+    val activityLevel: ActivityLevel,
+    val goalType: GoalType,
+)
+
+@Immutable
+private data class PendingProfileOverrides(
+    val goals: MacroGoals? = null,
+    val body: PendingBodyProfile? = null,
+    val waterReminder: WaterReminderSettings? = null,
+)
+
 @HiltViewModel
 class ProfileViewModel @Inject constructor(
     private val preferencesDataStore: UserPreferencesDataStore,
@@ -95,13 +113,18 @@ class ProfileViewModel @Inject constructor(
 
     private val profileGoalBounds = MacroGoalBounds()
     private val goalsMutex = Mutex()
+    private val waterReminderMutex = Mutex()
     private val pendingEditCount = AtomicInteger(0)
+    private val pendingBodyEditCount = AtomicInteger(0)
+    private val pendingWaterReminderEditCount = AtomicInteger(0)
     private var latestOptimisticGoals: MacroGoals? = null
     private var calorieScalingBaseline: MacroGoals? = null
     private var lastCalorieScaledGoals: MacroGoals? = null
     private var previousGoalsBeforeRecalc: MacroGoals? = null
 
     private val pendingGoalsFlow = MutableStateFlow<MacroGoals?>(null)
+    private val pendingBodyProfileFlow = MutableStateFlow<PendingBodyProfile?>(null)
+    private val pendingWaterReminderFlow = MutableStateFlow<WaterReminderSettings?>(null)
     private val isBackupBusyFlow = MutableStateFlow(false)
     private val feedbackSeq = AtomicLong(0L)
     private val feedbackFlow = MutableStateFlow<ProfileFeedback?>(null)
@@ -111,15 +134,48 @@ class ProfileViewModel @Inject constructor(
             ProfileUiState(isLoading = false, profile = cached)
         } ?: ProfileUiState()
 
+    private val pendingOverridesFlow = combine(
+        pendingGoalsFlow,
+        pendingBodyProfileFlow,
+        pendingWaterReminderFlow,
+    ) { goals, body, waterReminder ->
+        PendingProfileOverrides(
+            goals = goals,
+            body = body,
+            waterReminder = waterReminder,
+        )
+    }
+
     val uiState: StateFlow<ProfileUiState> = combine(
         preferencesDataStore.userProfileFlow,
-        pendingGoalsFlow,
+        pendingOverridesFlow,
         isBackupBusyFlow,
         feedbackFlow,
-    ) { profile, pendingGoals, isBackupBusy, feedback ->
+    ) { profile, overrides, isBackupBusy, feedback ->
+        val resolvedProfile = profile.let { base ->
+            val withBody = if (overrides.body != null) {
+                base.copy(
+                    sex = overrides.body.sex,
+                    age = overrides.body.age,
+                    heightCm = overrides.body.heightCm,
+                    currentWeightKg = overrides.body.currentWeightKg,
+                    targetWeightKg = overrides.body.targetWeightKg,
+                    activityLevel = overrides.body.activityLevel,
+                    goalType = overrides.body.goalType,
+                )
+            } else {
+                base
+            }
+            val withGoals = if (overrides.goals != null) withBody.copy(goals = overrides.goals) else withBody
+            if (overrides.waterReminder != null) {
+                withGoals.copy(waterReminder = overrides.waterReminder)
+            } else {
+                withGoals
+            }
+        }
         ProfileUiState(
             isLoading = false,
-            profile = if (pendingGoals != null) profile.copy(goals = pendingGoals) else profile,
+            profile = resolvedProfile,
             isBackupBusy = isBackupBusy,
             feedback = feedback,
         )
@@ -314,52 +370,64 @@ class ProfileViewModel @Inject constructor(
         goalType: GoalType,
         recalculateGoals: Boolean,
     ) {
-        launchGoalEdit {
-            if (recalculateGoals) {
-                calorieScalingBaseline = null
-                lastCalorieScaledGoals = null
-            }
-            val previousWeight = preferencesDataStore.getSnapshot().currentWeightKg
-            val updatedGoals = if (recalculateGoals) {
-                calculatorUseCase.calculateGoals(
-                    sex = sex,
-                    age = age,
-                    heightCm = heightCm,
-                    weightKg = currentWeightKg,
-                    activityLevel = activityLevel,
-                    goalType = goalType,
-                )
-            } else {
-                null
-            }
-            if (updatedGoals != null) {
-                latestOptimisticGoals = updatedGoals
-                pendingGoalsFlow.value = updatedGoals
-            }
-            preferencesDataStore.updateBodyMetricsAndGoal(
+        val optimisticBody = PendingBodyProfile(
+            sex = sex,
+            age = age,
+            heightCm = heightCm,
+            currentWeightKg = currentWeightKg,
+            targetWeightKg = targetWeightKg,
+            activityLevel = activityLevel,
+            goalType = goalType,
+        )
+        val updatedGoals = if (recalculateGoals) {
+            calculatorUseCase.calculateGoals(
                 sex = sex,
                 age = age,
                 heightCm = heightCm,
-                currentWeightKg = currentWeightKg,
-                targetWeightKg = targetWeightKg,
+                weightKg = currentWeightKg,
                 activityLevel = activityLevel,
                 goalType = goalType,
-                updatedGoals = updatedGoals,
             )
-            if (abs(currentWeightKg - previousWeight) >= 0.05f) {
-                nutritionRepository.logWeight(
-                    dateIso = LocalDate.now().toString(),
-                    weightKg = currentWeightKg,
-                    syncProfileWeight = false,
-                )
-            }
-            emitFeedback(
+        } else {
+            null
+        }
+        pendingBodyEditCount.incrementAndGet()
+        pendingBodyProfileFlow.value = optimisticBody
+        if (updatedGoals != null) {
+            pendingGoalsFlow.value = updatedGoals
+        }
+        launchGoalEdit {
+            try {
                 if (recalculateGoals) {
-                    "Vücut profili güncellendi ve hedefler yeniden hesaplandı"
-                } else {
-                    "Vücut profili güncellendi"
-                },
-            )
+                    calorieScalingBaseline = null
+                    lastCalorieScaledGoals = null
+                }
+                val previousWeight = preferencesDataStore.getSnapshot().currentWeightKg
+                if (updatedGoals != null) {
+                    latestOptimisticGoals = updatedGoals
+                }
+                preferencesDataStore.updateBodyMetricsAndGoal(
+                    sex = sex,
+                    age = age,
+                    heightCm = heightCm,
+                    currentWeightKg = currentWeightKg,
+                    targetWeightKg = targetWeightKg,
+                    activityLevel = activityLevel,
+                    goalType = goalType,
+                    updatedGoals = updatedGoals,
+                )
+                if (abs(currentWeightKg - previousWeight) >= 0.05f) {
+                    nutritionRepository.upsertDailyWeight(
+                        dateIso = LocalDate.now().toString(),
+                        weightKg = currentWeightKg,
+                        syncProfileWeight = false,
+                    )
+                }
+            } finally {
+                if (pendingBodyEditCount.decrementAndGet() == 0) {
+                    pendingBodyProfileFlow.value = null
+                }
+            }
         }
     }
 
@@ -370,17 +438,20 @@ class ProfileViewModel @Inject constructor(
     }
 
     fun updateWaterReminder(settings: WaterReminderSettings) {
+        val sanitized = WaterReminderScheduleCalculator.sanitize(settings)
+        pendingWaterReminderEditCount.incrementAndGet()
+        pendingWaterReminderFlow.value = sanitized
         viewModelScope.launch {
-            val previous = preferencesDataStore.getSnapshot().waterReminder
-            val sanitized = WaterReminderScheduleCalculator.sanitize(settings)
-            preferencesDataStore.updateWaterReminder(sanitized)
-            waterReminderScheduler.sync(sanitized)
-            val message = when {
-                !sanitized.enabled -> "Su hatırlatıcı kapatıldı"
-                !previous.enabled -> "Su hatırlatıcı açıldı"
-                else -> "Su hatırlatıcı güncellendi"
+            try {
+                waterReminderMutex.withLock {
+                    preferencesDataStore.updateWaterReminder(sanitized)
+                    waterReminderScheduler.sync(sanitized)
+                }
+            } finally {
+                if (pendingWaterReminderEditCount.decrementAndGet() == 0) {
+                    pendingWaterReminderFlow.value = null
+                }
             }
-            emitFeedback(message)
         }
     }
 
@@ -455,18 +526,22 @@ class ProfileViewModel @Inject constructor(
 
     private suspend fun importBackupJsonInternal(rawJson: String) {
         goalsMutex.withLock {
-            when (val res = nutritionRepository.importBackupJson(rawJson)) {
-                is AppResult.Success -> {
-                    latestOptimisticGoals = null
-                    pendingGoalsFlow.value = null
-                    calorieScalingBaseline = null
-                    lastCalorieScaledGoals = null
-                    previousGoalsBeforeRecalc = null
-                    waterReminderScheduler.sync(preferencesDataStore.getSnapshot().waterReminder)
-                    emitFeedback("Yedek başarıyla geri yüklendi", NutraSnackbarTone.Success)
-                }
-                is AppResult.Error -> {
-                    emitFeedback(res.message, NutraSnackbarTone.Error)
+            waterReminderMutex.withLock {
+                when (val res = nutritionRepository.importBackupJson(rawJson)) {
+                    is AppResult.Success -> {
+                        latestOptimisticGoals = null
+                        pendingGoalsFlow.value = null
+                        pendingBodyProfileFlow.value = null
+                        pendingWaterReminderFlow.value = null
+                        calorieScalingBaseline = null
+                        lastCalorieScaledGoals = null
+                        previousGoalsBeforeRecalc = null
+                        waterReminderScheduler.sync(preferencesDataStore.getSnapshot().waterReminder)
+                        emitFeedback("Yedek başarıyla geri yüklendi", NutraSnackbarTone.Success)
+                    }
+                    is AppResult.Error -> {
+                        emitFeedback(res.message, NutraSnackbarTone.Error)
+                    }
                 }
             }
         }

@@ -9,19 +9,21 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
@@ -50,7 +52,6 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
-import com.nutra.app.core.designsystem.NutraBottomActionBar
 import com.nutra.app.core.designsystem.NutraButton
 import com.nutra.app.core.designsystem.NutraButtonSize
 import com.nutra.app.core.designsystem.NutraButtonStyle
@@ -82,12 +83,6 @@ private enum class ReminderTimeField(val title: String) {
     END("Bitiş saati"),
 }
 
-private enum class PendingPermissionAction {
-    NONE,
-    ENABLE_TOGGLE,
-    SAVE_ENABLED,
-}
-
 private fun hasSystemNotificationPermission(context: Context): Boolean {
     val granted = ContextCompat.checkSelfPermission(
         context,
@@ -109,7 +104,7 @@ fun WaterReminderScreen(
     initialSettings: WaterReminderSettings,
     waterGoalMl: Int,
     onNavigateBack: () -> Unit,
-    onSave: (WaterReminderSettings) -> Unit,
+    onSettingsChange: (WaterReminderSettings) -> Unit,
 ) {
     val colors = NutraTheme.colors
     val context = LocalContext.current
@@ -134,11 +129,46 @@ fun WaterReminderScreen(
 
     var hasNotificationPermission by remember { mutableStateOf(hasSystemNotificationPermission(context)) }
     var permissionDeniedNotice by rememberSaveable { mutableStateOf(false) }
-    var pendingPermissionAction by remember { mutableStateOf(PendingPermissionAction.NONE) }
+    var pendingEnableAfterPermission by remember { mutableStateOf(false) }
 
     var showCustomIntervalDialog by remember { mutableStateOf(false) }
     var activeTimeField by remember { mutableStateOf<ReminderTimeField?>(null) }
-    var showDiscardDialog by remember { mutableStateOf(false) }
+
+    fun buildSanitizedSettings(
+        nextEnabled: Boolean = enabled,
+        nextIntervalMinutes: Int = intervalMinutes,
+        nextStartTotalMinutes: Int = startTotalMinutes,
+        nextEndTotalMinutes: Int = endTotalMinutes,
+        nextStopWhenGoalReached: Boolean = stopWhenGoalReached,
+    ): WaterReminderSettings = WaterReminderScheduleCalculator.sanitize(
+        WaterReminderSettings(
+            enabled = nextEnabled,
+            intervalMinutes = nextIntervalMinutes,
+            startHour = nextStartTotalMinutes / 60,
+            startMinute = nextStartTotalMinutes % 60,
+            endHour = nextEndTotalMinutes / 60,
+            endMinute = nextEndTotalMinutes % 60,
+            stopWhenGoalReached = nextStopWhenGoalReached,
+        ),
+    )
+
+    fun persistSettings(
+        nextEnabled: Boolean = enabled,
+        nextIntervalMinutes: Int = intervalMinutes,
+        nextStartTotalMinutes: Int = startTotalMinutes,
+        nextEndTotalMinutes: Int = endTotalMinutes,
+        nextStopWhenGoalReached: Boolean = stopWhenGoalReached,
+    ) {
+        onSettingsChange(
+            buildSanitizedSettings(
+                nextEnabled = nextEnabled,
+                nextIntervalMinutes = nextIntervalMinutes,
+                nextStartTotalMinutes = nextStartTotalMinutes,
+                nextEndTotalMinutes = nextEndTotalMinutes,
+                nextStopWhenGoalReached = nextStopWhenGoalReached,
+            ),
+        )
+    }
 
     val draftSettings = remember(
         enabled,
@@ -147,20 +177,8 @@ fun WaterReminderScreen(
         endTotalMinutes,
         stopWhenGoalReached,
     ) {
-        WaterReminderScheduleCalculator.sanitize(
-            WaterReminderSettings(
-                enabled = enabled,
-                intervalMinutes = intervalMinutes,
-                startHour = startTotalMinutes / 60,
-                startMinute = startTotalMinutes % 60,
-                endHour = endTotalMinutes / 60,
-                endMinute = endTotalMinutes % 60,
-                stopWhenGoalReached = stopWhenGoalReached,
-            ),
-        )
+        buildSanitizedSettings()
     }
-
-    val hasUnsavedChanges = draftSettings != sanitizedInitial
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
@@ -169,67 +187,56 @@ fun WaterReminderScreen(
         hasNotificationPermission = effectiveGranted
         if (effectiveGranted) {
             permissionDeniedNotice = false
-            when (pendingPermissionAction) {
-                PendingPermissionAction.ENABLE_TOGGLE -> {
-                    enabled = true
-                }
-                PendingPermissionAction.SAVE_ENABLED -> {
-                    enabled = true
-                    onSave(draftSettings.copy(enabled = true))
-                }
-                PendingPermissionAction.NONE -> Unit
+            if (pendingEnableAfterPermission) {
+                enabled = true
+                persistSettings(nextEnabled = true)
             }
         } else {
             permissionDeniedNotice = true
-            enabled = false
+            if (enabled) {
+                enabled = false
+                persistSettings(nextEnabled = false)
+            }
         }
-        pendingPermissionAction = PendingPermissionAction.NONE
+        pendingEnableAfterPermission = false
     }
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         val nowGranted = hasSystemNotificationPermission(context)
+        val wasGranted = hasNotificationPermission
         hasNotificationPermission = nowGranted
         if (nowGranted) {
             permissionDeniedNotice = false
-        }
-    }
-
-    fun requestExit() {
-        if (hasUnsavedChanges) {
-            showDiscardDialog = true
-        } else {
-            onNavigateBack()
+            if (!wasGranted && enabled) {
+                persistSettings(nextEnabled = true)
+            }
         }
     }
 
     fun handleToggleEnabled(nextEnabled: Boolean) {
         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         if (!nextEnabled) {
-            enabled = false
+            if (enabled) {
+                enabled = false
+                persistSettings(nextEnabled = false)
+            }
             return
         }
         val currentlyGranted = hasSystemNotificationPermission(context)
         hasNotificationPermission = currentlyGranted
         if (currentlyGranted) {
             permissionDeniedNotice = false
-            enabled = true
+            if (!enabled) {
+                enabled = true
+                persistSettings(nextEnabled = true)
+            }
         } else {
-            pendingPermissionAction = PendingPermissionAction.ENABLE_TOGGLE
+            pendingEnableAfterPermission = true
             permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 
-    fun handleSave() {
-        if (draftSettings.enabled && !hasSystemNotificationPermission(context)) {
-            hasNotificationPermission = false
-            pendingPermissionAction = PendingPermissionAction.SAVE_ENABLED
-            permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-            return
-        }
-        onSave(draftSettings)
-    }
-
-    BackHandler(onBack = ::requestExit)
+    BackHandler(onBack = onNavigateBack)
 
     Box(
         modifier = Modifier
@@ -254,7 +261,7 @@ fun WaterReminderScreen(
                 NutraIconButton(
                     icon = Icons.AutoMirrored.Rounded.ArrowBack,
                     contentDescription = "Geri",
-                    onClick = ::requestExit,
+                    onClick = onNavigateBack,
                     size = 44.dp,
                     iconSize = 20.dp,
                 )
@@ -383,7 +390,10 @@ fun WaterReminderScreen(
                                     selected = !isCustomMode && intervalMinutes == preset,
                                     onClick = {
                                         isCustomMode = false
-                                        intervalMinutes = preset
+                                        if (intervalMinutes != preset) {
+                                            intervalMinutes = preset
+                                            persistSettings(nextIntervalMinutes = preset)
+                                        }
                                     },
                                     modifier = Modifier.weight(1f),
                                 )
@@ -400,7 +410,10 @@ fun WaterReminderScreen(
                                     selected = !isCustomMode && intervalMinutes == preset,
                                     onClick = {
                                         isCustomMode = false
-                                        intervalMinutes = preset
+                                        if (intervalMinutes != preset) {
+                                            intervalMinutes = preset
+                                            persistSettings(nextIntervalMinutes = preset)
+                                        }
                                     },
                                     modifier = Modifier.weight(1f),
                                 )
@@ -428,18 +441,26 @@ fun WaterReminderScreen(
                                     supportingText = "10 – 360 dk arası",
                                     valueText = WaterReminderScheduleCalculator.formatInterval(intervalMinutes),
                                     onDecrement = {
-                                        intervalMinutes = (intervalMinutes - WaterReminderBounds.CUSTOM_STEP_MINUTES)
+                                        val next = (intervalMinutes - WaterReminderBounds.CUSTOM_STEP_MINUTES)
                                             .coerceIn(
                                                 WaterReminderBounds.MIN_INTERVAL_MINUTES,
                                                 WaterReminderBounds.MAX_INTERVAL_MINUTES,
                                             )
+                                        if (next != intervalMinutes) {
+                                            intervalMinutes = next
+                                            persistSettings(nextIntervalMinutes = next)
+                                        }
                                     },
                                     onIncrement = {
-                                        intervalMinutes = (intervalMinutes + WaterReminderBounds.CUSTOM_STEP_MINUTES)
+                                        val next = (intervalMinutes + WaterReminderBounds.CUSTOM_STEP_MINUTES)
                                             .coerceIn(
                                                 WaterReminderBounds.MIN_INTERVAL_MINUTES,
                                                 WaterReminderBounds.MAX_INTERVAL_MINUTES,
                                             )
+                                        if (next != intervalMinutes) {
+                                            intervalMinutes = next
+                                            persistSettings(nextIntervalMinutes = next)
+                                        }
                                     },
                                     onValueClick = { showCustomIntervalDialog = true },
                                     valueMinWidth = 86.dp,
@@ -459,14 +480,22 @@ fun WaterReminderScreen(
                                 label = "Başlangıç",
                                 valueText = WaterReminderScheduleCalculator.formatClockFromMinutes(startTotalMinutes),
                                 onDecrement = {
-                                    startTotalMinutes = (startTotalMinutes - WaterReminderBounds.TIME_STEP_MINUTES)
+                                    val next = (startTotalMinutes - WaterReminderBounds.TIME_STEP_MINUTES)
                                         .coerceAtLeast(WaterReminderBounds.MIN_START_TOTAL_MINUTES)
+                                    if (next != startTotalMinutes) {
+                                        startTotalMinutes = next
+                                        persistSettings(nextStartTotalMinutes = next)
+                                    }
                                 },
                                 onIncrement = {
                                     val maxStart = (endTotalMinutes - WaterReminderBounds.MIN_WINDOW_SPAN_MINUTES)
                                         .coerceAtMost(WaterReminderBounds.MAX_START_TOTAL_MINUTES)
-                                    startTotalMinutes = (startTotalMinutes + WaterReminderBounds.TIME_STEP_MINUTES)
+                                    val next = (startTotalMinutes + WaterReminderBounds.TIME_STEP_MINUTES)
                                         .coerceAtMost(maxStart)
+                                    if (next != startTotalMinutes) {
+                                        startTotalMinutes = next
+                                        persistSettings(nextStartTotalMinutes = next)
+                                    }
                                 },
                                 onValueClick = { activeTimeField = ReminderTimeField.START },
                                 valueMinWidth = 76.dp,
@@ -480,12 +509,20 @@ fun WaterReminderScreen(
                                 onDecrement = {
                                     val minEnd = (startTotalMinutes + WaterReminderBounds.MIN_WINDOW_SPAN_MINUTES)
                                         .coerceAtLeast(WaterReminderBounds.MIN_END_TOTAL_MINUTES)
-                                    endTotalMinutes = (endTotalMinutes - WaterReminderBounds.TIME_STEP_MINUTES)
+                                    val next = (endTotalMinutes - WaterReminderBounds.TIME_STEP_MINUTES)
                                         .coerceAtLeast(minEnd)
+                                    if (next != endTotalMinutes) {
+                                        endTotalMinutes = next
+                                        persistSettings(nextEndTotalMinutes = next)
+                                    }
                                 },
                                 onIncrement = {
-                                    endTotalMinutes = (endTotalMinutes + WaterReminderBounds.TIME_STEP_MINUTES)
+                                    val next = (endTotalMinutes + WaterReminderBounds.TIME_STEP_MINUTES)
                                         .coerceAtMost(WaterReminderBounds.MAX_END_TOTAL_MINUTES)
+                                    if (next != endTotalMinutes) {
+                                        endTotalMinutes = next
+                                        persistSettings(nextEndTotalMinutes = next)
+                                    }
                                 },
                                 onValueClick = { activeTimeField = ReminderTimeField.END },
                                 valueMinWidth = 76.dp,
@@ -500,9 +537,12 @@ fun WaterReminderScreen(
                                     .toggleable(
                                         value = stopWhenGoalReached,
                                         role = Role.Switch,
-                                        onValueChange = {
+                                        onValueChange = { next ->
                                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                            stopWhenGoalReached = it
+                                            if (next != stopWhenGoalReached) {
+                                                stopWhenGoalReached = next
+                                                persistSettings(nextStopWhenGoalReached = next)
+                                            }
                                         },
                                     )
                                     .padding(vertical = 4.dp),
@@ -585,43 +625,10 @@ fun WaterReminderScreen(
                         }
                     }
                 }
-            }
 
-            NutraDivider()
-            NutraBottomActionBar {
-                NutraButton(
-                    text = "Vazgeç",
-                    onClick = ::requestExit,
-                    style = NutraButtonStyle.Secondary,
-                    size = NutraButtonSize.Medium,
-                    modifier = Modifier.weight(0.38f),
-                )
-                NutraButton(
-                    text = "Kaydet",
-                    onClick = ::handleSave,
-                    style = NutraButtonStyle.Primary,
-                    size = NutraButtonSize.Medium,
-                    hapticFeedback = HapticFeedbackType.Confirm,
-                    modifier = Modifier.weight(0.62f),
-                )
+                Spacer(Modifier.navigationBarsPadding())
             }
         }
-    }
-
-    if (showDiscardDialog) {
-        NutraDialog(
-            onDismissRequest = { showDiscardDialog = false },
-            title = "Değişikliklerden vazgeç?",
-            message = "Su hatırlatıcı ayarların kaydedilmedi. Çıkmak istediğine emin misin?",
-            confirmText = "Vazgeç ve çık",
-            onConfirm = {
-                showDiscardDialog = false
-                onNavigateBack()
-            },
-            dismissText = "Düzenlemeye dön",
-            onDismiss = { showDiscardDialog = false },
-            destructive = true,
-        )
     }
 
     if (showCustomIntervalDialog) {
@@ -635,11 +642,15 @@ fun WaterReminderScreen(
             allowDecimal = false,
             onDismiss = { showCustomIntervalDialog = false },
             onConfirm = { entered ->
-                intervalMinutes = entered.roundToInt().coerceIn(
+                val next = entered.roundToInt().coerceIn(
                     WaterReminderBounds.MIN_INTERVAL_MINUTES,
                     WaterReminderBounds.MAX_INTERVAL_MINUTES,
                 )
                 isCustomMode = true
+                if (next != intervalMinutes) {
+                    intervalMinutes = next
+                    persistSettings(nextIntervalMinutes = next)
+                }
                 showCustomIntervalDialog = false
             },
         )
@@ -667,8 +678,18 @@ fun WaterReminderScreen(
             onDismiss = { activeTimeField = null },
             onConfirm = { selectedMinutes ->
                 when (editingTime) {
-                    ReminderTimeField.START -> startTotalMinutes = selectedMinutes
-                    ReminderTimeField.END -> endTotalMinutes = selectedMinutes
+                    ReminderTimeField.START -> {
+                        if (selectedMinutes != startTotalMinutes) {
+                            startTotalMinutes = selectedMinutes
+                            persistSettings(nextStartTotalMinutes = selectedMinutes)
+                        }
+                    }
+                    ReminderTimeField.END -> {
+                        if (selectedMinutes != endTotalMinutes) {
+                            endTotalMinutes = selectedMinutes
+                            persistSettings(nextEndTotalMinutes = selectedMinutes)
+                        }
+                    }
                 }
                 activeTimeField = null
             },

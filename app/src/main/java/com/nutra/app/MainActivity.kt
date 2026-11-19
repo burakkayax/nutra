@@ -486,7 +486,7 @@ fun NutraAppRoot(
                         EditBodyProfileScreen(
                             profile = profileState.profile,
                             onNavigateBack = { profileSubScreen = ProfileSubScreen.NONE },
-                            onSave = { sex, age, heightCm, currentWeight, targetWeight, activity, goalType, recalculate ->
+                            onProfileChange = { sex, age, heightCm, currentWeight, targetWeight, activity, goalType, recalculate ->
                                 profileViewModel.updateBodyProfile(
                                     sex = sex,
                                     age = age,
@@ -497,7 +497,6 @@ fun NutraAppRoot(
                                     goalType = goalType,
                                     recalculateGoals = recalculate,
                                 )
-                                profileSubScreen = ProfileSubScreen.NONE
                             },
                         )
                     }
@@ -556,9 +555,8 @@ fun NutraAppRoot(
                             initialSettings = profileState.profile.waterReminder,
                             waterGoalMl = profileState.profile.goals.waterMl,
                             onNavigateBack = { profileSubScreen = ProfileSubScreen.NONE },
-                            onSave = { updatedReminder ->
+                            onSettingsChange = { updatedReminder ->
                                 profileViewModel.updateWaterReminder(updatedReminder)
-                                profileSubScreen = ProfileSubScreen.NONE
                             },
                         )
                     }

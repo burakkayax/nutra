@@ -123,8 +123,14 @@ interface NutraDao {
     @Query("SELECT * FROM weight_logs ORDER BY dateIso ASC, timestampMillis ASC")
     suspend fun getAllWeightLogsSnapshot(): List<WeightLogEntity>
 
+    @Query("SELECT * FROM weight_logs WHERE dateIso = :dateIso ORDER BY timestampMillis DESC, id DESC LIMIT 1")
+    suspend fun findLatestWeightLogForDate(dateIso: String): WeightLogEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertWeightLog(weightLog: WeightLogEntity): Long
+
+    @Update
+    suspend fun updateWeightLog(weightLog: WeightLogEntity)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertWeightLogs(weightLogs: List<WeightLogEntity>)

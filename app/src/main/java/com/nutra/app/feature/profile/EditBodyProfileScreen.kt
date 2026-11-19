@@ -7,8 +7,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
@@ -33,13 +35,8 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.nutra.app.core.designsystem.NutraBottomActionBar
-import com.nutra.app.core.designsystem.NutraButton
-import com.nutra.app.core.designsystem.NutraButtonSize
-import com.nutra.app.core.designsystem.NutraButtonStyle
 import com.nutra.app.core.designsystem.NutraCard
 import com.nutra.app.core.designsystem.NutraContentMaxWidth
-import com.nutra.app.core.designsystem.NutraDialog
 import com.nutra.app.core.designsystem.NutraDivider
 import com.nutra.app.core.designsystem.NutraFormatters
 import com.nutra.app.core.designsystem.NutraIconButton
@@ -76,7 +73,7 @@ private enum class BodyMetricField(
 fun EditBodyProfileScreen(
     profile: UserProfile,
     onNavigateBack: () -> Unit,
-    onSave: (
+    onProfileChange: (
         sex: BiologicalSex,
         age: Int,
         heightCm: Int,
@@ -99,16 +96,29 @@ fun EditBodyProfileScreen(
     var goalType by rememberSaveable { mutableStateOf(profile.goalType) }
     var recalculateGoals by rememberSaveable { mutableStateOf(true) }
     var activeBodyField by remember { mutableStateOf<BodyMetricField?>(null) }
-    var showDiscardDialog by remember { mutableStateOf(false) }
 
-    val effectiveTargetWeight = if (goalType == GoalType.MAINTAIN) currentWeight else targetWeight
-    val hasUnsavedChanges = sex != profile.sex ||
-        age != profile.age ||
-        heightCm != profile.heightCm ||
-        abs(currentWeight - profile.currentWeightKg) >= 0.05f ||
-        abs(effectiveTargetWeight - profile.targetWeightKg) >= 0.05f ||
-        activity != profile.activityLevel ||
-        goalType != profile.goalType
+    fun persistBodyProfile(
+        nextSex: BiologicalSex = sex,
+        nextAge: Int = age,
+        nextHeightCm: Int = heightCm,
+        nextCurrentWeight: Float = currentWeight,
+        nextTargetWeight: Float = targetWeight,
+        nextActivity: ActivityLevel = activity,
+        nextGoalType: GoalType = goalType,
+        shouldRecalculate: Boolean = recalculateGoals,
+    ) {
+        val effectiveTarget = if (nextGoalType == GoalType.MAINTAIN) nextCurrentWeight else nextTargetWeight
+        onProfileChange(
+            nextSex,
+            nextAge,
+            nextHeightCm,
+            nextCurrentWeight,
+            effectiveTarget,
+            nextActivity,
+            nextGoalType,
+            shouldRecalculate,
+        )
+    }
 
     val targetWeightMismatchHint = when (goalType) {
         GoalType.LOSE_WEIGHT -> if (targetWeight >= currentWeight) {
@@ -124,15 +134,7 @@ fun EditBodyProfileScreen(
         GoalType.MAINTAIN -> null
     }
 
-    fun requestExit() {
-        if (hasUnsavedChanges) {
-            showDiscardDialog = true
-        } else {
-            onNavigateBack()
-        }
-    }
-
-    BackHandler(onBack = ::requestExit)
+    BackHandler(onBack = onNavigateBack)
 
     Box(
         modifier = Modifier
@@ -156,7 +158,7 @@ fun EditBodyProfileScreen(
                 NutraIconButton(
                     icon = Icons.AutoMirrored.Rounded.ArrowBack,
                     contentDescription = "Geri",
-                    onClick = ::requestExit,
+                    onClick = onNavigateBack,
                     size = 44.dp,
                     iconSize = 20.dp,
                 )
@@ -194,7 +196,12 @@ fun EditBodyProfileScreen(
                     NutraSegmentedControl(
                         items = BiologicalSex.entries,
                         selectedItem = sex,
-                        onItemSelected = { sex = it },
+                        onItemSelected = { next ->
+                            if (next != sex) {
+                                sex = next
+                                persistBodyProfile(nextSex = next)
+                            }
+                        },
                         labelProvider = { it.title },
                     )
                 }
@@ -208,9 +215,18 @@ fun EditBodyProfileScreen(
                                 subtitle = option.subtitle,
                                 selected = option == goalType,
                                 onClick = {
-                                    goalType = option
-                                    if (option == GoalType.MAINTAIN) {
-                                        targetWeight = currentWeight
+                                    if (option != goalType) {
+                                        goalType = option
+                                        val nextTarget = if (option == GoalType.MAINTAIN) {
+                                            targetWeight = currentWeight
+                                            currentWeight
+                                        } else {
+                                            targetWeight
+                                        }
+                                        persistBodyProfile(
+                                            nextGoalType = option,
+                                            nextTargetWeight = nextTarget,
+                                        )
                                     }
                                 },
                             )
@@ -229,15 +245,37 @@ fun EditBodyProfileScreen(
                                     val next = ((currentWeight - 0.5f) * 10f)
                                         .roundToInt()
                                         .coerceIn(BodyMetricBounds.MIN_WEIGHT_TENTHS, BodyMetricBounds.MAX_WEIGHT_TENTHS) / 10f
-                                    currentWeight = next
-                                    if (goalType == GoalType.MAINTAIN) targetWeight = next
+                                    if (abs(next - currentWeight) >= 0.01f) {
+                                        currentWeight = next
+                                        val nextTarget = if (goalType == GoalType.MAINTAIN) {
+                                            targetWeight = next
+                                            next
+                                        } else {
+                                            targetWeight
+                                        }
+                                        persistBodyProfile(
+                                            nextCurrentWeight = next,
+                                            nextTargetWeight = nextTarget,
+                                        )
+                                    }
                                 },
                                 onIncrement = {
                                     val next = ((currentWeight + 0.5f) * 10f)
                                         .roundToInt()
                                         .coerceIn(BodyMetricBounds.MIN_WEIGHT_TENTHS, BodyMetricBounds.MAX_WEIGHT_TENTHS) / 10f
-                                    currentWeight = next
-                                    if (goalType == GoalType.MAINTAIN) targetWeight = next
+                                    if (abs(next - currentWeight) >= 0.01f) {
+                                        currentWeight = next
+                                        val nextTarget = if (goalType == GoalType.MAINTAIN) {
+                                            targetWeight = next
+                                            next
+                                        } else {
+                                            targetWeight
+                                        }
+                                        persistBodyProfile(
+                                            nextCurrentWeight = next,
+                                            nextTargetWeight = nextTarget,
+                                        )
+                                    }
                                 },
                                 onValueClick = { activeBodyField = BodyMetricField.CURRENT_WEIGHT },
                                 valueMinWidth = 80.dp,
@@ -248,14 +286,28 @@ fun EditBodyProfileScreen(
                                     label = "Hedef kilo",
                                     valueText = "${NutraFormatters.formatKg(targetWeight)} kg",
                                     onDecrement = {
-                                        targetWeight = ((targetWeight - 0.5f) * 10f)
+                                        val next = ((targetWeight - 0.5f) * 10f)
                                             .roundToInt()
                                             .coerceIn(BodyMetricBounds.MIN_WEIGHT_TENTHS, BodyMetricBounds.MAX_WEIGHT_TENTHS) / 10f
+                                        if (abs(next - targetWeight) >= 0.01f) {
+                                            targetWeight = next
+                                            persistBodyProfile(
+                                                nextTargetWeight = next,
+                                                shouldRecalculate = false,
+                                            )
+                                        }
                                     },
                                     onIncrement = {
-                                        targetWeight = ((targetWeight + 0.5f) * 10f)
+                                        val next = ((targetWeight + 0.5f) * 10f)
                                             .roundToInt()
                                             .coerceIn(BodyMetricBounds.MIN_WEIGHT_TENTHS, BodyMetricBounds.MAX_WEIGHT_TENTHS) / 10f
+                                        if (abs(next - targetWeight) >= 0.01f) {
+                                            targetWeight = next
+                                            persistBodyProfile(
+                                                nextTargetWeight = next,
+                                                shouldRecalculate = false,
+                                            )
+                                        }
                                     },
                                     onValueClick = { activeBodyField = BodyMetricField.TARGET_WEIGHT },
                                     valueMinWidth = 80.dp,
@@ -272,8 +324,20 @@ fun EditBodyProfileScreen(
                             NutraMetricStepperRow(
                                 label = "Boy",
                                 valueText = "$heightCm cm",
-                                onDecrement = { heightCm = (heightCm - 1).coerceIn(BodyMetricBounds.MIN_HEIGHT_CM, BodyMetricBounds.MAX_HEIGHT_CM) },
-                                onIncrement = { heightCm = (heightCm + 1).coerceIn(BodyMetricBounds.MIN_HEIGHT_CM, BodyMetricBounds.MAX_HEIGHT_CM) },
+                                onDecrement = {
+                                    val next = (heightCm - 1).coerceIn(BodyMetricBounds.MIN_HEIGHT_CM, BodyMetricBounds.MAX_HEIGHT_CM)
+                                    if (next != heightCm) {
+                                        heightCm = next
+                                        persistBodyProfile(nextHeightCm = next)
+                                    }
+                                },
+                                onIncrement = {
+                                    val next = (heightCm + 1).coerceIn(BodyMetricBounds.MIN_HEIGHT_CM, BodyMetricBounds.MAX_HEIGHT_CM)
+                                    if (next != heightCm) {
+                                        heightCm = next
+                                        persistBodyProfile(nextHeightCm = next)
+                                    }
+                                },
                                 onValueClick = { activeBodyField = BodyMetricField.HEIGHT },
                                 valueMinWidth = 80.dp,
                             )
@@ -281,8 +345,20 @@ fun EditBodyProfileScreen(
                             NutraMetricStepperRow(
                                 label = "Yaş",
                                 valueText = "$age yaş",
-                                onDecrement = { age = (age - 1).coerceIn(BodyMetricBounds.MIN_AGE, BodyMetricBounds.MAX_AGE) },
-                                onIncrement = { age = (age + 1).coerceIn(BodyMetricBounds.MIN_AGE, BodyMetricBounds.MAX_AGE) },
+                                onDecrement = {
+                                    val next = (age - 1).coerceIn(BodyMetricBounds.MIN_AGE, BodyMetricBounds.MAX_AGE)
+                                    if (next != age) {
+                                        age = next
+                                        persistBodyProfile(nextAge = next)
+                                    }
+                                },
+                                onIncrement = {
+                                    val next = (age + 1).coerceIn(BodyMetricBounds.MIN_AGE, BodyMetricBounds.MAX_AGE)
+                                    if (next != age) {
+                                        age = next
+                                        persistBodyProfile(nextAge = next)
+                                    }
+                                },
                                 onValueClick = { activeBodyField = BodyMetricField.AGE },
                                 valueMinWidth = 80.dp,
                             )
@@ -298,7 +374,12 @@ fun EditBodyProfileScreen(
                                 title = level.title,
                                 subtitle = level.subtitle,
                                 selected = level == activity,
-                                onClick = { activity = level },
+                                onClick = {
+                                    if (level != activity) {
+                                        activity = level
+                                        persistBodyProfile(nextActivity = level)
+                                    }
+                                },
                             )
                         }
                     }
@@ -312,9 +393,12 @@ fun EditBodyProfileScreen(
                             .toggleable(
                                 value = recalculateGoals,
                                 role = Role.Switch,
-                                onValueChange = {
+                                onValueChange = { enabled ->
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    recalculateGoals = it
+                                    recalculateGoals = enabled
+                                    if (enabled) {
+                                        persistBodyProfile(shouldRecalculate = true)
+                                    }
                                 },
                             )
                             .padding(horizontal = NutraTheme.spacing.card, vertical = NutraTheme.spacing.lg),
@@ -344,54 +428,10 @@ fun EditBodyProfileScreen(
                         )
                     }
                 }
-            }
 
-            NutraDivider()
-            NutraBottomActionBar {
-                NutraButton(
-                    text = "Vazgeç",
-                    onClick = ::requestExit,
-                    style = NutraButtonStyle.Secondary,
-                    size = NutraButtonSize.Medium,
-                    modifier = Modifier.weight(0.38f),
-                )
-                NutraButton(
-                    text = "Kaydet",
-                    onClick = {
-                        onSave(
-                            sex,
-                            age,
-                            heightCm,
-                            currentWeight,
-                            effectiveTargetWeight,
-                            activity,
-                            goalType,
-                            recalculateGoals,
-                        )
-                    },
-                    style = NutraButtonStyle.Primary,
-                    size = NutraButtonSize.Medium,
-                    hapticFeedback = HapticFeedbackType.Confirm,
-                    modifier = Modifier.weight(0.62f),
-                )
+                Spacer(Modifier.navigationBarsPadding())
             }
         }
-    }
-
-    if (showDiscardDialog) {
-        NutraDialog(
-            onDismissRequest = { showDiscardDialog = false },
-            title = "Değişikliklerden vazgeç?",
-            message = "Yaptığın profil değişiklikleri kaydedilmedi. Çıkmak istediğine emin misin?",
-            confirmText = "Vazgeç ve çık",
-            onConfirm = {
-                showDiscardDialog = false
-                onNavigateBack()
-            },
-            dismissText = "Düzenlemeye dön",
-            onDismiss = { showDiscardDialog = false },
-            destructive = true,
-        )
     }
 
     val editingBodyField = activeBodyField
@@ -416,18 +456,44 @@ fun EditBodyProfileScreen(
                     BodyMetricField.CURRENT_WEIGHT -> {
                         val next = ((entered * 10.0).roundToInt()
                             .coerceIn(BodyMetricBounds.MIN_WEIGHT_TENTHS, BodyMetricBounds.MAX_WEIGHT_TENTHS)) / 10f
-                        currentWeight = next
-                        if (goalType == GoalType.MAINTAIN) targetWeight = next
+                        if (abs(next - currentWeight) >= 0.01f) {
+                            currentWeight = next
+                            val nextTarget = if (goalType == GoalType.MAINTAIN) {
+                                targetWeight = next
+                                next
+                            } else {
+                                targetWeight
+                            }
+                            persistBodyProfile(
+                                nextCurrentWeight = next,
+                                nextTargetWeight = nextTarget,
+                            )
+                        }
                     }
                     BodyMetricField.TARGET_WEIGHT -> {
-                        targetWeight = ((entered * 10.0).roundToInt()
+                        val next = ((entered * 10.0).roundToInt()
                             .coerceIn(BodyMetricBounds.MIN_WEIGHT_TENTHS, BodyMetricBounds.MAX_WEIGHT_TENTHS)) / 10f
+                        if (abs(next - targetWeight) >= 0.01f) {
+                            targetWeight = next
+                            persistBodyProfile(
+                                nextTargetWeight = next,
+                                shouldRecalculate = false,
+                            )
+                        }
                     }
                     BodyMetricField.HEIGHT -> {
-                        heightCm = entered.roundToInt().coerceIn(BodyMetricBounds.MIN_HEIGHT_CM, BodyMetricBounds.MAX_HEIGHT_CM)
+                        val next = entered.roundToInt().coerceIn(BodyMetricBounds.MIN_HEIGHT_CM, BodyMetricBounds.MAX_HEIGHT_CM)
+                        if (next != heightCm) {
+                            heightCm = next
+                            persistBodyProfile(nextHeightCm = next)
+                        }
                     }
                     BodyMetricField.AGE -> {
-                        age = entered.roundToInt().coerceIn(BodyMetricBounds.MIN_AGE, BodyMetricBounds.MAX_AGE)
+                        val next = entered.roundToInt().coerceIn(BodyMetricBounds.MIN_AGE, BodyMetricBounds.MAX_AGE)
+                        if (next != age) {
+                            age = next
+                            persistBodyProfile(nextAge = next)
+                        }
                     }
                 }
                 activeBodyField = null

@@ -490,6 +490,37 @@ class NutritionRepository @Inject constructor(
         }
     }
 
+    suspend fun upsertDailyWeight(
+        dateIso: String,
+        weightKg: Float,
+        syncProfileWeight: Boolean = false,
+    ) = withContext(Dispatchers.IO) {
+        val safeWeight = weightKg.coerceIn(30f, 300f)
+        val now = System.currentTimeMillis()
+        database.withTransaction {
+            val existing = nutraDao.findLatestWeightLogForDate(dateIso)
+            if (existing != null) {
+                nutraDao.updateWeightLog(
+                    existing.copy(
+                        weightKg = safeWeight,
+                        timestampMillis = now,
+                    ),
+                )
+            } else {
+                nutraDao.insertWeightLog(
+                    WeightLogEntity(
+                        dateIso = dateIso,
+                        weightKg = safeWeight,
+                        timestampMillis = now,
+                    ),
+                )
+            }
+        }
+        if (syncProfileWeight) {
+            preferencesDataStore.updateCurrentWeight(safeWeight)
+        }
+    }
+
     suspend fun exportBackupJson(): AppResult<String> = withContext(Dispatchers.IO) {
         backupMutex.withLock {
             try {

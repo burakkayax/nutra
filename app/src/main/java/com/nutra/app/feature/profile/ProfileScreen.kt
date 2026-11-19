@@ -184,7 +184,7 @@ fun ProfileScreen(
                             verticalArrangement = Arrangement.spacedBy(2.dp),
                         ) {
                             Text(
-                                text = profile.goalType.title,
+                                text = "Vücut profili",
                                 style = NutraTheme.typography.titleMedium,
                                 color = colors.textPrimary,
                             )
