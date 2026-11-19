@@ -142,6 +142,22 @@ class ProfileViewModel @Inject constructor(
         )
     }
 
+    fun saveDailyGoals(goals: MacroGoals) {
+        launchGoalEdit {
+            calorieScalingBaseline = null
+            lastCalorieScaledGoals = null
+            val safeGoals = MacroGoals(
+                calories = goals.calories.coerceIn(profileGoalBounds.minCalories, profileGoalBounds.maxCalories),
+                proteinGrams = goals.proteinGrams.coerceIn(profileGoalBounds.minProtein, profileGoalBounds.maxProtein),
+                carbsGrams = goals.carbsGrams.coerceIn(profileGoalBounds.minCarbs, profileGoalBounds.maxCarbs),
+                fatGrams = goals.fatGrams.coerceIn(profileGoalBounds.minFat, profileGoalBounds.maxFat),
+                waterMl = goals.waterMl.coerceIn(profileGoalBounds.minWaterMl, profileGoalBounds.maxWaterMl),
+            )
+            persistGoalsLocked(safeGoals)
+            emitFeedback("Günlük hedefler güncellendi")
+        }
+    }
+
     fun adjustCalorieGoal(delta: Int) {
         launchGoalEdit {
             val current = currentGoalsLocked()

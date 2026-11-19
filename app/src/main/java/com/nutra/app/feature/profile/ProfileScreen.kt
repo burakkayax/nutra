@@ -29,7 +29,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Edit
-import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -70,8 +69,6 @@ import com.nutra.app.core.designsystem.NutraIconBadge
 import com.nutra.app.core.designsystem.NutraIconButton
 import com.nutra.app.core.designsystem.NutraIcons
 import com.nutra.app.core.designsystem.NutraListRow
-import com.nutra.app.core.designsystem.NutraMetricStepperRow
-import com.nutra.app.core.designsystem.NutraNumericInputDialog
 import com.nutra.app.core.designsystem.NutraScreenHeader
 import com.nutra.app.core.designsystem.NutraSectionHeader
 import com.nutra.app.core.designsystem.NutraSegmentedControl
@@ -86,7 +83,6 @@ import com.nutra.app.core.notification.WaterReminderScheduleCalculator
 import com.nutra.app.domain.model.ThemePreference
 import kotlinx.coroutines.delay
 import java.time.LocalDate
-import kotlin.math.roundToInt
 
 private val GEMINI_MODEL_PRESETS = listOf(
     "gemini-2.5-flash",
@@ -94,26 +90,13 @@ private val GEMINI_MODEL_PRESETS = listOf(
     "gemini-2.5-pro",
 )
 
-private enum class ProfileGoalField(
-    val dialogTitle: String,
-    val unit: String,
-    val rangeHint: String,
-    val minValue: Double,
-    val maxValue: Double,
-) {
-    CALORIES("Kalori hedefi", "kcal", "1.000 – 6.000 kcal", 1000.0, 6000.0),
-    PROTEIN("Protein hedefi", "g", "30 – 400 g", 30.0, 400.0),
-    CARBS("Karbonhidrat hedefi", "g", "20 – 600 g", 20.0, 600.0),
-    FAT("Yağ hedefi", "g", "20 – 250 g", 20.0, 250.0),
-    WATER("Su hedefi", "ml", "1.000 – 7.000 ml", 1000.0, 7000.0),
-}
-
 @Composable
 fun ProfileScreen(
     viewModel: ProfileViewModel,
     contentPadding: PaddingValues = PaddingValues(0.dp),
     scrollToTopTrigger: Int = 0,
     onEditBodyProfile: () -> Unit = {},
+    onOpenDailyGoals: () -> Unit = {},
     onOpenWaterReminder: () -> Unit = {},
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -130,7 +113,6 @@ fun ProfileScreen(
     val listState = rememberLazyListState()
 
     var showGeminiDialog by remember { mutableStateOf(false) }
-    var activeGoalField by remember { mutableStateOf<ProfileGoalField?>(null) }
     var pendingImportUri by remember { mutableStateOf<Uri?>(null) }
 
     LaunchedEffect(scrollToTopTrigger) {
@@ -254,75 +236,34 @@ fun ProfileScreen(
                 }
             }
 
-            // 2. Daily macro & water goals
-            item(key = "daily_goals") {
+            // 2. Daily goals & water reminder entries
+            item(key = "goals_and_reminders") {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    NutraSectionHeader(
-                        title = "Günlük hedefler",
-                        actionLabel = "Oto hesapla",
-                        actionIcon = Icons.Rounded.Refresh,
-                        actionContainerColor = colors.surfaceElevated,
-                        actionHaptic = HapticFeedbackType.Confirm,
-                        onAction = viewModel::recalculateWithMifflinStJeor,
-                    )
-
-                    NutraCard(contentPadding = PaddingValues(horizontal = NutraTheme.spacing.card, vertical = NutraTheme.spacing.lg)) {
-                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            NutraMetricStepperRow(
-                                label = "Kalori",
-                                valueText = "${NutraFormatters.formatInt(goals.calories)} kcal",
-                                accentColor = colors.accent,
-                                onDecrement = { viewModel.adjustCalorieGoal(-50) },
-                                onIncrement = { viewModel.adjustCalorieGoal(50) },
-                                onValueClick = { activeGoalField = ProfileGoalField.CALORIES },
-                            )
-                            NutraDivider()
-                            NutraMetricStepperRow(
-                                label = "Protein",
-                                valueText = "${goals.proteinGrams} g",
-                                accentColor = colors.protein,
-                                onDecrement = { viewModel.adjustProteinGoal(-5) },
-                                onIncrement = { viewModel.adjustProteinGoal(5) },
-                                onValueClick = { activeGoalField = ProfileGoalField.PROTEIN },
-                            )
-                            NutraDivider()
-                            NutraMetricStepperRow(
-                                label = "Karbonhidrat",
-                                valueText = "${goals.carbsGrams} g",
-                                accentColor = colors.carbs,
-                                onDecrement = { viewModel.adjustCarbsGoal(-5) },
-                                onIncrement = { viewModel.adjustCarbsGoal(5) },
-                                onValueClick = { activeGoalField = ProfileGoalField.CARBS },
-                            )
-                            NutraDivider()
-                            NutraMetricStepperRow(
-                                label = "Yağ",
-                                valueText = "${goals.fatGrams} g",
-                                accentColor = colors.fat,
-                                onDecrement = { viewModel.adjustFatGoal(-5) },
-                                onIncrement = { viewModel.adjustFatGoal(5) },
-                                onValueClick = { activeGoalField = ProfileGoalField.FAT },
-                            )
-                            NutraDivider()
-                            NutraMetricStepperRow(
-                                label = "Su",
-                                valueText = "${NutraFormatters.formatInt(goals.waterMl)} ml",
-                                accentColor = colors.water,
-                                onDecrement = { viewModel.adjustWaterGoal(-250) },
-                                onIncrement = { viewModel.adjustWaterGoal(250) },
-                                onValueClick = { activeGoalField = ProfileGoalField.WATER },
-                            )
-                        }
-                    }
-                }
-            }
-
-            // 3. Water reminder settings
-            item(key = "water_reminder") {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    NutraSectionHeader(title = "Hatırlatıcılar")
+                    NutraSectionHeader(title = "Hedefler ve hatırlatıcılar")
 
                     NutraCard(contentPadding = PaddingValues(horizontal = NutraTheme.spacing.card, vertical = NutraTheme.spacing.sm)) {
+                        NutraListRow(
+                            title = "Günlük hedefler",
+                            subtitle = "${NutraFormatters.formatInt(goals.calories)} kcal · ${NutraFormatters.formatWaterLitres(goals.waterMl)} su",
+                            leading = {
+                                NutraIconBadge(
+                                    icon = NutraIcons.InsightsRounded,
+                                    tint = colors.textPrimary,
+                                    container = colors.surfaceMuted,
+                                )
+                            },
+                            trailing = {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                                    contentDescription = null,
+                                    tint = colors.textTertiary,
+                                )
+                            },
+                            onClick = onOpenDailyGoals,
+                        )
+
+                        NutraDivider(startIndent = 54.dp)
+
                         NutraListRow(
                             title = "Su hatırlatıcı",
                             subtitle = WaterReminderScheduleCalculator.formatProfileSummary(profile.waterReminder),
@@ -562,38 +503,6 @@ fun ProfileScreen(
             onSave = { apiKey, model ->
                 viewModel.saveGeminiConfig(apiKey, model)
                 showGeminiDialog = false
-            },
-        )
-    }
-
-    val editingGoalField = activeGoalField
-    if (editingGoalField != null) {
-        val currentValue = when (editingGoalField) {
-            ProfileGoalField.CALORIES -> goals.calories.toString()
-            ProfileGoalField.PROTEIN -> goals.proteinGrams.toString()
-            ProfileGoalField.CARBS -> goals.carbsGrams.toString()
-            ProfileGoalField.FAT -> goals.fatGrams.toString()
-            ProfileGoalField.WATER -> goals.waterMl.toString()
-        }
-        NutraNumericInputDialog(
-            title = editingGoalField.dialogTitle,
-            initialValue = currentValue,
-            unit = editingGoalField.unit,
-            rangeHint = editingGoalField.rangeHint,
-            minValue = editingGoalField.minValue,
-            maxValue = editingGoalField.maxValue,
-            allowDecimal = false,
-            onDismiss = { activeGoalField = null },
-            onConfirm = { entered ->
-                val rounded = entered.roundToInt()
-                when (editingGoalField) {
-                    ProfileGoalField.CALORIES -> viewModel.setCalorieGoal(rounded)
-                    ProfileGoalField.PROTEIN -> viewModel.setProteinGoal(rounded)
-                    ProfileGoalField.CARBS -> viewModel.setCarbsGoal(rounded)
-                    ProfileGoalField.FAT -> viewModel.setFatGoal(rounded)
-                    ProfileGoalField.WATER -> viewModel.setWaterGoal(rounded)
-                }
-                activeGoalField = null
             },
         )
     }

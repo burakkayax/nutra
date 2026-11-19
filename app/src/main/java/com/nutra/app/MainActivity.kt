@@ -120,6 +120,7 @@ import com.nutra.app.feature.dashboard.DashboardScreen
 import com.nutra.app.feature.dashboard.DashboardViewModel
 import com.nutra.app.feature.onboarding.OnboardingScreen
 import com.nutra.app.feature.onboarding.OnboardingViewModel
+import com.nutra.app.feature.profile.DailyGoalsScreen
 import com.nutra.app.feature.profile.EditBodyProfileScreen
 import com.nutra.app.feature.profile.ProfileScreen
 import com.nutra.app.feature.profile.ProfileViewModel
@@ -279,6 +280,7 @@ class MainActivity : ComponentActivity() {
 private enum class ProfileSubScreen {
     NONE,
     EDIT_BODY_PROFILE,
+    DAILY_GOALS,
     WATER_REMINDER,
 }
 
@@ -360,8 +362,9 @@ fun NutraAppRoot(
             val mountProfile = hasVisitedProfile || prewarmProfile || activeTab == PrimaryDestination.PROFILE
             val saveableStateHolder = rememberSaveableStateHolder()
             val showEditBodyProfile = activeTab == PrimaryDestination.PROFILE && profileSubScreen == ProfileSubScreen.EDIT_BODY_PROFILE
+            val showDailyGoals = activeTab == PrimaryDestination.PROFILE && profileSubScreen == ProfileSubScreen.DAILY_GOALS
             val showWaterReminder = activeTab == PrimaryDestination.PROFILE && profileSubScreen == ProfileSubScreen.WATER_REMINDER
-            val hasProfileSubScreen = showEditBodyProfile || showWaterReminder
+            val hasProfileSubScreen = showEditBodyProfile || showDailyGoals || showWaterReminder
             var dashboardScrollTopTick by remember { mutableIntStateOf(0) }
             var analyticsScrollTopTick by remember { mutableIntStateOf(0) }
             var profileScrollTopTick by remember { mutableIntStateOf(0) }
@@ -428,6 +431,7 @@ fun NutraAppRoot(
                                     contentPadding = contentPadding,
                                     scrollToTopTrigger = profileScrollTopTick,
                                     onEditBodyProfile = { profileSubScreen = ProfileSubScreen.EDIT_BODY_PROFILE },
+                                    onOpenDailyGoals = { profileSubScreen = ProfileSubScreen.DAILY_GOALS },
                                     onOpenWaterReminder = { profileSubScreen = ProfileSubScreen.WATER_REMINDER },
                                 )
                             }
@@ -493,6 +497,36 @@ fun NutraAppRoot(
                                     goalType = goalType,
                                     recalculateGoals = recalculate,
                                 )
+                                profileSubScreen = ProfileSubScreen.NONE
+                            },
+                        )
+                    }
+                }
+
+                AnimatedVisibility(
+                    visible = showDailyGoals,
+                    enter = slideInHorizontally(tween(220)) { it / 4 } + fadeIn(tween(180)),
+                    exit = slideOutHorizontally(tween(180)) { it / 4 } + fadeOut(tween(140)),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .zIndex(3f)
+                        .background(NutraTheme.colors.background)
+                        .windowInsetsPadding(contentInsets),
+                ) {
+                    val profileViewModel: ProfileViewModel = viewModel()
+                    val profileState by profileViewModel.uiState.collectAsStateWithLifecycle()
+                    if (profileState.isLoading) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(NutraTheme.colors.background),
+                        )
+                    } else {
+                        DailyGoalsScreen(
+                            profile = profileState.profile,
+                            onNavigateBack = { profileSubScreen = ProfileSubScreen.NONE },
+                            onSave = { updatedGoals ->
+                                profileViewModel.saveDailyGoals(updatedGoals)
                                 profileSubScreen = ProfileSubScreen.NONE
                             },
                         )

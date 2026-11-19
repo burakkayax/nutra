@@ -1,0 +1,391 @@
+package com.nutra.app.feature.profile
+
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import com.nutra.app.core.designsystem.NutraBottomActionBar
+import com.nutra.app.core.designsystem.NutraButton
+import com.nutra.app.core.designsystem.NutraButtonSize
+import com.nutra.app.core.designsystem.NutraButtonStyle
+import com.nutra.app.core.designsystem.NutraCard
+import com.nutra.app.core.designsystem.NutraContentMaxWidth
+import com.nutra.app.core.designsystem.NutraDialog
+import com.nutra.app.core.designsystem.NutraDivider
+import com.nutra.app.core.designsystem.NutraFormatters
+import com.nutra.app.core.designsystem.NutraIconButton
+import com.nutra.app.core.designsystem.NutraMetricStepperRow
+import com.nutra.app.core.designsystem.NutraNumericInputDialog
+import com.nutra.app.core.designsystem.NutraSectionHeader
+import com.nutra.app.core.designsystem.NutraStackedRatioBar
+import com.nutra.app.core.designsystem.NutraTheme
+import com.nutra.app.domain.model.MacroGoals
+import com.nutra.app.domain.model.UserProfile
+import com.nutra.app.domain.usecase.MacroGoalBounds
+import com.nutra.app.domain.usecase.NutritionCalculatorUseCase
+import kotlin.math.roundToInt
+
+private enum class DailyGoalField(
+    val dialogTitle: String,
+    val unit: String,
+    val rangeHint: String,
+    val minValue: Double,
+    val maxValue: Double,
+) {
+    CALORIES("Kalori hedefi", "kcal", "1.000 – 6.000 kcal", 1000.0, 6000.0),
+    PROTEIN("Protein hedefi", "g", "30 – 400 g", 30.0, 400.0),
+    CARBS("Karbonhidrat hedefi", "g", "20 – 600 g", 20.0, 600.0),
+    FAT("Yağ hedefi", "g", "20 – 250 g", 20.0, 250.0),
+    WATER("Su hedefi", "ml", "1.000 – 7.000 ml", 1000.0, 7000.0),
+}
+
+@Composable
+fun DailyGoalsScreen(
+    profile: UserProfile,
+    onNavigateBack: () -> Unit,
+    onSave: (MacroGoals) -> Unit,
+) {
+    val colors = NutraTheme.colors
+    val calculator = remember { NutritionCalculatorUseCase() }
+    val bounds = remember { MacroGoalBounds() }
+    val initialGoals = profile.goals
+
+    var calories by rememberSaveable { mutableIntStateOf(initialGoals.calories) }
+    var proteinGrams by rememberSaveable { mutableIntStateOf(initialGoals.proteinGrams) }
+    var carbsGrams by rememberSaveable { mutableIntStateOf(initialGoals.carbsGrams) }
+    var fatGrams by rememberSaveable { mutableIntStateOf(initialGoals.fatGrams) }
+    var waterMl by rememberSaveable { mutableIntStateOf(initialGoals.waterMl) }
+
+    var calorieScalingBaseline by remember { mutableStateOf<MacroGoals?>(null) }
+    var lastCalorieScaledGoals by remember { mutableStateOf<MacroGoals?>(null) }
+    var activeGoalField by remember { mutableStateOf<DailyGoalField?>(null) }
+    var showDiscardDialog by remember { mutableStateOf(false) }
+
+    val draftGoals = MacroGoals(
+        calories = calories,
+        proteinGrams = proteinGrams,
+        carbsGrams = carbsGrams,
+        fatGrams = fatGrams,
+        waterMl = waterMl,
+    )
+    val hasUnsavedChanges = draftGoals != initialGoals
+
+    fun applyGoals(updated: MacroGoals) {
+        calories = updated.calories
+        proteinGrams = updated.proteinGrams
+        carbsGrams = updated.carbsGrams
+        fatGrams = updated.fatGrams
+        waterMl = updated.waterMl
+    }
+
+    fun applyCalorieTarget(targetCalories: Int) {
+        val current = draftGoals
+        if (lastCalorieScaledGoals != current) {
+            calorieScalingBaseline = current
+        }
+        val baseline = calorieScalingBaseline ?: current.also { calorieScalingBaseline = it }
+        val scaled = calculator.scaleMacrosForCalorieGoal(
+            baselineGoals = baseline,
+            targetCalories = targetCalories,
+            bounds = bounds,
+        ).copy(waterMl = current.waterMl)
+        lastCalorieScaledGoals = scaled
+        applyGoals(scaled)
+    }
+
+    fun updateMacro(transform: (MacroGoals) -> MacroGoals) {
+        calorieScalingBaseline = null
+        lastCalorieScaledGoals = null
+        val recalculated = calculator.recalculateCaloriesFromMacros(
+            goals = transform(draftGoals),
+            bounds = bounds,
+        )
+        applyGoals(recalculated)
+    }
+
+    fun updateWater(nextWaterMl: Int) {
+        val clamped = nextWaterMl.coerceIn(bounds.minWaterMl, bounds.maxWaterMl)
+        waterMl = clamped
+        calorieScalingBaseline = calorieScalingBaseline?.copy(waterMl = clamped)
+        lastCalorieScaledGoals = lastCalorieScaledGoals?.copy(waterMl = clamped)
+    }
+
+    fun recalculateFromProfile() {
+        calorieScalingBaseline = null
+        lastCalorieScaledGoals = null
+        val calculated = calculator.calculateGoals(
+            sex = profile.sex,
+            age = profile.age,
+            heightCm = profile.heightCm,
+            weightKg = profile.currentWeightKg,
+            activityLevel = profile.activityLevel,
+            goalType = profile.goalType,
+        )
+        applyGoals(calculated)
+    }
+
+    fun requestExit() {
+        if (hasUnsavedChanges) {
+            showDiscardDialog = true
+        } else {
+            onNavigateBack()
+        }
+    }
+
+    BackHandler(onBack = ::requestExit)
+
+    val proteinKcal = draftGoals.proteinGrams * 4f
+    val carbsKcal = draftGoals.carbsGrams * 4f
+    val fatKcal = draftGoals.fatGrams * 9f
+    val totalMacroKcal = (proteinKcal + carbsKcal + fatKcal).coerceAtLeast(1f)
+    val proteinRatio = proteinKcal / totalMacroKcal
+    val carbsRatio = carbsKcal / totalMacroKcal
+    val fatRatio = fatKcal / totalMacroKcal
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(colors.background),
+    ) {
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .widthIn(max = NutraContentMaxWidth)
+                .fillMaxSize(),
+        ) {
+            // Top bar (identical layout to EditBodyProfileScreen & WaterReminderScreen)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = NutraTheme.spacing.screen)
+                    .padding(top = NutraTheme.spacing.section, bottom = NutraTheme.spacing.md),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(NutraTheme.spacing.md),
+            ) {
+                NutraIconButton(
+                    icon = Icons.AutoMirrored.Rounded.ArrowBack,
+                    contentDescription = "Geri",
+                    onClick = ::requestExit,
+                    size = 44.dp,
+                    iconSize = 20.dp,
+                )
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Text(
+                        text = "Günlük hedefler",
+                        style = NutraTheme.typography.titleMedium,
+                        color = colors.textPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = "Kalori, makro ve su hedeflerini ayarla",
+                        style = NutraTheme.typography.caption,
+                        color = colors.textSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = NutraTheme.spacing.screen)
+                    .padding(top = NutraTheme.spacing.md, bottom = NutraTheme.spacing.xxl),
+                verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.xxl),
+            ) {
+                // Live energy & macro split overview
+                NutraCard(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "${NutraFormatters.formatInt(draftGoals.calories)} kcal",
+                            style = NutraTheme.typography.numberMedium,
+                            color = colors.textPrimary,
+                        )
+                        Text(
+                            text = "P %${(proteinRatio * 100f).roundToInt()} · K %${(carbsRatio * 100f).roundToInt()} · Y %${(fatRatio * 100f).roundToInt()}",
+                            style = NutraTheme.typography.caption,
+                            color = colors.textSecondary,
+                        )
+                    }
+                    NutraStackedRatioBar(
+                        proteinRatio = proteinRatio,
+                        carbsRatio = carbsRatio,
+                        fatRatio = fatRatio,
+                        hasData = true,
+                        height = 8.dp,
+                        contentDescription = "Hedef makro dağılımı: Protein %${(proteinRatio * 100f).roundToInt()}, Karbonhidrat %${(carbsRatio * 100f).roundToInt()}, Yağ %${(fatRatio * 100f).roundToInt()}",
+                    )
+                }
+
+                // Calorie & macro steppers
+                Column(verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.md)) {
+                    NutraSectionHeader(
+                        title = "Kalori ve makrolar",
+                        actionLabel = "Oto hesapla",
+                        actionIcon = Icons.Rounded.Refresh,
+                        actionContainerColor = colors.surfaceElevated,
+                        actionHaptic = HapticFeedbackType.Confirm,
+                        onAction = ::recalculateFromProfile,
+                    )
+
+                    NutraCard(contentPadding = PaddingValues(horizontal = NutraTheme.spacing.card, vertical = NutraTheme.spacing.lg)) {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            NutraMetricStepperRow(
+                                label = "Kalori",
+                                valueText = "${NutraFormatters.formatInt(draftGoals.calories)} kcal",
+                                accentColor = colors.accent,
+                                onDecrement = { applyCalorieTarget(draftGoals.calories - 50) },
+                                onIncrement = { applyCalorieTarget(draftGoals.calories + 50) },
+                                onValueClick = { activeGoalField = DailyGoalField.CALORIES },
+                            )
+                            NutraDivider()
+                            NutraMetricStepperRow(
+                                label = "Protein",
+                                valueText = "${draftGoals.proteinGrams} g",
+                                accentColor = colors.protein,
+                                onDecrement = { updateMacro { it.copy(proteinGrams = it.proteinGrams - 5) } },
+                                onIncrement = { updateMacro { it.copy(proteinGrams = it.proteinGrams + 5) } },
+                                onValueClick = { activeGoalField = DailyGoalField.PROTEIN },
+                            )
+                            NutraDivider()
+                            NutraMetricStepperRow(
+                                label = "Karbonhidrat",
+                                valueText = "${draftGoals.carbsGrams} g",
+                                accentColor = colors.carbs,
+                                onDecrement = { updateMacro { it.copy(carbsGrams = it.carbsGrams - 5) } },
+                                onIncrement = { updateMacro { it.copy(carbsGrams = it.carbsGrams + 5) } },
+                                onValueClick = { activeGoalField = DailyGoalField.CARBS },
+                            )
+                            NutraDivider()
+                            NutraMetricStepperRow(
+                                label = "Yağ",
+                                valueText = "${draftGoals.fatGrams} g",
+                                accentColor = colors.fat,
+                                onDecrement = { updateMacro { it.copy(fatGrams = it.fatGrams - 5) } },
+                                onIncrement = { updateMacro { it.copy(fatGrams = it.fatGrams + 5) } },
+                                onValueClick = { activeGoalField = DailyGoalField.FAT },
+                            )
+                        }
+                    }
+                }
+
+                // Water goal stepper
+                Column(verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.md)) {
+                    NutraSectionHeader(title = "Su hedefi")
+
+                    NutraCard(contentPadding = PaddingValues(horizontal = NutraTheme.spacing.card, vertical = NutraTheme.spacing.lg)) {
+                        NutraMetricStepperRow(
+                            label = "Günlük su",
+                            valueText = "${NutraFormatters.formatInt(draftGoals.waterMl)} ml",
+                            accentColor = colors.water,
+                            onDecrement = { updateWater(draftGoals.waterMl - 250) },
+                            onIncrement = { updateWater(draftGoals.waterMl + 250) },
+                            onValueClick = { activeGoalField = DailyGoalField.WATER },
+                        )
+                    }
+                }
+            }
+
+            NutraDivider()
+            NutraBottomActionBar {
+                NutraButton(
+                    text = "Vazgeç",
+                    onClick = ::requestExit,
+                    style = NutraButtonStyle.Secondary,
+                    size = NutraButtonSize.Medium,
+                    modifier = Modifier.weight(0.38f),
+                )
+                NutraButton(
+                    text = "Kaydet",
+                    onClick = { onSave(draftGoals) },
+                    style = NutraButtonStyle.Primary,
+                    size = NutraButtonSize.Medium,
+                    hapticFeedback = HapticFeedbackType.Confirm,
+                    modifier = Modifier.weight(0.62f),
+                )
+            }
+        }
+    }
+
+    if (showDiscardDialog) {
+        NutraDialog(
+            onDismissRequest = { showDiscardDialog = false },
+            title = "Değişikliklerden vazgeç?",
+            message = "Günlük hedef değişikliklerin kaydedilmedi. Çıkmak istediğine emin misin?",
+            confirmText = "Vazgeç ve çık",
+            onConfirm = {
+                showDiscardDialog = false
+                onNavigateBack()
+            },
+            dismissText = "Düzenlemeye dön",
+            onDismiss = { showDiscardDialog = false },
+            destructive = true,
+        )
+    }
+
+    val editingField = activeGoalField
+    if (editingField != null) {
+        val currentValue = when (editingField) {
+            DailyGoalField.CALORIES -> draftGoals.calories.toString()
+            DailyGoalField.PROTEIN -> draftGoals.proteinGrams.toString()
+            DailyGoalField.CARBS -> draftGoals.carbsGrams.toString()
+            DailyGoalField.FAT -> draftGoals.fatGrams.toString()
+            DailyGoalField.WATER -> draftGoals.waterMl.toString()
+        }
+        NutraNumericInputDialog(
+            title = editingField.dialogTitle,
+            initialValue = currentValue,
+            unit = editingField.unit,
+            rangeHint = editingField.rangeHint,
+            minValue = editingField.minValue,
+            maxValue = editingField.maxValue,
+            allowDecimal = false,
+            onDismiss = { activeGoalField = null },
+            onConfirm = { entered ->
+                val rounded = entered.roundToInt()
+                when (editingField) {
+                    DailyGoalField.CALORIES -> applyCalorieTarget(rounded)
+                    DailyGoalField.PROTEIN -> updateMacro { it.copy(proteinGrams = rounded) }
+                    DailyGoalField.CARBS -> updateMacro { it.copy(carbsGrams = rounded) }
+                    DailyGoalField.FAT -> updateMacro { it.copy(fatGrams = rounded) }
+                    DailyGoalField.WATER -> updateWater(rounded)
+                }
+                activeGoalField = null
+            },
+        )
+    }
+}
