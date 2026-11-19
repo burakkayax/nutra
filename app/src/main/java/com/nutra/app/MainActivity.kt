@@ -27,6 +27,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -38,6 +39,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.only
@@ -62,6 +64,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -72,6 +75,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -96,6 +100,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nutra.app.core.datastore.UserPreferencesDataStore
 import com.nutra.app.core.designsystem.NutraIcons
 import com.nutra.app.core.designsystem.NutraTheme
+import com.nutra.app.core.designsystem.rememberHoldHighlightAlpha
 import com.nutra.app.core.designsystem.resolveIsDark
 import com.nutra.app.domain.model.ThemePreference
 import com.nutra.app.feature.analytics.AnalyticsScreen
@@ -299,6 +304,9 @@ fun NutraAppRoot(
             val mountProfile = hasVisitedProfile || prewarmProfile || activeTab == PrimaryDestination.PROFILE
             val saveableStateHolder = rememberSaveableStateHolder()
             val showEditBodyProfile = activeTab == PrimaryDestination.PROFILE && isEditingBodyProfile
+            var dashboardScrollTopTick by remember { mutableIntStateOf(0) }
+            var analyticsScrollTopTick by remember { mutableIntStateOf(0) }
+            var profileScrollTopTick by remember { mutableIntStateOf(0) }
 
             BackHandler(enabled = showEditBodyProfile) {
                 isEditingBodyProfile = false
@@ -335,6 +343,7 @@ fun NutraAppRoot(
                             DashboardScreen(
                                 viewModel = dashboardViewModel,
                                 contentPadding = contentPadding,
+                                scrollToTopTrigger = dashboardScrollTopTick,
                             )
                         }
                     }
@@ -351,6 +360,7 @@ fun NutraAppRoot(
                                 AnalyticsScreen(
                                     viewModel = analyticsViewModel,
                                     contentPadding = contentPadding,
+                                    scrollToTopTrigger = analyticsScrollTopTick,
                                 )
                             }
                         }
@@ -363,46 +373,10 @@ fun NutraAppRoot(
                                 ProfileScreen(
                                     viewModel = profileViewModel,
                                     contentPadding = contentPadding,
+                                    scrollToTopTrigger = profileScrollTopTick,
                                     onEditBodyProfile = { isEditingBodyProfile = true },
                                 )
                             }
-                        }
-                    }
-
-                    AnimatedVisibility(
-                        visible = showEditBodyProfile,
-                        enter = slideInHorizontally(tween(220)) { it / 4 } + fadeIn(tween(180)),
-                        exit = slideOutHorizontally(tween(180)) { it / 4 } + fadeOut(tween(140)),
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .zIndex(2f),
-                    ) {
-                        val profileViewModel: ProfileViewModel = viewModel()
-                        val profileState by profileViewModel.uiState.collectAsStateWithLifecycle()
-                        if (profileState.isLoading) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .background(NutraTheme.colors.background),
-                            )
-                        } else {
-                            EditBodyProfileScreen(
-                                profile = profileState.profile,
-                                onNavigateBack = { isEditingBodyProfile = false },
-                                onSave = { sex, age, heightCm, currentWeight, targetWeight, activity, goalType, recalculate ->
-                                    profileViewModel.updateBodyProfile(
-                                        sex = sex,
-                                        age = age,
-                                        heightCm = heightCm,
-                                        currentWeightKg = currentWeight,
-                                        targetWeightKg = targetWeight,
-                                        activityLevel = activity,
-                                        goalType = goalType,
-                                        recalculateGoals = recalculate,
-                                    )
-                                    isEditingBodyProfile = false
-                                },
-                            )
                         }
                     }
                 }
@@ -410,16 +384,65 @@ fun NutraAppRoot(
                 AnimatedVisibility(
                     visible = !showEditBodyProfile,
                     enter = fadeIn(tween(180)) + slideInVertically(tween(200)) { it / 2 },
-                    exit = fadeOut(tween(140)) + slideOutVertically(tween(160)) { it / 2 },
-                    modifier = Modifier.align(Alignment.BottomCenter),
+                    exit = fadeOut(tween(120)) + slideOutVertically(tween(140)) { it / 2 },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .zIndex(2f),
                 ) {
                     NutraBottomBar(
                         selectedTab = activeTab,
-                        onSelectTab = {
+                        onSelectTab = { dest ->
                             isEditingBodyProfile = false
-                            activeTab = it
+                            if (dest == activeTab) {
+                                when (dest) {
+                                    PrimaryDestination.DASHBOARD -> dashboardScrollTopTick++
+                                    PrimaryDestination.ANALYTICS -> analyticsScrollTopTick++
+                                    PrimaryDestination.PROFILE -> profileScrollTopTick++
+                                }
+                            } else {
+                                activeTab = dest
+                            }
                         },
                     )
+                }
+
+                AnimatedVisibility(
+                    visible = showEditBodyProfile,
+                    enter = slideInHorizontally(tween(220)) { it / 4 } + fadeIn(tween(180)),
+                    exit = slideOutHorizontally(tween(180)) { it / 4 } + fadeOut(tween(140)),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .zIndex(3f)
+                        .background(NutraTheme.colors.background)
+                        .windowInsetsPadding(contentInsets),
+                ) {
+                    val profileViewModel: ProfileViewModel = viewModel()
+                    val profileState by profileViewModel.uiState.collectAsStateWithLifecycle()
+                    if (profileState.isLoading) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(NutraTheme.colors.background),
+                        )
+                    } else {
+                        EditBodyProfileScreen(
+                            profile = profileState.profile,
+                            onNavigateBack = { isEditingBodyProfile = false },
+                            onSave = { sex, age, heightCm, currentWeight, targetWeight, activity, goalType, recalculate ->
+                                profileViewModel.updateBodyProfile(
+                                    sex = sex,
+                                    age = age,
+                                    heightCm = heightCm,
+                                    currentWeightKg = currentWeight,
+                                    targetWeightKg = targetWeight,
+                                    activityLevel = activity,
+                                    goalType = goalType,
+                                    recalculateGoals = recalculate,
+                                )
+                                isEditingBodyProfile = false
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -497,19 +520,21 @@ private fun NutraBottomBar(
     val haptic = LocalHapticFeedback.current
     val colors = NutraTheme.colors
     val layoutDirection = LocalLayoutDirection.current
-    val shadowElevation = if (colors.isDark) 0.dp else 6.dp
+    val shadowElevation = if (colors.isDark) 0.dp else 2.dp
+    val shadowTint = colors.ink.copy(alpha = 0.28f)
     val borderStroke = remember(colors.isDark, colors.segmentThumb, colors.divider) {
         if (colors.isDark) {
             BorderStroke(1.dp, colors.segmentThumb.copy(alpha = 0.65f))
         } else {
-            BorderStroke(1.dp, colors.divider.copy(alpha = 0.75f))
+            BorderStroke(1.dp, colors.divider.copy(alpha = 0.85f))
         }
     }
     val scrimBrush = remember(colors.background) {
         Brush.verticalGradient(
             0f to Color.Transparent,
-            0.45f to colors.background.copy(alpha = 0.92f),
-            1f to colors.background,
+            0.38f to colors.background.copy(alpha = 0.35f),
+            0.75f to colors.background.copy(alpha = 0.82f),
+            1f to colors.background.copy(alpha = 0.96f),
         )
     }
     val activePillColor = if (colors.isDark) colors.segmentThumb.copy(alpha = 0.65f) else colors.surfaceMuted
@@ -531,15 +556,28 @@ private fun NutraBottomBar(
             modifier = Modifier
                 .widthIn(max = 328.dp)
                 .fillMaxWidth()
-                .height(64.dp),
+                .heightIn(min = 64.dp)
+                .then(
+                    if (shadowElevation > 0.dp) {
+                        Modifier.shadow(
+                            elevation = shadowElevation,
+                            shape = NutraTheme.shapes.pill,
+                            ambientColor = shadowTint,
+                            spotColor = shadowTint,
+                        )
+                    } else {
+                        Modifier
+                    },
+                ),
             shape = NutraTheme.shapes.pill,
             color = if (colors.isDark) colors.surfaceElevated else colors.surface,
-            shadowElevation = shadowElevation,
+            shadowElevation = 0.dp,
             border = borderStroke,
         ) {
             Row(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .fillMaxWidth()
+                    .height(IntrinsicSize.Min)
                     .padding(horizontal = 6.dp, vertical = 6.dp)
                     .drawBehind {
                         val count = PrimaryDestination.entries.size
@@ -559,8 +597,14 @@ private fun NutraBottomBar(
                     },
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                val holdHighlightBase = colors.ink.copy(alpha = if (colors.isDark) 0.12f else 0.07f)
                 PrimaryDestination.entries.forEach { dest ->
                     val selected = dest == selectedTab
+                    val interactionSource = remember { MutableInteractionSource() }
+                    val holdAlphaState = rememberHoldHighlightAlpha(
+                        interactionSource = interactionSource,
+                        label = "navHoldAlpha",
+                    )
                     val tint by animateColorAsState(
                         targetValue = if (selected) colors.textPrimary else colors.textTertiary,
                         animationSpec = tween(180),
@@ -575,24 +619,30 @@ private fun NutraBottomBar(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
+                            .heightIn(min = 52.dp)
                             .clip(NutraTheme.shapes.pill)
+                            .drawBehind {
+                                val a = holdAlphaState.value
+                                if (a > 0.005f) {
+                                    drawRect(holdHighlightBase.copy(alpha = holdHighlightBase.alpha * a))
+                                }
+                            }
                             .selectable(
                                 selected = selected,
-                                interactionSource = remember { MutableInteractionSource() },
+                                interactionSource = interactionSource,
                                 indication = null,
                                 role = Role.Tab,
                             ) {
-                                if (!selected) {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    onSelectTab(dest)
-                                }
-                            },
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onSelectTab(dest)
+                            }
+                            .padding(vertical = 6.dp, horizontal = 4.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center,
                     ) {
                         Icon(
                             imageVector = dest.iconVector(selected),
-                            contentDescription = dest.title,
+                            contentDescription = null,
                             tint = tint,
                             modifier = Modifier
                                 .size(22.dp)

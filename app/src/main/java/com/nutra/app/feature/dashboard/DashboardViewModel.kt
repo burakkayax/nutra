@@ -6,6 +6,7 @@ import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nutra.app.core.datastore.UserPreferencesDataStore
+import com.nutra.app.core.designsystem.NutraFormatters
 import com.nutra.app.core.network.GeminiAiService
 import com.nutra.app.domain.model.AiAnalyzedFoodItem
 import com.nutra.app.domain.model.AppResult
@@ -59,7 +60,7 @@ enum class LoggingTabMode(val title: String) {
 @Immutable
 data class CustomFoodDraft(
     val name: String = "",
-    val unitLabel: String = "1 Porsiyon",
+    val unitLabel: String = "",
     val unitGrams: String = "100",
     val calories: String = "",
     val protein: String = "",
@@ -93,6 +94,7 @@ data class LoggingSheetUiState(
     val activeLoggingMealType: MealType = MealType.BREAKFAST,
     val loggingTabMode: LoggingTabMode = LoggingTabMode.CATALOG,
     val selectedCategory: FoodCategory = FoodCategory.ALL,
+    val favoritesOnly: Boolean = false,
     val isSearchActive: Boolean = false,
     val isCatalogLoading: Boolean = true,
     val rankedFoods: List<FoodItem> = emptyList(),
@@ -100,6 +102,7 @@ data class LoggingSheetUiState(
     val selectedFoodForPortion: FoodItem? = null,
     val aiPromptText: String = "",
     val aiAnalyzing: Boolean = false,
+    val aiPhotoAnalyzing: Boolean = false,
     val aiAnalyzedItems: List<AiAnalyzedFoodItem> = emptyList(),
     val aiErrorMessage: String? = null,
     val isGeminiKeyConfigured: Boolean = false,
@@ -111,7 +114,7 @@ data class LoggingSheetUiState(
     val sheetFeedbackEventId: Long = 0L,
 ) {
     val shouldShowSmartCombos: Boolean
-        get() = !isSearchActive && selectedCategory == FoodCategory.ALL && smartCombos.isNotEmpty()
+        get() = !isSearchActive && !favoritesOnly && selectedCategory == FoodCategory.ALL && smartCombos.isNotEmpty()
 }
 
 private data class CatalogAndCombosState(
@@ -132,9 +135,11 @@ private data class LoggingModalInternalState(
     val activeLoggingMealType: MealType? = null,
     val loggingTabMode: LoggingTabMode = LoggingTabMode.CATALOG,
     val selectedCategory: FoodCategory = FoodCategory.ALL,
+    val favoritesOnly: Boolean = false,
     val selectedFoodForPortion: FoodItem? = null,
     val aiPromptText: String = "",
     val aiAnalyzing: Boolean = false,
+    val aiPhotoAnalyzing: Boolean = false,
     val aiAnalyzedItems: List<AiAnalyzedFoodItem> = emptyList(),
     val aiErrorMessage: String? = null,
     val barcodeInput: String = "",
@@ -240,8 +245,8 @@ class DashboardViewModel @Inject constructor(
         .debounce { query -> if (query.isBlank()) 0L else 45L }
         .distinctUntilChanged()
 
-    private val selectedCategoryFlow = modalStateFlow
-        .map { it.selectedCategory }
+    private val selectedCategoryFilterFlow = modalStateFlow
+        .map { it.selectedCategory to it.favoritesOnly }
         .distinctUntilChanged()
 
     private val activeModalMealFlow = activeLoggingMealTypeFlow
@@ -264,19 +269,24 @@ class DashboardViewModel @Inject constructor(
                     cachedFoodsFlow,
                     mealUsageStatsFlow,
                     debouncedSearchQueryFlow,
-                    selectedCategoryFlow,
-                ) { foods, stats, query, category ->
+                    selectedCategoryFilterFlow,
+                ) { foods, stats, query, (category, favoritesOnly) ->
                     val isSearchActive = query.isNotBlank()
                     when {
                         foods == null -> Triple(isSearchActive, true, emptyList())
                         foods.isEmpty() -> Triple(isSearchActive, false, emptyList())
                         else -> {
+                            val sourceFoods = if (favoritesOnly) {
+                                foods.filter { it.isFavorite }
+                            } else {
+                                foods
+                            }
                             val ranked = rankerAndComboEngine.rankFoodsWithStats(
-                                allFoods = foods,
+                                allFoods = sourceFoods,
                                 stats = stats,
                                 mealType = activeMeal,
                                 query = query,
-                                selectedCategory = category,
+                                selectedCategory = if (favoritesOnly) FoodCategory.ALL else category,
                             )
                             Triple(isSearchActive, false, ranked)
                         }
@@ -291,9 +301,10 @@ class DashboardViewModel @Inject constructor(
 
                 val showCombosEligibilityFlow = combine(
                     debouncedSearchQueryFlow,
-                    selectedCategoryFlow,
-                ) { query, category -> query.isBlank() && category == FoodCategory.ALL }
-                    .distinctUntilChanged()
+                    selectedCategoryFilterFlow,
+                ) { query, (category, favoritesOnly) ->
+                    query.isBlank() && !favoritesOnly && category == FoodCategory.ALL
+                }.distinctUntilChanged()
 
                 val combosFlow = showCombosEligibilityFlow.flatMapLatest { eligible ->
                     if (!eligible) {
@@ -342,6 +353,7 @@ class DashboardViewModel @Inject constructor(
             activeLoggingMealType = modal.activeLoggingMealType ?: MealType.BREAKFAST,
             loggingTabMode = modal.loggingTabMode,
             selectedCategory = modal.selectedCategory,
+            favoritesOnly = modal.favoritesOnly,
             isSearchActive = catalogAndCombos.isSearchActive,
             isCatalogLoading = catalogAndCombos.isCatalogLoading,
             rankedFoods = catalogAndCombos.rankedFoods,
@@ -349,6 +361,7 @@ class DashboardViewModel @Inject constructor(
             selectedFoodForPortion = modal.selectedFoodForPortion,
             aiPromptText = modal.aiPromptText,
             aiAnalyzing = modal.aiAnalyzing,
+            aiPhotoAnalyzing = modal.aiPhotoAnalyzing,
             aiAnalyzedItems = modal.aiAnalyzedItems,
             aiErrorMessage = modal.aiErrorMessage,
             isGeminiKeyConfigured = isGeminiConfigured,
@@ -414,6 +427,7 @@ class DashboardViewModel @Inject constructor(
                 activeLoggingMealType = mealType,
                 loggingTabMode = initialTab,
                 selectedCategory = FoodCategory.ALL,
+                favoritesOnly = false,
                 selectedFoodForPortion = null,
                 aiErrorMessage = null,
                 barcodeErrorMessage = null,
@@ -434,6 +448,7 @@ class DashboardViewModel @Inject constructor(
                 activeLoggingMealType = null,
                 selectedFoodForPortion = null,
                 aiAnalyzing = false,
+                aiPhotoAnalyzing = false,
                 aiErrorMessage = null,
                 barcodeLoading = false,
                 barcodeErrorMessage = null,
@@ -466,7 +481,11 @@ class DashboardViewModel @Inject constructor(
     }
 
     fun selectCategory(category: FoodCategory) {
-        modalStateFlow.update { it.copy(selectedCategory = category) }
+        modalStateFlow.update { it.copy(selectedCategory = category, favoritesOnly = false) }
+    }
+
+    fun selectFavoritesOnly() {
+        modalStateFlow.update { it.copy(favoritesOnly = true, selectedCategory = FoodCategory.ALL) }
     }
 
     fun openPortionPicker(food: FoodItem) {
@@ -496,6 +515,15 @@ class DashboardViewModel @Inject constructor(
         }
     }
 
+    fun quickLogDefaultFood(food: FoodItem) {
+        logFoodWithPortion(
+            food = food,
+            unitLabel = food.defaultUnitLabel,
+            unitGrams = food.defaultUnitGrams,
+            multiplier = 1f,
+        )
+    }
+
     fun logFoodWithPortion(
         food: FoodItem,
         unitLabel: String,
@@ -513,6 +541,7 @@ class DashboardViewModel @Inject constructor(
                 unitGrams = unitGrams,
                 multiplier = multiplier,
             )
+            expandedMealsFlow.update { it + mealType }
             val feedbackId = sheetFeedbackSeq.incrementAndGet()
             modalStateFlow.update {
                 it.copy(
@@ -533,8 +562,9 @@ class DashboardViewModel @Inject constructor(
                 mealType = mealType,
                 entries = combo.items,
             )
+            expandedMealsFlow.update { it + mealType }
             modalStateFlow.update { it.copy(activeLoggingMealType = null) }
-            showStatusBanner("${combo.title} (${combo.totalCalories} kcal) eklendi")
+            showStatusBanner("${combo.title} (${NutraFormatters.formatInt(combo.totalCalories)} kcal) eklendi")
         }
     }
 
@@ -599,12 +629,12 @@ class DashboardViewModel @Inject constructor(
     fun analyzePhotoWithAi(contentResolver: ContentResolver, uri: Uri) {
         aiAnalysisJob?.cancel()
         aiAnalysisJob = viewModelScope.launch {
-            modalStateFlow.update { it.copy(aiAnalyzing = true, aiErrorMessage = null) }
+            modalStateFlow.update { it.copy(aiAnalyzing = true, aiPhotoAnalyzing = true, aiErrorMessage = null) }
             val aiService = geminiAiService.get()
             val bytes = aiService.loadCompressedImageBytes(contentResolver, uri)
             if (bytes == null) {
                 modalStateFlow.update {
-                    it.copy(aiAnalyzing = false, aiErrorMessage = "Fotoğraf okunamadı.")
+                    it.copy(aiAnalyzing = false, aiPhotoAnalyzing = false, aiErrorMessage = "Fotoğraf okunamadı.")
                 }
                 return@launch
             }
@@ -615,7 +645,7 @@ class DashboardViewModel @Inject constructor(
     fun analyzeWithAi(imageBytes: ByteArray? = null) {
         aiAnalysisJob?.cancel()
         aiAnalysisJob = viewModelScope.launch {
-            modalStateFlow.update { it.copy(aiAnalyzing = true, aiErrorMessage = null) }
+            modalStateFlow.update { it.copy(aiAnalyzing = true, aiPhotoAnalyzing = false, aiErrorMessage = null) }
             runAiAnalysisInternal(imageBytes)
         }
     }
@@ -638,6 +668,7 @@ class DashboardViewModel @Inject constructor(
                 modalStateFlow.update {
                     it.copy(
                         aiAnalyzing = false,
+                        aiPhotoAnalyzing = false,
                         aiAnalyzedItems = result.data,
                         aiErrorMessage = null,
                     )
@@ -647,6 +678,7 @@ class DashboardViewModel @Inject constructor(
                 modalStateFlow.update {
                     it.copy(
                         aiAnalyzing = false,
+                        aiPhotoAnalyzing = false,
                         aiErrorMessage = result.message,
                     )
                 }
@@ -695,6 +727,7 @@ class DashboardViewModel @Inject constructor(
                 )
             }
             nutritionRepository.logComboItemsToMeal(dateIso, mealType, entries)
+            expandedMealsFlow.update { it + mealType }
             modalStateFlow.update {
                 it.copy(
                     activeLoggingMealType = null,
@@ -781,6 +814,7 @@ class DashboardViewModel @Inject constructor(
                 unitGrams = savedFood.defaultUnitGrams,
                 multiplier = 1f,
             )
+            expandedMealsFlow.update { it + mealType }
             modalStateFlow.update {
                 it.copy(
                     activeLoggingMealType = null,

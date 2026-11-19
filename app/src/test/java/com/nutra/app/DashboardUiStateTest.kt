@@ -57,5 +57,11 @@ class DashboardUiStateTest {
                 smartCombos = listOf(sampleCombo),
             ).shouldShowSmartCombos,
         )
+        assertFalse(
+            LoggingSheetUiState(
+                favoritesOnly = true,
+                smartCombos = listOf(sampleCombo),
+            ).shouldShowSmartCombos,
+        )
     }
 }

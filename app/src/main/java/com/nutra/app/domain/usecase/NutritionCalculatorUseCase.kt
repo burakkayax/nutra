@@ -8,6 +8,17 @@ import javax.inject.Inject
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
+object BodyMetricBounds {
+    const val MIN_AGE = 14
+    const val MAX_AGE = 95
+    const val MIN_HEIGHT_CM = 130
+    const val MAX_HEIGHT_CM = 225
+    const val MIN_WEIGHT_KG = 35f
+    const val MAX_WEIGHT_KG = 250f
+    const val MIN_WEIGHT_TENTHS = 350
+    const val MAX_WEIGHT_TENTHS = 2500
+}
+
 data class MacroGoalBounds(
     val minCalories: Int = 1000,
     val maxCalories: Int = 6000,

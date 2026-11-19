@@ -63,4 +63,31 @@ object NutraIcons {
 
     val FileUpload: ImageVector
         @Composable get() = ImageVector.vectorResource(R.drawable.ic_file_upload_rounded)
+
+    val Visibility: ImageVector
+        @Composable get() = ImageVector.vectorResource(R.drawable.ic_visibility_rounded)
+
+    val VisibilityOff: ImageVector
+        @Composable get() = ImageVector.vectorResource(R.drawable.ic_visibility_off_rounded)
+
+    val TrendingDown: ImageVector
+        @Composable get() = ImageVector.vectorResource(R.drawable.ic_trending_down_rounded)
+
+    val TrendingFlat: ImageVector
+        @Composable get() = ImageVector.vectorResource(R.drawable.ic_trending_flat_rounded)
+
+    val TrendingUp: ImageVector
+        @Composable get() = ImageVector.vectorResource(R.drawable.ic_trending_up_rounded)
+
+    val ActivityLevel1: ImageVector
+        @Composable get() = ImageVector.vectorResource(R.drawable.ic_activity_1_rounded)
+
+    val ActivityLevel2: ImageVector
+        @Composable get() = ImageVector.vectorResource(R.drawable.ic_activity_2_rounded)
+
+    val ActivityLevel3: ImageVector
+        @Composable get() = ImageVector.vectorResource(R.drawable.ic_activity_3_rounded)
+
+    val ActivityLevel4: ImageVector
+        @Composable get() = ImageVector.vectorResource(R.drawable.ic_activity_4_rounded)
 }

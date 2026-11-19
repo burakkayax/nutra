@@ -6,7 +6,7 @@ import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nutra.app.core.datastore.UserPreferencesDataStore
-import com.nutra.app.core.designsystem.NutraFormatters
+import com.nutra.app.core.designsystem.NutraSnackbarTone
 import com.nutra.app.domain.model.ActivityLevel
 import com.nutra.app.domain.model.AppResult
 import com.nutra.app.domain.model.BiologicalSex
@@ -35,12 +35,19 @@ import javax.inject.Inject
 import kotlin.math.abs
 
 @Immutable
+data class ProfileFeedback(
+    val message: String,
+    val tone: NutraSnackbarTone = NutraSnackbarTone.Success,
+    val eventId: Long = 0L,
+    val canUndoGoals: Boolean = false,
+)
+
+@Immutable
 data class ProfileUiState(
     val isLoading: Boolean = true,
     val profile: UserProfile = UserProfile(),
     val isBackupBusy: Boolean = false,
-    val feedbackMessage: String? = null,
-    val feedbackEventId: Long = 0L,
+    val feedback: ProfileFeedback? = null,
 )
 
 @HiltViewModel
@@ -56,24 +63,24 @@ class ProfileViewModel @Inject constructor(
     private var latestOptimisticGoals: MacroGoals? = null
     private var calorieScalingBaseline: MacroGoals? = null
     private var lastCalorieScaledGoals: MacroGoals? = null
+    private var previousGoalsBeforeRecalc: MacroGoals? = null
 
     private val pendingGoalsFlow = MutableStateFlow<MacroGoals?>(null)
     private val isBackupBusyFlow = MutableStateFlow(false)
     private val feedbackSeq = AtomicLong(0L)
-    private val feedbackFlow = MutableStateFlow<Pair<String?, Long>>(null to 0L)
+    private val feedbackFlow = MutableStateFlow<ProfileFeedback?>(null)
 
     val uiState: StateFlow<ProfileUiState> = combine(
         preferencesDataStore.userProfileFlow,
         pendingGoalsFlow,
         isBackupBusyFlow,
         feedbackFlow,
-    ) { profile, pendingGoals, isBackupBusy, (message, eventId) ->
+    ) { profile, pendingGoals, isBackupBusy, feedback ->
         ProfileUiState(
             isLoading = false,
             profile = if (pendingGoals != null) profile.copy(goals = pendingGoals) else profile,
             isBackupBusy = isBackupBusy,
-            feedbackMessage = message,
-            feedbackEventId = eventId,
+            feedback = feedback,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -81,8 +88,17 @@ class ProfileViewModel @Inject constructor(
         initialValue = ProfileUiState(),
     )
 
-    private fun emitFeedback(message: String) {
-        feedbackFlow.value = message to feedbackSeq.incrementAndGet()
+    private fun emitFeedback(
+        message: String,
+        tone: NutraSnackbarTone = NutraSnackbarTone.Success,
+        canUndoGoals: Boolean = false,
+    ) {
+        feedbackFlow.value = ProfileFeedback(
+            message = message,
+            tone = tone,
+            eventId = feedbackSeq.incrementAndGet(),
+            canUndoGoals = canUndoGoals,
+        )
     }
 
     fun adjustCalorieGoal(delta: Int) {
@@ -172,7 +188,6 @@ class ProfileViewModel @Inject constructor(
                 bounds = profileGoalBounds,
             )
             persistGoalsLocked(updated)
-            emitFeedback("Kalori hedefi ${formatTrInt(updated.calories)} kcal olarak güncellendi")
         }
     }
 
@@ -188,7 +203,6 @@ class ProfileViewModel @Inject constructor(
         ).copy(waterMl = current.waterMl)
         lastCalorieScaledGoals = updated
         persistGoalsLocked(updated)
-        emitFeedback("Makro hedefleri ${formatTrInt(updated.calories)} kcal için güncellendi")
     }
 
     private suspend fun applyWaterGoalLocked(current: MacroGoals, waterMl: Int) {
@@ -197,7 +211,6 @@ class ProfileViewModel @Inject constructor(
         calorieScalingBaseline = calorieScalingBaseline?.copy(waterMl = nextWater)
         lastCalorieScaledGoals = lastCalorieScaledGoals?.copy(waterMl = nextWater)
         persistGoalsLocked(updated)
-        emitFeedback("Su hedefi güncellendi")
     }
 
     fun recalculateWithMifflinStJeor() {
@@ -205,6 +218,7 @@ class ProfileViewModel @Inject constructor(
             calorieScalingBaseline = null
             lastCalorieScaledGoals = null
             val p = preferencesDataStore.getSnapshot()
+            previousGoalsBeforeRecalc = currentGoalsLocked()
             val calculated = calculatorUseCase.calculateGoals(
                 sex = p.sex,
                 age = p.age,
@@ -214,7 +228,22 @@ class ProfileViewModel @Inject constructor(
                 goalType = p.goalType,
             )
             persistGoalsLocked(calculated)
-            emitFeedback("Mifflin-St Jeor formülüne göre hedefler yenilendi")
+            emitFeedback(
+                message = "Hedefler formüle göre yenilendi",
+                tone = NutraSnackbarTone.Success,
+                canUndoGoals = true,
+            )
+        }
+    }
+
+    fun undoRecalculateGoals() {
+        val prev = previousGoalsBeforeRecalc ?: return
+        previousGoalsBeforeRecalc = null
+        launchGoalEdit {
+            calorieScalingBaseline = null
+            lastCalorieScaledGoals = null
+            persistGoalsLocked(prev)
+            clearFeedback()
         }
     }
 
@@ -273,8 +302,6 @@ class ProfileViewModel @Inject constructor(
         }
     }
 
-    private fun formatTrInt(value: Int): String = NutraFormatters.formatInt(value)
-
     fun updateAppearance(themePreference: ThemePreference, useDynamicColor: Boolean) {
         viewModelScope.launch {
             preferencesDataStore.updateAppearance(themePreference, useDynamicColor)
@@ -305,16 +332,14 @@ class ProfileViewModel @Inject constructor(
                                 }
                             }
                         }
-                        emitFeedback(
-                            if (writeResult.isSuccess) {
-                                "Yedek dosyası kaydedildi"
-                            } else {
-                                "Yedek dosyası yazılamadı"
-                            },
-                        )
+                        if (writeResult.isSuccess) {
+                            emitFeedback("Yedek dosyası kaydedildi", NutraSnackbarTone.Success)
+                        } else {
+                            emitFeedback("Yedek dosyası yazılamadı", NutraSnackbarTone.Error)
+                        }
                     }
                     is AppResult.Error -> {
-                        emitFeedback(res.message)
+                        emitFeedback(res.message, NutraSnackbarTone.Error)
                     }
                 }
             } finally {
@@ -334,7 +359,7 @@ class ProfileViewModel @Inject constructor(
                     }.getOrNull()
                 }
                 if (raw.isNullOrBlank()) {
-                    emitFeedback("Yedek dosyası okunamadı")
+                    emitFeedback("Yedek dosyası okunamadı", NutraSnackbarTone.Error)
                     return@launch
                 }
                 importBackupJsonInternal(raw)
@@ -352,16 +377,17 @@ class ProfileViewModel @Inject constructor(
                     pendingGoalsFlow.value = null
                     calorieScalingBaseline = null
                     lastCalorieScaledGoals = null
-                    emitFeedback("Yedek başarıyla geri yüklendi")
+                    previousGoalsBeforeRecalc = null
+                    emitFeedback("Yedek başarıyla geri yüklendi", NutraSnackbarTone.Success)
                 }
                 is AppResult.Error -> {
-                    emitFeedback(res.message)
+                    emitFeedback(res.message, NutraSnackbarTone.Error)
                 }
             }
         }
     }
 
     fun clearFeedback() {
-        feedbackFlow.value = null to feedbackSeq.get()
+        feedbackFlow.value = null
     }
 }

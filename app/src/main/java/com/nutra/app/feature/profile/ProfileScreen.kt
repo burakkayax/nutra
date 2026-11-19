@@ -1,5 +1,6 @@
 package com.nutra.app.feature.profile
 
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -13,15 +14,19 @@ import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
-import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Refresh
@@ -37,14 +42,18 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -53,6 +62,7 @@ import com.nutra.app.core.designsystem.NutraButtonSize
 import com.nutra.app.core.designsystem.NutraButtonStyle
 import com.nutra.app.core.designsystem.NutraCard
 import com.nutra.app.core.designsystem.NutraChip
+import com.nutra.app.core.designsystem.NutraContentMaxWidth
 import com.nutra.app.core.designsystem.NutraDialog
 import com.nutra.app.core.designsystem.NutraDivider
 import com.nutra.app.core.designsystem.NutraFormatters
@@ -65,10 +75,13 @@ import com.nutra.app.core.designsystem.NutraNumericInputDialog
 import com.nutra.app.core.designsystem.NutraScreenHeader
 import com.nutra.app.core.designsystem.NutraSectionHeader
 import com.nutra.app.core.designsystem.NutraSegmentedControl
+import com.nutra.app.core.designsystem.NutraSkeletonBar
 import com.nutra.app.core.designsystem.NutraSnackbarHost
+import com.nutra.app.core.designsystem.NutraSnackbarTone
 import com.nutra.app.core.designsystem.NutraSwitch
 import com.nutra.app.core.designsystem.NutraTextField
 import com.nutra.app.core.designsystem.NutraTheme
+import com.nutra.app.core.designsystem.rememberSkeletonPulseAlpha
 import com.nutra.app.domain.model.ThemePreference
 import kotlinx.coroutines.delay
 import java.time.LocalDate
@@ -98,25 +111,31 @@ private enum class ProfileGoalField(
 fun ProfileScreen(
     viewModel: ProfileViewModel,
     contentPadding: PaddingValues = PaddingValues(0.dp),
+    scrollToTopTrigger: Int = 0,
     onEditBodyProfile: () -> Unit = {},
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val colors = NutraTheme.colors
     if (state.isLoading) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(colors.background),
-        )
+        ProfileLoadingSkeleton(contentPadding = contentPadding)
         return
     }
     val profile = state.profile
     val goals = profile.goals
     val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
     val layoutDirection = LocalLayoutDirection.current
+    val listState = rememberLazyListState()
 
     var showGeminiDialog by remember { mutableStateOf(false) }
     var activeGoalField by remember { mutableStateOf<ProfileGoalField?>(null) }
+    var pendingImportUri by remember { mutableStateOf<Uri?>(null) }
+
+    LaunchedEffect(scrollToTopTrigger) {
+        if (scrollToTopTrigger > 0) {
+            listState.animateScrollToItem(0)
+        }
+    }
 
     val exportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json"),
@@ -130,13 +149,14 @@ fun ProfileScreen(
         contract = ActivityResultContracts.OpenDocument(),
     ) { uri ->
         if (uri != null) {
-            viewModel.importBackupFromUri(context.contentResolver, uri)
+            pendingImportUri = uri
         }
     }
 
-    LaunchedEffect(state.feedbackEventId, state.feedbackMessage) {
-        if (state.feedbackMessage != null) {
-            delay(3200)
+    val feedback = state.feedback
+    LaunchedEffect(feedback?.eventId, feedback?.message) {
+        if (feedback != null) {
+            delay(if (feedback.canUndoGoals) 4500L else 3200L)
             viewModel.clearFeedback()
         }
     }
@@ -147,7 +167,11 @@ fun ProfileScreen(
             .background(colors.background),
     ) {
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            state = listState,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .widthIn(max = NutraContentMaxWidth)
+                .fillMaxSize(),
             contentPadding = PaddingValues(
                 start = contentPadding.calculateStartPadding(layoutDirection) + NutraTheme.spacing.screen,
                 end = contentPadding.calculateEndPadding(layoutDirection) + NutraTheme.spacing.screen,
@@ -316,7 +340,18 @@ fun ProfileScreen(
                         NutraDivider(modifier = Modifier.padding(vertical = 16.dp))
 
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(NutraTheme.shapes.sm)
+                                .toggleable(
+                                    value = profile.useDynamicColor,
+                                    role = Role.Switch,
+                                    onValueChange = { enabled ->
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        viewModel.updateAppearance(profile.themePreference, enabled)
+                                    },
+                                )
+                                .padding(vertical = 4.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
@@ -339,9 +374,7 @@ fun ProfileScreen(
                             }
                             NutraSwitch(
                                 checked = profile.useDynamicColor,
-                                onCheckedChange = { enabled ->
-                                    viewModel.updateAppearance(profile.themePreference, enabled)
-                                },
+                                onCheckedChange = null,
                             )
                         }
                     }
@@ -451,9 +484,18 @@ fun ProfileScreen(
         }
 
         NutraSnackbarHost(
-            visible = state.feedbackMessage != null,
-            message = state.feedbackMessage.orEmpty(),
-            icon = Icons.Rounded.Check,
+            visible = feedback != null,
+            message = feedback?.message.orEmpty(),
+            tone = feedback?.tone ?: NutraSnackbarTone.Neutral,
+            actionLabel = if (feedback?.canUndoGoals == true) "Geri al" else null,
+            onAction = if (feedback?.canUndoGoals == true) {
+                {
+                    haptic.performHapticFeedback(HapticFeedbackType.Confirm)
+                    viewModel.undoRecalculateGoals()
+                }
+            } else {
+                null
+            },
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(
@@ -461,6 +503,23 @@ fun ProfileScreen(
                     end = NutraTheme.spacing.screen,
                     bottom = contentPadding.calculateBottomPadding() + 8.dp,
                 ),
+        )
+    }
+
+    val uriToImport = pendingImportUri
+    if (uriToImport != null) {
+        NutraDialog(
+            onDismissRequest = { pendingImportUri = null },
+            title = "Yedekten geri yükle?",
+            message = "Mevcut tüm öğün, su, kilo kayıtların ve profil ayarların seçilen yedek dosyasıyla değiştirilecek. Bu işlem geri alınamaz.",
+            confirmText = "Geri yükle",
+            onConfirm = {
+                pendingImportUri = null
+                viewModel.importBackupFromUri(context.contentResolver, uriToImport)
+            },
+            dismissText = "Vazgeç",
+            onDismiss = { pendingImportUri = null },
+            destructive = true,
         )
     }
 
@@ -510,6 +569,49 @@ fun ProfileScreen(
 }
 
 @Composable
+private fun ProfileLoadingSkeleton(
+    contentPadding: PaddingValues,
+) {
+    val layoutDirection = LocalLayoutDirection.current
+    val pulseAlpha = rememberSkeletonPulseAlpha("profileSkeletonPulse")
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(NutraTheme.colors.background),
+    ) {
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .widthIn(max = NutraContentMaxWidth)
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(
+                    start = contentPadding.calculateStartPadding(layoutDirection) + NutraTheme.spacing.screen,
+                    end = contentPadding.calculateEndPadding(layoutDirection) + NutraTheme.spacing.screen,
+                    top = contentPadding.calculateTopPadding() + 28.dp,
+                    bottom = contentPadding.calculateBottomPadding() + 16.dp,
+                ),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                NutraSkeletonBar(pulseAlpha, Modifier.fillMaxWidth(0.38f).height(14.dp))
+                NutraSkeletonBar(pulseAlpha, Modifier.fillMaxWidth(0.28f).height(28.dp), shape = NutraTheme.shapes.sm)
+            }
+            NutraCard(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                NutraSkeletonBar(pulseAlpha, Modifier.fillMaxWidth(0.55f).height(20.dp))
+                NutraSkeletonBar(pulseAlpha, Modifier.fillMaxWidth().height(42.dp), shape = NutraTheme.shapes.sm)
+            }
+            NutraCard(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                repeat(4) {
+                    NutraSkeletonBar(pulseAlpha, Modifier.fillMaxWidth().height(34.dp), shape = NutraTheme.shapes.sm)
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun BodyStatColumn(
     label: String,
     value: String,
@@ -547,6 +649,7 @@ private fun GeminiConfigDialog(
     val keyboardController = LocalSoftwareKeyboardController.current
     var apiKeyInput by rememberSaveable(initialApiKey) { mutableStateOf(initialApiKey) }
     var modelInput by rememberSaveable(initialModel) { mutableStateOf(initialModel) }
+    var showApiKey by remember { mutableStateOf(false) }
 
     NutraDialog(
         onDismissRequest = onDismiss,
@@ -568,19 +671,32 @@ private fun GeminiConfigDialog(
                 placeholder = "AIza...",
                 trailing = if (apiKeyInput.isNotEmpty()) {
                     {
-                        NutraIconButton(
-                            icon = Icons.Rounded.Close,
-                            contentDescription = "Temizle",
-                            onClick = { apiKeyInput = "" },
-                            size = 40.dp,
-                            iconSize = 16.dp,
-                            containerColor = NutraTheme.colors.surfaceElevated,
-                        )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            NutraIconButton(
+                                icon = if (showApiKey) NutraIcons.VisibilityOff else NutraIcons.Visibility,
+                                contentDescription = if (showApiKey) "Anahtarı gizle" else "Anahtarı göster",
+                                onClick = { showApiKey = !showApiKey },
+                                size = 40.dp,
+                                iconSize = 18.dp,
+                                containerColor = NutraTheme.colors.surfaceElevated,
+                            )
+                            NutraIconButton(
+                                icon = Icons.Rounded.Close,
+                                contentDescription = "Temizle",
+                                onClick = { apiKeyInput = "" },
+                                size = 40.dp,
+                                iconSize = 16.dp,
+                                containerColor = NutraTheme.colors.surfaceElevated,
+                            )
+                        }
                     }
                 } else {
                     null
                 },
-                visualTransformation = PasswordVisualTransformation(),
+                visualTransformation = if (showApiKey) VisualTransformation.None else PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                 keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Next) }),
                 singleLine = true,

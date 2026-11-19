@@ -10,6 +10,7 @@ import com.nutra.app.domain.model.GoalType
 import com.nutra.app.domain.model.MacroGoals
 import com.nutra.app.domain.model.UserProfile
 import com.nutra.app.domain.repository.NutritionRepository
+import com.nutra.app.domain.usecase.BodyMetricBounds
 import com.nutra.app.domain.usecase.MacroGoalBounds
 import com.nutra.app.domain.usecase.NutritionCalculatorUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -45,18 +46,7 @@ class OnboardingViewModel @Inject constructor(
     private val calculatorUseCase: NutritionCalculatorUseCase,
 ) : ViewModel() {
 
-    private val onboardingGoalBounds = MacroGoalBounds(
-        minCalories = 1100,
-        maxCalories = 5000,
-        minProtein = 40,
-        maxProtein = 350,
-        minCarbs = 30,
-        maxCarbs = 550,
-        minFat = 25,
-        maxFat = 220,
-        minWaterMl = 1200,
-        maxWaterMl = 6000,
-    )
+    private val onboardingGoalBounds = MacroGoalBounds()
 
     private var calorieScalingBaseline: MacroGoals? = null
 
@@ -68,7 +58,10 @@ class OnboardingViewModel @Inject constructor(
     }
 
     fun selectGoalType(goalType: GoalType) = updateAndRecalculate {
-        it.copy(goalType = goalType)
+        it.copy(
+            goalType = goalType,
+            targetWeightKg = if (goalType == GoalType.MAINTAIN) it.currentWeightKg else it.targetWeightKg,
+        )
     }
 
     fun selectSex(sex: BiologicalSex) = updateAndRecalculate {
@@ -78,28 +71,33 @@ class OnboardingViewModel @Inject constructor(
     fun adjustAge(delta: Int) = setAge(_uiState.value.age + delta)
 
     fun setAge(age: Int) = updateAndRecalculate {
-        it.copy(age = age.coerceIn(14, 95))
+        it.copy(age = age.coerceIn(BodyMetricBounds.MIN_AGE, BodyMetricBounds.MAX_AGE))
     }
 
     fun adjustHeight(delta: Int) = setHeight(_uiState.value.heightCm + delta)
 
     fun setHeight(heightCm: Int) = updateAndRecalculate {
-        it.copy(heightCm = heightCm.coerceIn(130, 225))
+        it.copy(heightCm = heightCm.coerceIn(BodyMetricBounds.MIN_HEIGHT_CM, BodyMetricBounds.MAX_HEIGHT_CM))
     }
 
     fun adjustCurrentWeight(delta: Float) = setCurrentWeight(_uiState.value.currentWeightKg + delta)
 
     fun setCurrentWeight(weightKg: Float) = updateAndRecalculate {
-        val next = (weightKg * 10f).roundToInt() / 10f
-        it.copy(currentWeightKg = next.coerceIn(38f, 220f))
+        val next = ((weightKg * 10f).roundToInt() / 10f)
+            .coerceIn(BodyMetricBounds.MIN_WEIGHT_KG, BodyMetricBounds.MAX_WEIGHT_KG)
+        it.copy(
+            currentWeightKg = next,
+            targetWeightKg = if (it.goalType == GoalType.MAINTAIN) next else it.targetWeightKg,
+        )
     }
 
     fun adjustTargetWeight(delta: Float) = setTargetWeight(_uiState.value.targetWeightKg + delta)
 
     fun setTargetWeight(weightKg: Float) {
         _uiState.update {
-            val next = (weightKg * 10f).roundToInt() / 10f
-            it.copy(targetWeightKg = next.coerceIn(38f, 220f))
+            val next = ((weightKg * 10f).roundToInt() / 10f)
+                .coerceIn(BodyMetricBounds.MIN_WEIGHT_KG, BodyMetricBounds.MAX_WEIGHT_KG)
+            it.copy(targetWeightKg = next)
         }
     }
 

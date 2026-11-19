@@ -16,6 +16,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.graphics.drawable.toDrawable
@@ -27,7 +28,7 @@ private fun NutraColors.toMaterialScheme(): ColorScheme {
         primary = ink,
         onPrimary = onInk,
         primaryContainer = accentSoft,
-        onPrimaryContainer = textPrimary,
+        onPrimaryContainer = onAccentSoft,
         secondary = accent,
         onSecondary = onAccent,
         secondaryContainer = surfaceMuted,
@@ -50,6 +51,7 @@ private fun NutraColors.toMaterialScheme(): ColorScheme {
         error = danger,
         onError = onInk,
         errorContainer = dangerSoft,
+        onErrorContainer = dangerText,
         scrim = scrim,
     )
 }
@@ -79,16 +81,19 @@ fun NutraTheme(
     val isDark = themePreference.resolveIsDark()
 
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
     val baseColors = if (isDark) DarkNutraColors else LightNutraColors
 
     // Dynamic color only re-tints the brand accent; neutrals stay calm.
-    val colors = remember(isDark, useDynamicColor, context) {
+    val colors = remember(isDark, useDynamicColor, context, configuration) {
         if (useDynamicColor) {
             val dynamic = if (isDark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
             baseColors.copy(
                 accent = dynamic.primary,
                 accentSoft = dynamic.primaryContainer,
                 onAccent = dynamic.onPrimary,
+                onAccentSoft = dynamic.onPrimaryContainer,
+                accentOnInk = if (isDark) dynamic.primary else dynamic.inversePrimary,
             )
         } else {
             baseColors

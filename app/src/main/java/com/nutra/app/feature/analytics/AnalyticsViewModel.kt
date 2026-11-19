@@ -4,6 +4,7 @@ import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nutra.app.core.datastore.UserPreferencesDataStore
+import com.nutra.app.core.designsystem.NutraFormatters
 import com.nutra.app.domain.model.DailyAnalyticsPoint
 import com.nutra.app.domain.model.GoalType
 import com.nutra.app.domain.model.MacroGoals
@@ -24,6 +25,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 
 enum class AnalyticsRangeOption(val days: Int, val title: String) {
@@ -53,6 +55,8 @@ data class AnalyticsUiState(
     val scrubbedWeightIndex: Int? = null,
     val profile: AnalyticsProfileSlice = AnalyticsProfileSlice(),
     val showAddWeightDialog: Boolean = false,
+    val feedbackMessage: String? = null,
+    val feedbackEventId: Long = 0L,
 ) {
     val activeDayPoint: DailyAnalyticsPoint?
         get() = scrubbedDayIndex?.let { dailyPoints.getOrNull(it) } ?: dailyPoints.lastOrNull()
@@ -72,6 +76,8 @@ private data class AnalyticsInteractionState(
     val scrubbedWaterIndex: Int?,
     val scrubbedWeightIndex: Int?,
     val showAddWeightDialog: Boolean,
+    val feedbackMessage: String?,
+    val feedbackEventId: Long,
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -88,6 +94,8 @@ class AnalyticsViewModel @Inject constructor(
     private val scrubbedWaterIndexFlow = MutableStateFlow<Int?>(null)
     private val scrubbedWeightIndexFlow = MutableStateFlow<Int?>(null)
     private val showWeightDialogFlow = MutableStateFlow(false)
+    private val feedbackSeq = AtomicLong(0L)
+    private val feedbackFlow = MutableStateFlow<Pair<String?, Long>>(null to 0L)
 
     private val rangeSummaryFlow = combine(rangeFlow, todayFlow) { option, end ->
         option to end
@@ -127,12 +135,15 @@ class AnalyticsViewModel @Inject constructor(
         scrubbedWaterIndexFlow,
         scrubbedWeightIndexFlow,
         showWeightDialogFlow,
-    ) { dayIdx, waterIdx, weightIdx, showDialog ->
+        feedbackFlow,
+    ) { dayIdx, waterIdx, weightIdx, showDialog, (feedbackMsg, feedbackId) ->
         AnalyticsInteractionState(
             scrubbedDayIndex = dayIdx,
             scrubbedWaterIndex = waterIdx,
             scrubbedWeightIndex = weightIdx,
             showAddWeightDialog = showDialog,
+            feedbackMessage = feedbackMsg,
+            feedbackEventId = feedbackId,
         )
     }
 
@@ -167,6 +178,8 @@ class AnalyticsViewModel @Inject constructor(
             scrubbedWeightIndex = if (trendPoints.isEmpty()) null else interaction.scrubbedWeightIndex?.coerceIn(0, trendPoints.lastIndex),
             profile = profile,
             showAddWeightDialog = interaction.showAddWeightDialog,
+            feedbackMessage = interaction.feedbackMessage,
+            feedbackEventId = interaction.feedbackEventId,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -213,6 +226,11 @@ class AnalyticsViewModel @Inject constructor(
             todayFlow.value = today
             nutritionRepository.logWeight(today.toString(), weightKg)
             showWeightDialogFlow.value = false
+            feedbackFlow.value = "${NutraFormatters.formatKg(weightKg)} kg tartı kaydedildi" to feedbackSeq.incrementAndGet()
         }
+    }
+
+    fun clearFeedback() {
+        feedbackFlow.value = null to feedbackSeq.get()
     }
 }

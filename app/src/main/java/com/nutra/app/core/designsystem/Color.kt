@@ -40,6 +40,8 @@ data class NutraColors(
     val accent: Color,
     val accentSoft: Color,
     val onAccent: Color,
+    val onAccentSoft: Color,
+    val accentOnInk: Color,
 
     // Data colors
     val protein: Color,
@@ -49,7 +51,9 @@ data class NutraColors(
 
     // Status
     val warning: Color,
+    val warningText: Color,
     val danger: Color,
+    val dangerText: Color,
     val dangerSoft: Color,
     val favorite: Color,
 )
@@ -65,8 +69,8 @@ val LightNutraColors = NutraColors(
     scrim = Color(0x66000000),
 
     textPrimary = Color(0xFF111111),
-    textSecondary = Color(0xFF6B6B68),
-    textTertiary = Color(0xFF767672),
+    textSecondary = Color(0xFF52524E),
+    textTertiary = Color(0xFF666662),
 
     ink = Color(0xFF111111),
     onInk = Color(0xFFFFFFFF),
@@ -74,6 +78,8 @@ val LightNutraColors = NutraColors(
     accent = Color(0xFF118749),
     accentSoft = Color(0xFFE2F4E9),
     onAccent = Color(0xFFFFFFFF),
+    onAccentSoft = Color(0xFF0B6334),
+    accentOnInk = Color(0xFF5CE092),
 
     protein = Color(0xFFEF5F5B),
     carbs = Color(0xFFF0A23B),
@@ -81,7 +87,9 @@ val LightNutraColors = NutraColors(
     water = Color(0xFF2F9BEF),
 
     warning = Color(0xFFE5822F),
+    warningText = Color(0xFFB85600),
     danger = Color(0xFFE5484D),
+    dangerText = Color(0xFFC62832),
     dangerSoft = Color(0xFFFCE9EA),
     favorite = Color(0xFFE5484D),
 )
@@ -97,8 +105,8 @@ val DarkNutraColors = NutraColors(
     scrim = Color(0x99000000),
 
     textPrimary = Color(0xFFF4F4F2),
-    textSecondary = Color(0xFFA3A39E),
-    textTertiary = Color(0xFF858580),
+    textSecondary = Color(0xFFAEAEA9),
+    textTertiary = Color(0xFF90908B),
 
     ink = Color(0xFFF4F4F2),
     onInk = Color(0xFF0C0C0C),
@@ -106,6 +114,8 @@ val DarkNutraColors = NutraColors(
     accent = Color(0xFF34D27B),
     accentSoft = Color(0xFF12301F),
     onAccent = Color(0xFF06140C),
+    onAccentSoft = Color(0xFF69E6A0),
+    accentOnInk = Color(0xFF34D27B),
 
     protein = Color(0xFFFF7A72),
     carbs = Color(0xFFFFB95C),
@@ -113,7 +123,9 @@ val DarkNutraColors = NutraColors(
     water = Color(0xFF5BB5FF),
 
     warning = Color(0xFFFF9A4D),
+    warningText = Color(0xFFFFA85C),
     danger = Color(0xFFFF6369),
+    dangerText = Color(0xFFFF7A80),
     dangerSoft = Color(0xFF3B1819),
     favorite = Color(0xFFFF6369),
 )

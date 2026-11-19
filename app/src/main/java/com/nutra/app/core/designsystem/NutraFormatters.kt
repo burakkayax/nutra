@@ -47,7 +47,25 @@ object NutraFormatters {
         return if (safe % 1f == 0f) {
             safe.toInt().toString()
         } else {
-            String.format(Locale.US, "%.2f", safe).trimEnd('0').trimEnd('.')
+            String.format(TR_LOCALE, "%.2f", safe).trimEnd('0').trimEnd(',')
+        }
+    }
+
+    fun capitalizeTr(text: String): String =
+        text.replaceFirstChar { it.titlecase(TR_LOCALE) }
+
+    fun formatMonthSpan(weekStart: LocalDate): String {
+        val weekEnd = weekStart.plusDays(6)
+        val startMonth = capitalizeTr(
+            weekStart.month.getDisplayName(java.time.format.TextStyle.FULL, TR_LOCALE),
+        )
+        val endMonth = capitalizeTr(
+            weekEnd.month.getDisplayName(java.time.format.TextStyle.FULL, TR_LOCALE),
+        )
+        return when {
+            weekStart.year != weekEnd.year -> "$startMonth ${weekStart.year} – $endMonth ${weekEnd.year}"
+            weekStart.month != weekEnd.month -> "$startMonth – $endMonth ${weekEnd.year}"
+            else -> "$startMonth ${weekStart.year}"
         }
     }
 

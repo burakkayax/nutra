@@ -37,14 +37,19 @@ class NutraAuditFixesTest {
         assertEquals("12,4", NutraFormatters.formatMacroGrams(12.4f))
 
         assertEquals("1", NutraFormatters.formatMultiplier(1.0f))
-        assertEquals("1.5", NutraFormatters.formatMultiplier(1.5f))
-        assertEquals("1.25", NutraFormatters.formatMultiplier(1.25f))
+        assertEquals("1,5", NutraFormatters.formatMultiplier(1.5f))
+        assertEquals("1,25", NutraFormatters.formatMultiplier(1.25f))
 
         assertEquals("72,59", NutraFormatters.sanitizeNumericInput("72,5.9abc", allowDecimal = true))
         assertEquals("72,5", NutraFormatters.sanitizeNumericInput("72,5abc", allowDecimal = true))
         assertEquals("7259", NutraFormatters.sanitizeNumericInput("72,5.9abc", allowDecimal = false))
         assertEquals(72.5f, NutraFormatters.parseLocalizedFloat("72,5")!!, 0.001f)
         assertNull(NutraFormatters.parseLocalizedFloat("abc"))
+
+        assertEquals("İlerleme", NutraFormatters.capitalizeTr("ilerleme"))
+        assertEquals("Kasım 2026", NutraFormatters.formatMonthSpan(java.time.LocalDate.of(2026, 11, 16)))
+        assertEquals("Ekim – Kasım 2026", NutraFormatters.formatMonthSpan(java.time.LocalDate.of(2026, 10, 26)))
+        assertEquals("Aralık 2026 – Ocak 2027", NutraFormatters.formatMonthSpan(java.time.LocalDate.of(2026, 12, 28)))
     }
 
     @Test
@@ -71,7 +76,7 @@ class NutraAuditFixesTest {
             multiplier = 1.25f,
             totalGrams = 37.5f,
         )
-        assertEquals("1.25x 1 Dilim (38 g)", quarterLog.formattedQuantity)
+        assertEquals("1,25x 1 Dilim (38 g)", quarterLog.formattedQuantity)
     }
 
     @Test

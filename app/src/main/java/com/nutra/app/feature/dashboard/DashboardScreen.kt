@@ -18,6 +18,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -27,6 +28,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxSize
@@ -36,15 +38,19 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material3.Icon
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
@@ -80,8 +86,10 @@ import com.nutra.app.core.designsystem.NutraButton
 import com.nutra.app.core.designsystem.NutraButtonSize
 import com.nutra.app.core.designsystem.NutraButtonStyle
 import com.nutra.app.core.designsystem.NutraCard
+import com.nutra.app.core.designsystem.NutraContentMaxWidth
 import com.nutra.app.core.designsystem.NutraDialog
 import com.nutra.app.core.designsystem.NutraDivider
+import com.nutra.app.core.designsystem.NutraDot
 import com.nutra.app.core.designsystem.NutraFormatters
 import com.nutra.app.core.designsystem.NutraIconBadge
 import com.nutra.app.core.designsystem.NutraIconButton
@@ -91,9 +99,12 @@ import com.nutra.app.core.designsystem.NutraMacroStat
 import com.nutra.app.core.designsystem.NutraNumericInputDialog
 import com.nutra.app.core.designsystem.NutraScreenHeader
 import com.nutra.app.core.designsystem.NutraSectionHeader
+import com.nutra.app.core.designsystem.NutraSkeletonBar
 import com.nutra.app.core.designsystem.NutraSnackbarHost
+import com.nutra.app.core.designsystem.NutraSnackbarTone
 import com.nutra.app.core.designsystem.NutraStepperButton
 import com.nutra.app.core.designsystem.NutraTheme
+import com.nutra.app.core.designsystem.rememberSkeletonPulseAlpha
 import com.nutra.app.domain.model.MealLogItem
 import com.nutra.app.domain.model.MealSummary
 import com.nutra.app.domain.model.MealType
@@ -107,21 +118,25 @@ import kotlin.math.roundToInt
 fun DashboardScreen(
     viewModel: DashboardViewModel,
     contentPadding: PaddingValues = PaddingValues(0.dp),
+    scrollToTopTrigger: Int = 0,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
         viewModel.refreshToday()
     }
     if (state.isLoading) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(NutraTheme.colors.background),
-        )
+        DashboardLoadingSkeleton(contentPadding = contentPadding)
         return
     }
     val haptic = LocalHapticFeedback.current
     val layoutDirection = LocalLayoutDirection.current
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(scrollToTopTrigger) {
+        if (scrollToTopTrigger > 0) {
+            listState.animateScrollToItem(0)
+        }
+    }
 
     LaunchedEffect(state.bannerEventId, state.lastDeletedItem, state.statusBannerMessage) {
         if (state.lastDeletedItem != null || state.statusBannerMessage != null) {
@@ -136,7 +151,11 @@ fun DashboardScreen(
             .background(NutraTheme.colors.background),
     ) {
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            state = listState,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .widthIn(max = NutraContentMaxWidth)
+                .fillMaxSize(),
             contentPadding = PaddingValues(
                 start = contentPadding.calculateStartPadding(layoutDirection) + NutraTheme.spacing.screen,
                 end = contentPadding.calculateEndPadding(layoutDirection) + NutraTheme.spacing.screen,
@@ -152,6 +171,7 @@ fun DashboardScreen(
                         selectedDate = state.selectedDate,
                         isWeekCalendarVisible = state.isWeekCalendarVisible,
                         onToggleWeekCalendar = viewModel::toggleWeekCalendar,
+                        onJumpToToday = viewModel::jumpToToday,
                     )
 
                     AnimatedVisibility(
@@ -246,7 +266,7 @@ fun DashboardScreen(
             } else {
                 null
             },
-            icon = if (deletedItem == null && bannerVisible) Icons.Rounded.Check else null,
+            tone = if (deletedItem == null && bannerVisible) NutraSnackbarTone.Success else NutraSnackbarTone.Neutral,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(
@@ -284,7 +304,9 @@ fun DashboardScreen(
             onSelectTab = viewModel::selectLoggingTab,
             onSearchQueryChange = viewModel::updateSearchQuery,
             onSelectCategory = viewModel::selectCategory,
+            onSelectFavoritesOnly = viewModel::selectFavoritesOnly,
             onSelectFoodForPortion = viewModel::openPortionPicker,
+            onQuickAddFood = viewModel::quickLogDefaultFood,
             onClosePortionPicker = viewModel::closePortionPicker,
             onToggleFavorite = viewModel::toggleFavorite,
             onConfirmLogFood = viewModel::logFoodWithPortion,
@@ -304,16 +326,73 @@ fun DashboardScreen(
 }
 
 @Composable
+private fun DashboardLoadingSkeleton(
+    contentPadding: PaddingValues,
+) {
+    val layoutDirection = LocalLayoutDirection.current
+    val pulseAlpha = rememberSkeletonPulseAlpha("dashboardSkeletonPulse")
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(NutraTheme.colors.background),
+    ) {
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .widthIn(max = NutraContentMaxWidth)
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(
+                    start = contentPadding.calculateStartPadding(layoutDirection) + NutraTheme.spacing.screen,
+                    end = contentPadding.calculateEndPadding(layoutDirection) + NutraTheme.spacing.screen,
+                    top = contentPadding.calculateTopPadding() + 28.dp,
+                    bottom = contentPadding.calculateBottomPadding() + 16.dp,
+                ),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                NutraSkeletonBar(pulseAlpha, Modifier.fillMaxWidth(0.42f).height(14.dp))
+                NutraSkeletonBar(pulseAlpha, Modifier.fillMaxWidth(0.32f).height(28.dp), shape = NutraTheme.shapes.sm)
+            }
+            NutraCard(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                NutraSkeletonBar(pulseAlpha, Modifier.fillMaxWidth(0.35f).height(12.dp))
+                NutraSkeletonBar(pulseAlpha, Modifier.fillMaxWidth(0.55f).height(34.dp), shape = NutraTheme.shapes.sm)
+                NutraSkeletonBar(pulseAlpha, Modifier.fillMaxWidth().height(8.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    repeat(3) {
+                        NutraSkeletonBar(pulseAlpha, Modifier.weight(1f).height(40.dp), shape = NutraTheme.shapes.sm)
+                    }
+                }
+            }
+            NutraCard(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                NutraSkeletonBar(pulseAlpha, Modifier.fillMaxWidth(0.4f).height(16.dp))
+                NutraSkeletonBar(pulseAlpha, Modifier.fillMaxWidth().height(6.dp))
+                NutraSkeletonBar(pulseAlpha, Modifier.fillMaxWidth().height(48.dp), shape = NutraTheme.shapes.pill)
+            }
+            repeat(3) {
+                NutraCard {
+                    NutraSkeletonBar(pulseAlpha, Modifier.fillMaxWidth(0.6f).height(20.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun DashboardHeader(
     today: LocalDate,
     selectedDate: LocalDate,
     isWeekCalendarVisible: Boolean,
     onToggleWeekCalendar: () -> Unit,
+    onJumpToToday: () -> Unit,
 ) {
+    val haptic = LocalHapticFeedback.current
     val isToday = selectedDate == today
     val (eyebrow, title) = remember(selectedDate, today) {
-        val dayOfWeek = selectedDate.dayOfWeek.getDisplayName(TextStyle.FULL, NutraFormatters.TR_LOCALE)
-            .replaceFirstChar { it.uppercaseChar() }
+        val dayOfWeek = NutraFormatters.capitalizeTr(
+            selectedDate.dayOfWeek.getDisplayName(TextStyle.FULL, NutraFormatters.TR_LOCALE),
+        )
         val monthName = selectedDate.month.getDisplayName(TextStyle.FULL, NutraFormatters.TR_LOCALE)
         val eyebrowText = if (selectedDate.year == today.year) {
             "$dayOfWeek, ${selectedDate.dayOfMonth} $monthName"
@@ -341,7 +420,7 @@ private fun DashboardHeader(
     val calendarContentColor by animateColorAsState(
         targetValue = when {
             isWeekCalendarVisible -> NutraTheme.colors.onInk
-            !isToday -> NutraTheme.colors.accent
+            !isToday -> NutraTheme.colors.onAccentSoft
             else -> NutraTheme.colors.textPrimary
         },
         animationSpec = tween(180),
@@ -353,6 +432,30 @@ private fun DashboardHeader(
         eyebrow = eyebrow,
         eyebrowColor = if (isToday) NutraTheme.colors.accent else NutraTheme.colors.textSecondary,
         actions = {
+            AnimatedVisibility(
+                visible = !isToday && !isWeekCalendarVisible,
+                enter = fadeIn(tween(160)) + expandHorizontally(tween(180)),
+                exit = fadeOut(tween(120)) + shrinkHorizontally(tween(160)),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .heightIn(min = 40.dp)
+                        .clip(NutraTheme.shapes.pill)
+                        .background(NutraTheme.colors.accentSoft)
+                        .clickable(role = Role.Button) {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onJumpToToday()
+                        }
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "Bugün",
+                        style = NutraTheme.typography.labelSmall,
+                        color = NutraTheme.colors.onAccentSoft,
+                    )
+                }
+            }
             NutraIconButton(
                 icon = NutraIcons.CalendarMonth,
                 contentDescription = if (isWeekCalendarVisible) {
@@ -361,7 +464,7 @@ private fun DashboardHeader(
                     "Hafta takvimini göster"
                 },
                 onClick = onToggleWeekCalendar,
-                size = 40.dp,
+                size = 44.dp,
                 iconSize = 20.dp,
                 containerColor = calendarContainerColor,
                 contentColor = calendarContentColor,
@@ -383,11 +486,8 @@ private fun WeekDateStrip(
     val haptic = LocalHapticFeedback.current
     val latestOnPrevWeek by rememberUpdatedState(onPreviousWeek)
     val latestOnNextWeek by rememberUpdatedState(onNextWeek)
-    val monthLabel = remember(selectedDate) {
-        "${
-            selectedDate.month.getDisplayName(TextStyle.FULL, NutraFormatters.TR_LOCALE)
-                .replaceFirstChar { it.uppercaseChar() }
-        } ${selectedDate.year}"
+    val monthLabel = remember(weekStart) {
+        NutraFormatters.formatMonthSpan(weekStart)
     }
     val isToday = selectedDate == today
 
@@ -424,13 +524,13 @@ private fun WeekDateStrip(
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 onJumpToToday()
                             }
-                            .padding(horizontal = 14.dp),
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
                             text = "Bugüne dön",
                             style = NutraTheme.typography.labelSmall,
-                            color = NutraTheme.colors.accent,
+                            color = NutraTheme.colors.onAccentSoft,
                         )
                     }
                 }
@@ -497,6 +597,7 @@ private fun WeekDateStrip(
                 renderedWeekDays.forEach { day ->
                     val isSelected = day == selectedDate
                     val isDayToday = day == today
+                    val isFuture = day.isAfter(today)
 
                     val circleBgState = animateColorAsState(
                         targetValue = when {
@@ -510,7 +611,8 @@ private fun WeekDateStrip(
                     val dayNumberColor by animateColorAsState(
                         targetValue = when {
                             isSelected -> NutraTheme.colors.onInk
-                            isDayToday -> NutraTheme.colors.accent
+                            isDayToday -> NutraTheme.colors.onAccentSoft
+                            isFuture -> NutraTheme.colors.textTertiary
                             else -> NutraTheme.colors.textPrimary
                         },
                         animationSpec = tween(160),
@@ -518,10 +620,11 @@ private fun WeekDateStrip(
                     )
 
                     val dayShort = remember(day) {
-                        day.dayOfWeek.getDisplayName(TextStyle.SHORT, NutraFormatters.TR_LOCALE)
-                            .trimEnd('.')
-                            .take(3)
-                            .replaceFirstChar { it.uppercaseChar() }
+                        NutraFormatters.capitalizeTr(
+                            day.dayOfWeek.getDisplayName(TextStyle.SHORT, NutraFormatters.TR_LOCALE)
+                                .trimEnd('.')
+                                .take(3),
+                        )
                     }
 
                     Column(
@@ -531,7 +634,7 @@ private fun WeekDateStrip(
                             .selectable(
                                 selected = isSelected,
                                 interactionSource = remember { MutableInteractionSource() },
-                                indication = null,
+                                indication = LocalIndication.current,
                                 role = Role.Tab,
                             ) {
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -594,11 +697,6 @@ private fun HeroNutritionCard(
     )
     val completionPercent = ((animatedConsumed.toFloat() / safeTarget) * 100f).roundToInt()
     val progress = consumedCalories.toFloat() / safeTarget
-    val barColor by animateColorAsState(
-        targetValue = if (isOver) NutraTheme.colors.warning else NutraTheme.colors.accent,
-        animationSpec = tween(220),
-        label = "calorieBarColor",
-    )
 
     NutraCard(
         modifier = Modifier.fillMaxWidth(),
@@ -639,8 +737,11 @@ private fun HeroNutritionCard(
 
             NutraLinearProgress(
                 progress = progress,
-                color = barColor,
+                color = NutraTheme.colors.accent,
                 height = 8.dp,
+                overflowProgress = if (isOver) (progress - 1f).coerceAtLeast(0.05f) else 0f,
+                overflowColor = NutraTheme.colors.warning,
+                contentDescription = "Günlük kalori $consumedCalories / $safeTarget kcal, %$completionPercent",
             )
 
             Row(
@@ -654,7 +755,7 @@ private fun HeroNutritionCard(
                     Text(
                         text = "${NutraFormatters.formatInt(animatedDelta)} kcal",
                         style = NutraTheme.typography.numberSmall,
-                        color = if (isOver) NutraTheme.colors.warning else NutraTheme.colors.textPrimary,
+                        color = if (isOver) NutraTheme.colors.warningText else NutraTheme.colors.textPrimary,
                     )
                     Text(
                         text = if (isOver) "Hedef fazlası" else "Kalan",
@@ -702,7 +803,7 @@ private fun HeroNutritionCard(
                 modifier = Modifier.weight(1f),
             )
             NutraMacroStat(
-                label = "Karb",
+                label = "Karb.",
                 consumed = consumedCarbs,
                 target = targetCarbs,
                 color = NutraTheme.colors.carbs,
@@ -783,6 +884,7 @@ private fun WaterTrackerCard(
             progress = fraction,
             color = NutraTheme.colors.water,
             height = 6.dp,
+            contentDescription = "Su takibi $currentWaterMl / $safeTarget ml, %$actualPercent",
         )
 
         Row(
@@ -792,19 +894,16 @@ private fun WaterTrackerCard(
         ) {
             WaterQuickPill(
                 amountText = "+200 ml",
-                containerLabel = "Bardak",
                 onClick = { onAddWater(200) },
                 modifier = Modifier.weight(1f),
             )
             WaterQuickPill(
                 amountText = "+330 ml",
-                containerLabel = "Kupa",
                 onClick = { onAddWater(330) },
                 modifier = Modifier.weight(1f),
             )
             WaterQuickPill(
                 amountText = "+500 ml",
-                containerLabel = "Şişe",
                 onClick = { onAddWater(500) },
                 modifier = Modifier.weight(1f),
             )
@@ -822,7 +921,6 @@ private fun WaterTrackerCard(
 @Composable
 private fun WaterQuickPill(
     amountText: String,
-    containerLabel: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -834,9 +932,9 @@ private fun WaterQuickPill(
         animationSpec = spring(dampingRatio = 0.78f, stiffness = 700f),
         label = "waterPillScale",
     )
-    Column(
+    Box(
         modifier = modifier
-            .height(48.dp)
+            .heightIn(min = 48.dp)
             .graphicsLayer {
                 val s = pressScaleState.value
                 scaleX = s
@@ -851,21 +949,16 @@ private fun WaterQuickPill(
             ) {
                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 onClick()
-            },
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
+            }
+            .padding(horizontal = 8.dp, vertical = 10.dp),
+        contentAlignment = Alignment.Center,
     ) {
         Text(
             text = amountText,
             style = NutraTheme.typography.labelSmall,
             color = NutraTheme.colors.textPrimary,
             maxLines = 1,
-        )
-        Text(
-            text = containerLabel,
-            style = NutraTheme.typography.caption,
-            color = NutraTheme.colors.textTertiary,
-            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }
@@ -901,9 +994,10 @@ private fun MealCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .clip(NutraTheme.shapes.sm)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
+                    indication = LocalIndication.current,
                     role = Role.Button,
                 ) {
                     if (hasItems) {
@@ -985,7 +1079,7 @@ private fun MealCard(
                     icon = Icons.Rounded.Add,
                     contentDescription = "${mealSummary.mealType.title} besin ekle",
                     onClick = onAddFoodClick,
-                    size = 40.dp,
+                    size = 44.dp,
                     iconSize = 20.dp,
                     containerColor = NutraTheme.colors.surfaceMuted,
                     contentColor = NutraTheme.colors.textPrimary,
@@ -1017,26 +1111,31 @@ private fun MealCard(
                                 }
                             },
                             backgroundContent = {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .clip(NutraTheme.shapes.sm)
-                                        .background(NutraTheme.colors.dangerSoft)
-                                        .padding(horizontal = 16.dp),
-                                    contentAlignment = Alignment.CenterEnd,
-                                ) {
-                                    Icon(
-                                        imageVector = NutraIcons.DeleteOutline,
-                                        contentDescription = "Sil",
-                                        tint = NutraTheme.colors.danger,
-                                        modifier = Modifier.graphicsLayer {
-                                            val p = dismissState.progress.coerceIn(0f, 1f)
-                                            val scale = 0.8f + (0.3f * p)
-                                            scaleX = scale
-                                            scaleY = scale
-                                            alpha = 0.45f + (0.55f * p)
-                                        },
-                                    )
+                                val isSwipingToDelete =
+                                    dismissState.dismissDirection == SwipeToDismissBoxValue.EndToStart ||
+                                        dismissState.targetValue == SwipeToDismissBoxValue.EndToStart
+                                if (isSwipingToDelete) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .clip(NutraTheme.shapes.sm)
+                                            .background(NutraTheme.colors.dangerSoft)
+                                            .padding(horizontal = 16.dp),
+                                        contentAlignment = Alignment.CenterEnd,
+                                    ) {
+                                        Icon(
+                                            imageVector = NutraIcons.DeleteOutline,
+                                            contentDescription = "Sil",
+                                            tint = NutraTheme.colors.dangerText,
+                                            modifier = Modifier.graphicsLayer {
+                                                val p = dismissState.progress.coerceIn(0f, 1f)
+                                                val scale = 0.8f + (0.3f * p)
+                                                scaleX = scale
+                                                scaleY = scale
+                                                alpha = 0.45f + (0.55f * p)
+                                            },
+                                        )
+                                    }
                                 }
                             },
                         ) {
@@ -1046,7 +1145,7 @@ private fun MealCard(
                                     .clip(NutraTheme.shapes.sm)
                                     .background(NutraTheme.colors.surface)
                                     .clickable(role = Role.Button) { onEditLogItem(item) }
-                                    .padding(vertical = 12.dp),
+                                    .padding(horizontal = 4.dp, vertical = 12.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
@@ -1096,13 +1195,14 @@ private fun EditLoggedFoodPortionDialog(
     onDelete: () -> Unit,
 ) {
     val haptic = LocalHapticFeedback.current
+    val colors = NutraTheme.colors
     val isRawGramMode = item.unitLabel == "1 Gram"
     var multiplier by remember(item) {
         mutableFloatStateOf(
             if (isRawGramMode) item.totalGrams.coerceIn(1f, 3000f) else item.multiplier.coerceIn(0.25f, 20f),
         )
     }
-    var showManualGramDialog by remember(item) { mutableStateOf(false) }
+    var showManualInputDialog by remember(item) { mutableStateOf(false) }
 
     val ratio = if (isRawGramMode) {
         multiplier / item.totalGrams.coerceAtLeast(1f)
@@ -1110,13 +1210,16 @@ private fun EditLoggedFoodPortionDialog(
         multiplier / item.multiplier.coerceAtLeast(0.05f)
     }
     val previewCalories = (item.calories * ratio).roundToInt()
+    val previewProtein = item.proteinGrams * ratio
+    val previewCarbs = item.carbsGrams * ratio
+    val previewFat = item.fatGrams * ratio
     val previewGrams = if (isRawGramMode) {
         multiplier.roundToInt()
     } else {
         (item.totalGrams * ratio).roundToInt()
     }
     val valueLabel = if (isRawGramMode) {
-        "${multiplier.roundToInt()} g"
+        "${NutraFormatters.formatInt(multiplier.roundToInt())} g"
     } else {
         "${NutraFormatters.formatMultiplier(multiplier)}x"
     }
@@ -1125,18 +1228,35 @@ private fun EditLoggedFoodPortionDialog(
     NutraDialog(
         onDismissRequest = onDismiss,
         title = item.foodName,
-        message = if (isRawGramMode) "Gramaj · $previewGrams g" else "${item.unitLabel} · $previewGrams g",
+        message = if (isRawGramMode) {
+            "Gramaj · ${NutraFormatters.formatInt(previewGrams)} g"
+        } else {
+            "${item.unitLabel} · ${NutraFormatters.formatInt(previewGrams)} g"
+        },
         confirmText = null,
         dismissText = null,
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Text(
-                text = "${NutraFormatters.formatInt(previewCalories)} kcal",
-                style = NutraTheme.typography.numberLarge,
-                color = NutraTheme.colors.accent,
-                textAlign = TextAlign.Center,
+            Column(
                 modifier = Modifier.fillMaxWidth(),
-            )
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = "${NutraFormatters.formatInt(previewCalories)} kcal",
+                    style = NutraTheme.typography.numberLarge,
+                    color = colors.accent,
+                    textAlign = TextAlign.Center,
+                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    EditPortionMacroChip("P", "${NutraFormatters.formatMacroGrams(previewProtein)}g", colors.protein)
+                    EditPortionMacroChip("K", "${NutraFormatters.formatMacroGrams(previewCarbs)}g", colors.carbs)
+                    EditPortionMacroChip("Y", "${NutraFormatters.formatMacroGrams(previewFat)}g", colors.fat)
+                }
+            }
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1150,26 +1270,26 @@ private fun EditLoggedFoodPortionDialog(
                         "${NutraFormatters.formatMultiplier(preset)}x"
                     }
                     val bgState = animateColorAsState(
-                        targetValue = if (isSelected) NutraTheme.colors.ink else NutraTheme.colors.surfaceMuted,
+                        targetValue = if (isSelected) colors.ink else colors.surfaceMuted,
                         animationSpec = tween(160),
                         label = "editPortionPillBg",
                     )
                     val fg by animateColorAsState(
-                        targetValue = if (isSelected) NutraTheme.colors.onInk else NutraTheme.colors.textPrimary,
+                        targetValue = if (isSelected) colors.onInk else colors.textPrimary,
                         animationSpec = tween(160),
                         label = "editPortionPillFg",
                     )
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .height(40.dp)
+                            .heightIn(min = 40.dp)
                             .clip(NutraTheme.shapes.pill)
                             .drawBehind { drawRect(bgState.value) }
                             .selectable(selected = isSelected, role = Role.RadioButton) {
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 multiplier = preset
                             }
-                            .padding(horizontal = 6.dp),
+                            .padding(horizontal = 6.dp, vertical = 8.dp),
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
@@ -1186,7 +1306,7 @@ private fun EditLoggedFoodPortionDialog(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(NutraTheme.shapes.pill)
-                    .background(NutraTheme.colors.surfaceMuted)
+                    .background(colors.surfaceMuted)
                     .padding(horizontal = 8.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
@@ -1201,28 +1321,34 @@ private fun EditLoggedFoodPortionDialog(
                             (multiplier - 0.25f).coerceAtLeast(0.25f)
                         }
                     },
-                    containerColor = NutraTheme.colors.surfaceElevated,
+                    containerColor = colors.surfaceElevated,
                 )
-                Box(
+                Row(
                     modifier = Modifier
                         .clip(NutraTheme.shapes.pill)
-                        .then(
-                            if (isRawGramMode) {
-                                Modifier.clickable(role = Role.Button) {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    showManualGramDialog = true
-                                }
-                            } else {
-                                Modifier
-                            },
-                        )
+                        .background(colors.surfaceElevated)
+                        .border(1.dp, colors.divider, NutraTheme.shapes.pill)
+                        .clickable(
+                            role = Role.Button,
+                            onClickLabel = if (isRawGramMode) "Gramaj yaz" else "Porsiyon çarpanı yaz",
+                        ) {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            showManualInputDialog = true
+                        }
                         .padding(horizontal = 14.dp, vertical = 6.dp),
-                    contentAlignment = Alignment.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Text(
                         text = valueLabel,
                         style = NutraTheme.typography.numberMedium,
-                        color = NutraTheme.colors.textPrimary,
+                        color = colors.textPrimary,
+                    )
+                    Icon(
+                        imageVector = Icons.Rounded.Edit,
+                        contentDescription = null,
+                        tint = colors.textTertiary,
+                        modifier = Modifier.size(14.dp),
                     )
                 }
                 NutraStepperButton(
@@ -1235,7 +1361,7 @@ private fun EditLoggedFoodPortionDialog(
                             (multiplier + 0.25f).coerceAtMost(20f)
                         }
                     },
-                    containerColor = NutraTheme.colors.surfaceElevated,
+                    containerColor = colors.surfaceElevated,
                 )
             }
 
@@ -1263,20 +1389,56 @@ private fun EditLoggedFoodPortionDialog(
         }
     }
 
-    if (showManualGramDialog && isRawGramMode) {
-        NutraNumericInputDialog(
-            title = "Gramaj",
-            initialValue = multiplier.roundToInt().toString(),
-            unit = "g",
-            rangeHint = "1 – 3.000 g",
-            minValue = 1.0,
-            maxValue = 3000.0,
-            allowDecimal = true,
-            onDismiss = { showManualGramDialog = false },
-            onConfirm = { entered ->
-                multiplier = entered.toFloat().coerceIn(1f, 3000f)
-                showManualGramDialog = false
-            },
+    if (showManualInputDialog) {
+        if (isRawGramMode) {
+            NutraNumericInputDialog(
+                title = "Gramaj",
+                initialValue = multiplier.roundToInt().toString(),
+                unit = "g",
+                rangeHint = "1 – 3.000 g",
+                minValue = 1.0,
+                maxValue = 3000.0,
+                allowDecimal = true,
+                onDismiss = { showManualInputDialog = false },
+                onConfirm = { entered ->
+                    multiplier = entered.toFloat().coerceIn(1f, 3000f)
+                    showManualInputDialog = false
+                },
+            )
+        } else {
+            NutraNumericInputDialog(
+                title = "Porsiyon miktarı",
+                initialValue = NutraFormatters.formatMultiplier(multiplier),
+                unit = "×",
+                rangeHint = "0,25 – 20",
+                minValue = 0.25,
+                maxValue = 20.0,
+                allowDecimal = true,
+                onDismiss = { showManualInputDialog = false },
+                onConfirm = { entered ->
+                    multiplier = ((entered * 100.0).roundToInt() / 100f).coerceIn(0.25f, 20f)
+                    showManualInputDialog = false
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun EditPortionMacroChip(
+    label: String,
+    value: String,
+    color: Color,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        NutraDot(color = color, size = 6.dp)
+        Text(
+            text = "$label $value",
+            style = NutraTheme.typography.caption,
+            color = NutraTheme.colors.textSecondary,
         )
     }
 }
