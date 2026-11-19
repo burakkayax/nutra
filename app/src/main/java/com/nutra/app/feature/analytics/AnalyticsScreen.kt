@@ -48,6 +48,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -114,6 +115,7 @@ import com.nutra.app.domain.model.MacroGoals
 import com.nutra.app.domain.model.WeightTrendPoint
 import com.nutra.app.domain.usecase.BodyMetricBounds
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.StateFlow
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 import kotlin.math.abs
@@ -212,7 +214,7 @@ fun AnalyticsScreen(
                             HapticScrubbingCalorieChartCard(
                                 points = uiState.dailyPoints,
                                 todayIso = uiState.todayIso,
-                                scrubbedIndex = uiState.scrubbedDayIndex,
+                                scrubbedIndexFlow = viewModel.scrubbedDayIndex,
                                 targetCalories = uiState.profile.goals.calories,
                                 averageCalories = uiState.averageCalories,
                                 selectedRange = uiState.selectedRange,
@@ -237,7 +239,7 @@ fun AnalyticsScreen(
                                 todayIso = uiState.todayIso,
                                 hasAnyWeightHistory = uiState.hasAnyWeightHistory,
                                 selectedRange = uiState.selectedRange,
-                                scrubbedIndex = uiState.scrubbedWeightIndex,
+                                scrubbedIndexFlow = viewModel.scrubbedWeightIndex,
                                 profile = uiState.profile,
                                 onScrub = viewModel::updateScrubbedWeightIndex,
                                 onAddWeightClick = viewModel::openAddWeightDialog,
@@ -248,7 +250,7 @@ fun AnalyticsScreen(
                             HapticScrubbingWaterChartCard(
                                 points = uiState.dailyPoints,
                                 todayIso = uiState.todayIso,
-                                scrubbedIndex = uiState.scrubbedWaterIndex,
+                                scrubbedIndexFlow = viewModel.scrubbedWaterIndex,
                                 targetWaterMl = uiState.profile.goals.waterMl,
                                 averageWaterMl = uiState.averageWaterMl,
                                 selectedRange = uiState.selectedRange,
@@ -359,7 +361,7 @@ private fun AnalyticsLoadingSkeleton(
 private fun HapticScrubbingCalorieChartCard(
     points: List<DailyAnalyticsPoint>,
     todayIso: String,
-    scrubbedIndex: Int?,
+    scrubbedIndexFlow: StateFlow<Int?>,
     targetCalories: Int,
     averageCalories: Int,
     selectedRange: AnalyticsRangeOption,
@@ -369,10 +371,12 @@ private fun HapticScrubbingCalorieChartCard(
 ) {
     val colors = NutraTheme.colors
     val hasAnyCalories = remember(points) { points.any { it.calories > 0 } }
-    val scrubbedPoint = scrubbedIndex?.let { points.getOrNull(it) }
-    val scrubbedDateLabel = scrubbedPoint?.let { NutraFormatters.formatShortDate(it.dateIso, todayIso) }
-    val displayedCalories = scrubbedPoint?.calories ?: averageCalories
-    val displayedTargetCalories = scrubbedPoint?.targetCalories ?: targetCalories
+    val rawScrubbedState = scrubbedIndexFlow.collectAsStateWithLifecycle()
+    val scrubbedIndexState = remember(points.size, rawScrubbedState) {
+        derivedStateOf {
+            if (points.isEmpty()) null else rawScrubbedState.value?.coerceIn(0, points.lastIndex)
+        }
+    }
     val barColorProvider = remember(colors.surfaceMuted, colors.warning, colors.accent) {
         { pt: DailyAnalyticsPoint ->
             when {
@@ -384,52 +388,14 @@ private fun HapticScrubbingCalorieChartCard(
     }
 
     NutraCard {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                Text(
-                    text = if (scrubbedDateLabel != null) {
-                        "$scrubbedDateLabel · Kalori"
-                    } else {
-                        "Kalori"
-                    },
-                    style = NutraTheme.typography.caption,
-                    color = if (scrubbedPoint != null) colors.accent else colors.textSecondary,
-                )
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Text(
-                        text = NutraFormatters.formatInt(displayedCalories),
-                        style = NutraTheme.typography.numberLarge,
-                        color = colors.textPrimary,
-                        modifier = Modifier.alignByBaseline(),
-                    )
-                    Text(
-                        text = "/ ${NutraFormatters.formatInt(displayedTargetCalories)} kcal",
-                        style = NutraTheme.typography.body,
-                        color = colors.textSecondary,
-                        modifier = Modifier.alignByBaseline(),
-                    )
-                }
-            }
-
-            if (scrubbedPoint != null) {
-                NutraButton(
-                    text = "Ortalama",
-                    onClick = { onScrub(null) },
-                    style = NutraButtonStyle.Secondary,
-                    size = NutraButtonSize.Small,
-                    leadingIcon = Icons.Rounded.Refresh,
-                )
-            }
-        }
+        CalorieChartHeader(
+            points = points,
+            todayIso = todayIso,
+            scrubbedIndexState = scrubbedIndexState,
+            targetCalories = targetCalories,
+            averageCalories = averageCalories,
+            onScrub = onScrub,
+        )
 
         if (!hasAnyCalories) {
             NutraEmptyState(
@@ -449,8 +415,7 @@ private fun HapticScrubbingCalorieChartCard(
         HapticScrubbingBarChart(
             points = points,
             todayIso = todayIso,
-            scrubbedIndex = scrubbedIndex,
-            activePoint = scrubbedPoint,
+            scrubbedIndexState = scrubbedIndexState,
             valueProvider = CalorieValueProvider,
             targetValue = targetCalories,
             targetLineLabel = NutraFormatters.formatInt(targetCalories),
@@ -460,7 +425,13 @@ private fun HapticScrubbingCalorieChartCard(
             lastAnimatedRange = lastAnimatedRange,
             onRevealRangeAnimated = onRevealRangeAnimated,
             targetSummaryText = "Hedef: ${NutraFormatters.formatInt(targetCalories)} kcal",
-            chartAccessibilityLabel = "Kalori geçmişi grafiği. ${scrubbedDateLabel ?: "${selectedRange.title} ortalaması"}: $displayedCalories kcal. Hedef: $displayedTargetCalories kcal.",
+            accessibilityLabelProvider = { idx ->
+                val pt = idx?.let { points.getOrNull(it) }
+                val dateLabel = pt?.let { NutraFormatters.formatShortDate(it.dateIso, todayIso) }
+                val kcal = pt?.calories ?: averageCalories
+                val target = pt?.targetCalories ?: targetCalories
+                "Kalori geçmişi grafiği. ${dateLabel ?: "${selectedRange.title} ortalaması"}: $kcal kcal. Hedef: $target kcal."
+            },
             onScrub = onScrub,
         )
 
@@ -479,10 +450,74 @@ private fun HapticScrubbingCalorieChartCard(
 }
 
 @Composable
+private fun CalorieChartHeader(
+    points: List<DailyAnalyticsPoint>,
+    todayIso: String,
+    scrubbedIndexState: State<Int?>,
+    targetCalories: Int,
+    averageCalories: Int,
+    onScrub: (Int?) -> Unit,
+) {
+    val colors = NutraTheme.colors
+    val scrubbedIndex = scrubbedIndexState.value
+    val scrubbedPoint = scrubbedIndex?.let { points.getOrNull(it) }
+    val scrubbedDateLabel = scrubbedPoint?.let { NutraFormatters.formatShortDate(it.dateIso, todayIso) }
+    val displayedCalories = scrubbedPoint?.calories ?: averageCalories
+    val displayedTargetCalories = scrubbedPoint?.targetCalories ?: targetCalories
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = if (scrubbedDateLabel != null) {
+                    "$scrubbedDateLabel · Kalori"
+                } else {
+                    "Kalori"
+                },
+                style = NutraTheme.typography.caption,
+                color = if (scrubbedPoint != null) colors.accent else colors.textSecondary,
+            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = NutraFormatters.formatInt(displayedCalories),
+                    style = NutraTheme.typography.numberLarge,
+                    color = colors.textPrimary,
+                    modifier = Modifier.alignByBaseline(),
+                )
+                Text(
+                    text = "/ ${NutraFormatters.formatInt(displayedTargetCalories)} kcal",
+                    style = NutraTheme.typography.body,
+                    color = colors.textSecondary,
+                    modifier = Modifier.alignByBaseline(),
+                )
+            }
+        }
+
+        if (scrubbedPoint != null) {
+            NutraButton(
+                text = "Ortalama",
+                onClick = { onScrub(null) },
+                style = NutraButtonStyle.Secondary,
+                size = NutraButtonSize.Small,
+                leadingIcon = Icons.Rounded.Refresh,
+            )
+        }
+    }
+}
+
+@Composable
 private fun HapticScrubbingWaterChartCard(
     points: List<DailyAnalyticsPoint>,
     todayIso: String,
-    scrubbedIndex: Int?,
+    scrubbedIndexFlow: StateFlow<Int?>,
     targetWaterMl: Int,
     averageWaterMl: Int,
     selectedRange: AnalyticsRangeOption,
@@ -492,9 +527,12 @@ private fun HapticScrubbingWaterChartCard(
 ) {
     val colors = NutraTheme.colors
     val hasAnyWater = remember(points) { points.any { it.waterMl > 0 } }
-    val scrubbedPoint = scrubbedIndex?.let { points.getOrNull(it) }
-    val scrubbedDateLabel = scrubbedPoint?.let { NutraFormatters.formatShortDate(it.dateIso, todayIso) }
-    val displayedWaterMl = scrubbedPoint?.waterMl ?: averageWaterMl
+    val rawScrubbedState = scrubbedIndexFlow.collectAsStateWithLifecycle()
+    val scrubbedIndexState = remember(points.size, rawScrubbedState) {
+        derivedStateOf {
+            if (points.isEmpty()) null else rawScrubbedState.value?.coerceIn(0, points.lastIndex)
+        }
+    }
     val barColorProvider = remember(colors.surfaceMuted, colors.water) {
         { pt: DailyAnalyticsPoint ->
             if (pt.waterMl == 0) colors.surfaceMuted else colors.water
@@ -502,52 +540,14 @@ private fun HapticScrubbingWaterChartCard(
     }
 
     NutraCard {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                Text(
-                    text = if (scrubbedDateLabel != null) {
-                        "$scrubbedDateLabel · Su"
-                    } else {
-                        "Su"
-                    },
-                    style = NutraTheme.typography.caption,
-                    color = if (scrubbedPoint != null) colors.accent else colors.textSecondary,
-                )
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Text(
-                        text = NutraFormatters.formatInt(displayedWaterMl),
-                        style = NutraTheme.typography.numberLarge,
-                        color = colors.textPrimary,
-                        modifier = Modifier.alignByBaseline(),
-                    )
-                    Text(
-                        text = "/ ${NutraFormatters.formatInt(targetWaterMl)} ml",
-                        style = NutraTheme.typography.body,
-                        color = colors.textSecondary,
-                        modifier = Modifier.alignByBaseline(),
-                    )
-                }
-            }
-
-            if (scrubbedPoint != null) {
-                NutraButton(
-                    text = "Ortalama",
-                    onClick = { onScrub(null) },
-                    style = NutraButtonStyle.Secondary,
-                    size = NutraButtonSize.Small,
-                    leadingIcon = Icons.Rounded.Refresh,
-                )
-            }
-        }
+        WaterChartHeader(
+            points = points,
+            todayIso = todayIso,
+            scrubbedIndexState = scrubbedIndexState,
+            targetWaterMl = targetWaterMl,
+            averageWaterMl = averageWaterMl,
+            onScrub = onScrub,
+        )
 
         if (!hasAnyWater) {
             NutraEmptyState(
@@ -567,8 +567,7 @@ private fun HapticScrubbingWaterChartCard(
         HapticScrubbingBarChart(
             points = points,
             todayIso = todayIso,
-            scrubbedIndex = scrubbedIndex,
-            activePoint = scrubbedPoint,
+            scrubbedIndexState = scrubbedIndexState,
             valueProvider = WaterValueProvider,
             targetValue = targetWaterMl,
             targetLineLabel = NutraFormatters.formatWaterLitres(targetWaterMl),
@@ -578,7 +577,12 @@ private fun HapticScrubbingWaterChartCard(
             lastAnimatedRange = lastAnimatedRange,
             onRevealRangeAnimated = onRevealRangeAnimated,
             targetSummaryText = "Hedef: ${NutraFormatters.formatInt(targetWaterMl)} ml",
-            chartAccessibilityLabel = "Su geçmişi grafiği. ${scrubbedDateLabel ?: "${selectedRange.title} ortalaması"}: $displayedWaterMl ml. Hedef: $targetWaterMl ml.",
+            accessibilityLabelProvider = { idx ->
+                val pt = idx?.let { points.getOrNull(it) }
+                val dateLabel = pt?.let { NutraFormatters.formatShortDate(it.dateIso, todayIso) }
+                val water = pt?.waterMl ?: averageWaterMl
+                "Su geçmişi grafiği. ${dateLabel ?: "${selectedRange.title} ortalaması"}: $water ml. Hedef: $targetWaterMl ml."
+            },
             onScrub = onScrub,
         )
 
@@ -596,11 +600,73 @@ private fun HapticScrubbingWaterChartCard(
 }
 
 @Composable
+private fun WaterChartHeader(
+    points: List<DailyAnalyticsPoint>,
+    todayIso: String,
+    scrubbedIndexState: State<Int?>,
+    targetWaterMl: Int,
+    averageWaterMl: Int,
+    onScrub: (Int?) -> Unit,
+) {
+    val colors = NutraTheme.colors
+    val scrubbedIndex = scrubbedIndexState.value
+    val scrubbedPoint = scrubbedIndex?.let { points.getOrNull(it) }
+    val scrubbedDateLabel = scrubbedPoint?.let { NutraFormatters.formatShortDate(it.dateIso, todayIso) }
+    val displayedWaterMl = scrubbedPoint?.waterMl ?: averageWaterMl
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = if (scrubbedDateLabel != null) {
+                    "$scrubbedDateLabel · Su"
+                } else {
+                    "Su"
+                },
+                style = NutraTheme.typography.caption,
+                color = if (scrubbedPoint != null) colors.accent else colors.textSecondary,
+            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = NutraFormatters.formatInt(displayedWaterMl),
+                    style = NutraTheme.typography.numberLarge,
+                    color = colors.textPrimary,
+                    modifier = Modifier.alignByBaseline(),
+                )
+                Text(
+                    text = "/ ${NutraFormatters.formatInt(targetWaterMl)} ml",
+                    style = NutraTheme.typography.body,
+                    color = colors.textSecondary,
+                    modifier = Modifier.alignByBaseline(),
+                )
+            }
+        }
+
+        if (scrubbedPoint != null) {
+            NutraButton(
+                text = "Ortalama",
+                onClick = { onScrub(null) },
+                style = NutraButtonStyle.Secondary,
+                size = NutraButtonSize.Small,
+                leadingIcon = Icons.Rounded.Refresh,
+            )
+        }
+    }
+}
+
+@Composable
 private fun HapticScrubbingBarChart(
     points: List<DailyAnalyticsPoint>,
     todayIso: String,
-    scrubbedIndex: Int?,
-    activePoint: DailyAnalyticsPoint?,
+    scrubbedIndexState: State<Int?>,
     valueProvider: (DailyAnalyticsPoint) -> Int,
     targetValue: Int,
     targetLineLabel: String,
@@ -610,11 +676,10 @@ private fun HapticScrubbingBarChart(
     lastAnimatedRange: AnalyticsRangeOption?,
     onRevealRangeAnimated: (AnalyticsRangeOption) -> Unit,
     targetSummaryText: String,
-    chartAccessibilityLabel: String,
+    accessibilityLabelProvider: (Int?) -> String,
     onScrub: (Int?) -> Unit,
 ) {
     val colors = NutraTheme.colors
-    val currentScrubState = rememberUpdatedState(scrubbedIndex)
     val latestOnReveal by rememberUpdatedState(onRevealRangeAnimated)
     val alreadyRevealedForRange = lastAnimatedRange == selectedRange
     val barGrowth = remember { Animatable(if (alreadyRevealedForRange) 1f else 0.35f) }
@@ -633,11 +698,11 @@ private fun HapticScrubbingBarChart(
             .fillMaxWidth()
             .padding(top = 20.dp)
             .height(156.dp)
-            .semantics { contentDescription = chartAccessibilityLabel },
+            .semantics { contentDescription = accessibilityLabelProvider(scrubbedIndexState.value) },
     ) {
         BarChartCanvas(
             points = points,
-            scrubbedIndexState = currentScrubState,
+            scrubbedIndexState = scrubbedIndexState,
             barGrowthState = barGrowth.asState(),
             valueProvider = valueProvider,
             targetValue = targetValue,
@@ -650,7 +715,28 @@ private fun HapticScrubbingBarChart(
         )
     }
 
-    // X-axis date strip
+    // X-axis date strip isolated into its own leaf composable so scrub ticks never recompose BarChartCanvas.
+    BarChartXAxis(
+        points = points,
+        todayIso = todayIso,
+        selectedRange = selectedRange,
+        scrubbedIndexState = scrubbedIndexState,
+        targetSummaryText = targetSummaryText,
+    )
+}
+
+@Composable
+private fun BarChartXAxis(
+    points: List<DailyAnalyticsPoint>,
+    todayIso: String,
+    selectedRange: AnalyticsRangeOption,
+    scrubbedIndexState: State<Int?>,
+    targetSummaryText: String,
+) {
+    val colors = NutraTheme.colors
+    val scrubbedIndex = scrubbedIndexState.value
+    val activePoint = scrubbedIndex?.let { points.getOrNull(it) }
+
     AnimatedContent(
         targetState = selectedRange,
         transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(120)) },
@@ -1157,12 +1243,18 @@ private fun WeightTrendBezierCard(
     todayIso: String,
     hasAnyWeightHistory: Boolean,
     selectedRange: AnalyticsRangeOption,
-    scrubbedIndex: Int?,
+    scrubbedIndexFlow: StateFlow<Int?>,
     profile: AnalyticsProfileSlice,
     onScrub: (Int?) -> Unit,
     onAddWeightClick: () -> Unit,
 ) {
     val colors = NutraTheme.colors
+    val rawScrubbedState = scrubbedIndexFlow.collectAsStateWithLifecycle()
+    val scrubbedIndexState = remember(points.size, rawScrubbedState) {
+        derivedStateOf {
+            if (points.isEmpty()) null else rawScrubbedState.value?.coerceIn(0, points.lastIndex)
+        }
+    }
 
     NutraCard {
         Row(
@@ -1247,72 +1339,13 @@ private fun WeightTrendBezierCard(
             return@NutraCard
         }
 
-        val activePoint = scrubbedIndex?.let { points.getOrNull(it) } ?: points.last()
-        val firstRawWeight = points.first().rawWeightKg
-        val deltaFromStart = activePoint.rawWeightKg - firstRawWeight
-        val deltaSign = if (deltaFromStart >= 0.05f) "+" else ""
-        val deltaColor = when (profile.goalType) {
-            GoalType.LOSE_WEIGHT -> when {
-                deltaFromStart < -0.1f -> colors.accent
-                deltaFromStart > 0.1f -> colors.warningText
-                else -> colors.textSecondary
-            }
-            GoalType.GAIN_MUSCLE -> when {
-                deltaFromStart > 0.1f -> colors.accent
-                deltaFromStart < -0.1f -> colors.warningText
-                else -> colors.textSecondary
-            }
-            GoalType.MAINTAIN -> when {
-                abs(deltaFromStart) < 0.1f -> colors.textSecondary
-                abs(deltaFromStart) <= 0.5f -> colors.accent
-                else -> colors.warningText
-            }
-        }
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 18.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                Text(
-                    text = NutraFormatters.formatShortDate(activePoint.dateIso, todayIso),
-                    style = NutraTheme.typography.caption,
-                    color = if (scrubbedIndex != null) colors.accent else colors.textSecondary,
-                )
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = "${NutraFormatters.formatKg(activePoint.rawWeightKg)} kg",
-                        style = NutraTheme.typography.numberLarge,
-                        color = colors.textPrimary,
-                        modifier = Modifier.alignByBaseline(),
-                    )
-                    Text(
-                        text = "$deltaSign${NutraFormatters.formatKg(deltaFromStart)} kg",
-                        style = NutraTheme.typography.labelSmall,
-                        color = deltaColor,
-                        modifier = Modifier.alignByBaseline(),
-                    )
-                }
-            }
-
-            if (scrubbedIndex != null) {
-                NutraButton(
-                    text = "Son kayıt",
-                    onClick = { onScrub(null) },
-                    style = NutraButtonStyle.Secondary,
-                    size = NutraButtonSize.Small,
-                    leadingIcon = Icons.Rounded.Refresh,
-                )
-            }
-        }
+        WeightTrendScrubHeader(
+            points = points,
+            todayIso = todayIso,
+            scrubbedIndexState = scrubbedIndexState,
+            goalType = profile.goalType,
+            onScrub = onScrub,
+        )
 
         val targetWeight = profile.targetWeightKg
         val (minY, maxY) = remember(points, targetWeight) {
@@ -1332,14 +1365,15 @@ private fun WeightTrendBezierCard(
             (rawMin - pad) to (rawMax + pad)
         }
 
-        val currentScrubState = rememberUpdatedState(scrubbedIndex)
-        val weightChartA11y = "Kilo trendi grafiği. ${NutraFormatters.formatShortDate(activePoint.dateIso, todayIso)} trend: ${NutraFormatters.formatKg(activePoint.emaTrendKg)} kg, ham tartı: ${NutraFormatters.formatKg(activePoint.rawWeightKg)} kg, hedef: ${NutraFormatters.formatKg(targetWeight)} kg."
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = 18.dp)
                 .height(172.dp)
-                .semantics { contentDescription = weightChartA11y },
+                .semantics {
+                    val activePoint = scrubbedIndexState.value?.let { points.getOrNull(it) } ?: points.last()
+                    contentDescription = "Kilo trendi grafiği. ${NutraFormatters.formatShortDate(activePoint.dateIso, todayIso)} trend: ${NutraFormatters.formatKg(activePoint.emaTrendKg)} kg, ham tartı: ${NutraFormatters.formatKg(activePoint.rawWeightKg)} kg, hedef: ${NutraFormatters.formatKg(targetWeight)} kg."
+                },
         ) {
             WeightTrendCanvas(
                 points = points,
@@ -1347,37 +1381,17 @@ private fun WeightTrendBezierCard(
                 minY = minY,
                 maxY = maxY,
                 colors = colors,
-                scrubbedIndexState = currentScrubState,
+                scrubbedIndexState = scrubbedIndexState,
                 onScrub = onScrub,
             )
         }
 
-        // Bottom range dates + compact legend
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = NutraFormatters.formatShortDate(points.first().dateIso, todayIso),
-                style = NutraTheme.typography.caption,
-                color = colors.textTertiary,
-            )
-            if (scrubbedIndex != null) {
-                Text(
-                    text = NutraFormatters.formatShortDate(activePoint.dateIso, todayIso),
-                    style = NutraTheme.typography.labelSmall,
-                    color = colors.textPrimary,
-                )
-            }
-            Text(
-                text = NutraFormatters.formatShortDate(points.last().dateIso, todayIso),
-                style = NutraTheme.typography.caption,
-                color = if (scrubbedIndex == null) colors.textSecondary else colors.textTertiary,
-            )
-        }
+        // Bottom range dates isolated into a leaf composable so scrub ticks never recompose WeightTrendCanvas.
+        WeightTrendXAxis(
+            points = points,
+            todayIso = todayIso,
+            scrubbedIndexState = scrubbedIndexState,
+        )
 
         Row(
             modifier = Modifier
@@ -1401,6 +1415,121 @@ private fun WeightTrendBezierCard(
                 isDashed = true,
             )
         }
+    }
+}
+
+@Composable
+private fun WeightTrendScrubHeader(
+    points: List<WeightTrendPoint>,
+    todayIso: String,
+    scrubbedIndexState: State<Int?>,
+    goalType: GoalType,
+    onScrub: (Int?) -> Unit,
+) {
+    val colors = NutraTheme.colors
+    val scrubbedIndex = scrubbedIndexState.value
+    val activePoint = scrubbedIndex?.let { points.getOrNull(it) } ?: points.last()
+    val firstRawWeight = points.first().rawWeightKg
+    val deltaFromStart = activePoint.rawWeightKg - firstRawWeight
+    val deltaSign = if (deltaFromStart >= 0.05f) "+" else ""
+    val deltaColor = when (goalType) {
+        GoalType.LOSE_WEIGHT -> when {
+            deltaFromStart < -0.1f -> colors.accent
+            deltaFromStart > 0.1f -> colors.warningText
+            else -> colors.textSecondary
+        }
+        GoalType.GAIN_MUSCLE -> when {
+            deltaFromStart > 0.1f -> colors.accent
+            deltaFromStart < -0.1f -> colors.warningText
+            else -> colors.textSecondary
+        }
+        GoalType.MAINTAIN -> when {
+            abs(deltaFromStart) < 0.1f -> colors.textSecondary
+            abs(deltaFromStart) <= 0.5f -> colors.accent
+            else -> colors.warningText
+        }
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 18.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = NutraFormatters.formatShortDate(activePoint.dateIso, todayIso),
+                style = NutraTheme.typography.caption,
+                color = if (scrubbedIndex != null) colors.accent else colors.textSecondary,
+            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = "${NutraFormatters.formatKg(activePoint.rawWeightKg)} kg",
+                    style = NutraTheme.typography.numberLarge,
+                    color = colors.textPrimary,
+                    modifier = Modifier.alignByBaseline(),
+                )
+                Text(
+                    text = "$deltaSign${NutraFormatters.formatKg(deltaFromStart)} kg",
+                    style = NutraTheme.typography.labelSmall,
+                    color = deltaColor,
+                    modifier = Modifier.alignByBaseline(),
+                )
+            }
+        }
+
+        if (scrubbedIndex != null) {
+            NutraButton(
+                text = "Son kayıt",
+                onClick = { onScrub(null) },
+                style = NutraButtonStyle.Secondary,
+                size = NutraButtonSize.Small,
+                leadingIcon = Icons.Rounded.Refresh,
+            )
+        }
+    }
+}
+
+@Composable
+private fun WeightTrendXAxis(
+    points: List<WeightTrendPoint>,
+    todayIso: String,
+    scrubbedIndexState: State<Int?>,
+) {
+    val colors = NutraTheme.colors
+    val scrubbedIndex = scrubbedIndexState.value
+    val activePoint = scrubbedIndex?.let { points.getOrNull(it) } ?: points.last()
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = NutraFormatters.formatShortDate(points.first().dateIso, todayIso),
+            style = NutraTheme.typography.caption,
+            color = colors.textTertiary,
+        )
+        if (scrubbedIndex != null) {
+            Text(
+                text = NutraFormatters.formatShortDate(activePoint.dateIso, todayIso),
+                style = NutraTheme.typography.labelSmall,
+                color = colors.textPrimary,
+            )
+        }
+        Text(
+            text = NutraFormatters.formatShortDate(points.last().dateIso, todayIso),
+            style = NutraTheme.typography.caption,
+            color = if (scrubbedIndex == null) colors.textSecondary else colors.textTertiary,
+        )
     }
 }
 

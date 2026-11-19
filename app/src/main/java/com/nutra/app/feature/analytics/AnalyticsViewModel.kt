@@ -18,6 +18,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
@@ -151,10 +152,7 @@ internal fun filterWeightTrendForRange(
     )
 }
 
-private data class AnalyticsInteractionState(
-    val scrubbedDayIndex: Int?,
-    val scrubbedWaterIndex: Int?,
-    val scrubbedWeightIndex: Int?,
+private data class AnalyticsDialogFeedbackState(
     val showAddWeightDialog: Boolean,
     val feedbackMessage: String?,
     val feedbackEventId: Long,
@@ -182,6 +180,12 @@ class AnalyticsViewModel @Inject constructor(
     private val scrubbedDayIndexFlow = MutableStateFlow<Int?>(null)
     private val scrubbedWaterIndexFlow = MutableStateFlow<Int?>(null)
     private val scrubbedWeightIndexFlow = MutableStateFlow<Int?>(null)
+
+    // Exposed separately from uiState so chart scrubbing never recomposes AnalyticsScreen or sibling cards.
+    val scrubbedDayIndex: StateFlow<Int?> = scrubbedDayIndexFlow.asStateFlow()
+    val scrubbedWaterIndex: StateFlow<Int?> = scrubbedWaterIndexFlow.asStateFlow()
+    val scrubbedWeightIndex: StateFlow<Int?> = scrubbedWeightIndexFlow.asStateFlow()
+
     private val showWeightDialogFlow = MutableStateFlow(false)
     private val feedbackSeq = AtomicLong(0L)
     private val feedbackFlow = MutableStateFlow<Pair<String?, Long>>(null to 0L)
@@ -209,17 +213,11 @@ class AnalyticsViewModel @Inject constructor(
         filterWeightTrendForRange(allPoints, option, end)
     }.flowOn(Dispatchers.Default)
 
-    private val interactionStateFlow = combine(
-        scrubbedDayIndexFlow,
-        scrubbedWaterIndexFlow,
-        scrubbedWeightIndexFlow,
+    private val dialogFeedbackStateFlow = combine(
         showWeightDialogFlow,
         feedbackFlow,
-    ) { dayIdx, waterIdx, weightIdx, showDialog, (feedbackMsg, feedbackId) ->
-        AnalyticsInteractionState(
-            scrubbedDayIndex = dayIdx,
-            scrubbedWaterIndex = waterIdx,
-            scrubbedWeightIndex = weightIdx,
+    ) { showDialog, (feedbackMsg, feedbackId) ->
+        AnalyticsDialogFeedbackState(
             showAddWeightDialog = showDialog,
             feedbackMessage = feedbackMsg,
             feedbackEventId = feedbackId,
@@ -242,33 +240,28 @@ class AnalyticsViewModel @Inject constructor(
         rangeSummaryFlow,
         weightRangeSummaryFlow,
         analyticsProfileFlow,
-        interactionStateFlow,
-    ) { summary, weightSummary, profile, interaction ->
+        dialogFeedbackStateFlow,
+    ) { summary, weightSummary, profile, dialogFeedback ->
         if (summary.option != weightSummary.option || summary.endDateIso != weightSummary.endDateIso) {
             return@combine null
         }
-        val points = summary.points
-        val trendPoints = weightSummary.pointsInRange
         AnalyticsUiState(
             isLoading = false,
             todayIso = summary.endDateIso.ifBlank { todayFlow.value.toString() },
             selectedRange = summary.option,
-            dailyPoints = points,
+            dailyPoints = summary.points,
             averageCalories = summary.averageCalories,
             averageWaterMl = summary.averageWaterMl,
             averageProteinGrams = summary.averageProteinGrams,
             averageCarbsGrams = summary.averageCarbsGrams,
             averageFatGrams = summary.averageFatGrams,
-            scrubbedDayIndex = if (points.isEmpty()) null else interaction.scrubbedDayIndex?.coerceIn(0, points.lastIndex),
-            scrubbedWaterIndex = if (points.isEmpty()) null else interaction.scrubbedWaterIndex?.coerceIn(0, points.lastIndex),
-            weightTrendPoints = trendPoints,
+            weightTrendPoints = weightSummary.pointsInRange,
             latestRecordedWeightKg = weightSummary.latestRecordedWeightKg,
             hasAnyWeightHistory = weightSummary.hasAnyHistory,
-            scrubbedWeightIndex = if (trendPoints.isEmpty()) null else interaction.scrubbedWeightIndex?.coerceIn(0, trendPoints.lastIndex),
             profile = profile,
-            showAddWeightDialog = interaction.showAddWeightDialog,
-            feedbackMessage = interaction.feedbackMessage,
-            feedbackEventId = interaction.feedbackEventId,
+            showAddWeightDialog = dialogFeedback.showAddWeightDialog,
+            feedbackMessage = dialogFeedback.feedbackMessage,
+            feedbackEventId = dialogFeedback.feedbackEventId,
         )
     }.filterNotNull().stateIn(
         scope = viewModelScope,

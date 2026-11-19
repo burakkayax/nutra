@@ -26,7 +26,6 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -126,6 +125,7 @@ import com.nutra.app.feature.profile.ProfileScreen
 import com.nutra.app.feature.profile.ProfileViewModel
 import com.nutra.app.feature.profile.WaterReminderScreen
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
@@ -154,7 +154,6 @@ private data class RootAppConfig(
 private val BottomBarReservedHeight = 96.dp
 private val NavPillSpring = spring<Float>(dampingRatio = 0.85f, stiffness = 420f)
 private val NavIconScaleSpring = spring<Float>(dampingRatio = 0.72f, stiffness = 500f)
-private val NavPressScaleSpring = spring<Float>(dampingRatio = 0.78f, stiffness = 700f)
 
 private const val CONTENT_READY_PREDRAW_TIMEOUT_MS = 350L
 private const val CONFIG_EMERGENCY_PREDRAW_TIMEOUT_MS = 1200L
@@ -168,6 +167,7 @@ class MainActivity : ComponentActivity() {
     private var hasRootConfig = false
     private var isAppReady = false
     private var lastAppliedIsDark: Boolean? = null
+    private val showSkeletonFallbackState = mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -187,10 +187,12 @@ class MainActivity : ComponentActivity() {
             object : ViewTreeObserver.OnPreDrawListener {
                 override fun onPreDraw(): Boolean {
                     val elapsed = SystemClock.uptimeMillis() - preDrawStartMs
-                    val allowDraw = isAppReady ||
-                        (hasRootConfig && elapsed >= CONTENT_READY_PREDRAW_TIMEOUT_MS) ||
-                        elapsed >= CONFIG_EMERGENCY_PREDRAW_TIMEOUT_MS
+                    val timedOutWithConfig = hasRootConfig && elapsed >= CONTENT_READY_PREDRAW_TIMEOUT_MS
+                    val allowDraw = isAppReady || timedOutWithConfig || elapsed >= CONFIG_EMERGENCY_PREDRAW_TIMEOUT_MS
                     return if (allowDraw) {
+                        if (!isAppReady && timedOutWithConfig) {
+                            showSkeletonFallbackState.value = true
+                        }
                         contentView.viewTreeObserver.removeOnPreDrawListener(this)
                         true
                     } else {
@@ -249,6 +251,7 @@ class MainActivity : ComponentActivity() {
             ) {
                 NutraAppRoot(
                     onboardingCompleted = config.onboardingCompleted,
+                    showSkeletonFallback = showSkeletonFallbackState.value,
                     onReadyChanged = { ready -> isAppReady = ready },
                 )
             }
@@ -287,6 +290,7 @@ private class TabLifecycleOwner : LifecycleOwner {
 @Composable
 fun NutraAppRoot(
     onboardingCompleted: Boolean,
+    showSkeletonFallback: Boolean = false,
     onReadyChanged: (Boolean) -> Unit = {},
 ) {
     var activeTab by rememberSaveable { mutableStateOf(PrimaryDestination.DASHBOARD) }
@@ -311,12 +315,27 @@ fun NutraAppRoot(
         } else {
             val dashboardViewModel: DashboardViewModel = viewModel()
             val isDashboardReady by dashboardViewModel.isReady.collectAsStateWithLifecycle()
-            SideEffect { onReadyChanged(isDashboardReady) }
+            // Read isDashboardReady directly in composition so NutraAppRoot recomposes the instant
+            // Room emits and releases the pre-draw splash gate without waiting for the fallback timeout.
+            val readyNow = isDashboardReady
+            SideEffect { onReadyChanged(readyNow) }
             ReportDrawnWhen { isDashboardReady }
 
-            // Lazy-mount secondary tabs on first visit, then keep visited tabs warm with paused hidden lifecycles.
+            if (!readyNow && !showSkeletonFallback) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(NutraTheme.colors.background),
+                )
+                return@Crossfade
+            }
+
+            // Mount Dashboard immediately for first frame, then stagger-warm secondary tabs well after
+            // cold start settles so initial startup pays zero cost AND first tab taps stay instant.
             var hasVisitedAnalytics by rememberSaveable { mutableStateOf(false) }
             var hasVisitedProfile by rememberSaveable { mutableStateOf(false) }
+            var prewarmAnalytics by remember { mutableStateOf(false) }
+            var prewarmProfile by remember { mutableStateOf(false) }
 
             LaunchedEffect(activeTab) {
                 if (activeTab == PrimaryDestination.ANALYTICS && !hasVisitedAnalytics) {
@@ -327,8 +346,18 @@ fun NutraAppRoot(
                 }
             }
 
-            val mountAnalytics = hasVisitedAnalytics || activeTab == PrimaryDestination.ANALYTICS
-            val mountProfile = hasVisitedProfile || activeTab == PrimaryDestination.PROFILE
+            LaunchedEffect(readyNow) {
+                if (!readyNow) return@LaunchedEffect
+                delay(900L)
+                withFrameNanos { }
+                prewarmAnalytics = true
+                delay(220L)
+                withFrameNanos { }
+                prewarmProfile = true
+            }
+
+            val mountAnalytics = hasVisitedAnalytics || prewarmAnalytics || activeTab == PrimaryDestination.ANALYTICS
+            val mountProfile = hasVisitedProfile || prewarmProfile || activeTab == PrimaryDestination.PROFILE
             val saveableStateHolder = rememberSaveableStateHolder()
             val showEditBodyProfile = activeTab == PrimaryDestination.PROFILE && profileSubScreen == ProfileSubScreen.EDIT_BODY_PROFILE
             val showWaterReminder = activeTab == PrimaryDestination.PROFILE && profileSubScreen == ProfileSubScreen.WATER_REMINDER
@@ -516,22 +545,39 @@ private fun TabSlotBox(
     content: @Composable () -> Unit,
 ) {
     val parentLifecycleOwner = LocalLifecycleOwner.current
+    // Start active/prewarmed tabs at STARTED so initial Room/DataStore hydration completes once,
+    // then pause hidden tabs down to CREATED after fade-out/hydration settles.
+    var allowHiddenCollection by remember { mutableStateOf(!isSelected) }
+    LaunchedEffect(isSelected) {
+        if (isSelected) {
+            allowHiddenCollection = false
+        } else {
+            allowHiddenCollection = true
+            delay(320L)
+            allowHiddenCollection = false
+        }
+    }
+
+    val desiredMaxState = when {
+        isSelected -> Lifecycle.State.RESUMED
+        allowHiddenCollection -> Lifecycle.State.STARTED
+        else -> Lifecycle.State.CREATED
+    }
     val tabLifecycleOwner = remember(parentLifecycleOwner) {
         TabLifecycleOwner().apply {
             val parentState = parentLifecycleOwner.lifecycle.currentState
-            val maxState = if (isSelected) Lifecycle.State.RESUMED else Lifecycle.State.CREATED
-            val initial = if (parentState.isAtLeast(maxState)) maxState else parentState
+            val initial = if (parentState.isAtLeast(desiredMaxState)) desiredMaxState else parentState
             if (initial != Lifecycle.State.INITIALIZED) {
                 registry.currentState = initial
             }
         }
     }
     val latestIsSelected = rememberUpdatedState(isSelected)
+    val latestDesiredMaxState = rememberUpdatedState(desiredMaxState)
 
-    fun syncTabLifecycle(parentState: Lifecycle.State, selected: Boolean) {
+    fun syncTabLifecycle(parentState: Lifecycle.State, maxState: Lifecycle.State) {
         val current = tabLifecycleOwner.registry.currentState
         if (current == Lifecycle.State.DESTROYED) return
-        val maxState = if (selected) Lifecycle.State.RESUMED else Lifecycle.State.CREATED
         val target = if (parentState.isAtLeast(maxState)) maxState else parentState
         if (target == Lifecycle.State.INITIALIZED || current == target) return
         if (current == Lifecycle.State.INITIALIZED && target == Lifecycle.State.DESTROYED) return
@@ -540,9 +586,9 @@ private fun TabSlotBox(
 
     DisposableEffect(parentLifecycleOwner) {
         val observer = LifecycleEventObserver { source, _ ->
-            syncTabLifecycle(source.lifecycle.currentState, latestIsSelected.value)
+            syncTabLifecycle(source.lifecycle.currentState, latestDesiredMaxState.value)
         }
-        syncTabLifecycle(parentLifecycleOwner.lifecycle.currentState, latestIsSelected.value)
+        syncTabLifecycle(parentLifecycleOwner.lifecycle.currentState, latestDesiredMaxState.value)
         parentLifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             parentLifecycleOwner.lifecycle.removeObserver(observer)
@@ -553,7 +599,7 @@ private fun TabSlotBox(
     }
 
     SideEffect {
-        syncTabLifecycle(parentLifecycleOwner.lifecycle.currentState, isSelected)
+        syncTabLifecycle(parentLifecycleOwner.lifecycle.currentState, desiredMaxState)
     }
 
     val alphaState = animateFloatAsState(
@@ -728,15 +774,9 @@ private fun NutraBottomBarItem(
 ) {
     val haptic = LocalHapticFeedback.current
     val interactionSource = remember { MutableInteractionSource() }
-    val isPressed by interactionSource.collectIsPressedAsState()
     val holdAlphaState = rememberHoldHighlightAlpha(
         interactionSource = interactionSource,
         label = "navHoldAlpha",
-    )
-    val pressScaleState = animateFloatAsState(
-        targetValue = if (isPressed) 0.96f else 1f,
-        animationSpec = NavPressScaleSpring,
-        label = "navPressScale",
     )
     val tint by animateColorAsState(
         targetValue = if (selected) selectedColor else unselectedColor,
@@ -752,11 +792,6 @@ private fun NutraBottomBarItem(
         modifier = modifier
             .fillMaxHeight()
             .heightIn(min = 52.dp)
-            .graphicsLayer {
-                val s = pressScaleState.value
-                scaleX = s
-                scaleY = s
-            }
             .clip(NutraTheme.shapes.pill)
             .drawBehind {
                 val a = holdAlphaState.value

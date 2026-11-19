@@ -70,7 +70,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -1260,13 +1259,12 @@ private fun MealLogLazyRowContainer(
     val caloriesText = remember(item.calories) {
         "${NutraFormatters.formatInt(item.calories)} kcal"
     }
-    val containerShape = if (isLast) MealCardBottomShape else RectangleShape
 
     Column(
         modifier = modifier
             .fillMaxWidth()
             .then(if (addBottomCardGap) Modifier.padding(bottom = NutraTheme.spacing.md) else Modifier)
-            .clip(containerShape)
+            .then(if (isLast) Modifier.clip(MealCardBottomShape) else Modifier)
             .background(NutraTheme.colors.surface)
             .padding(
                 start = NutraTheme.spacing.card,
