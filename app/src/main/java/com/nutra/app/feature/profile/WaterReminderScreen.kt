@@ -74,6 +74,9 @@ import java.time.LocalDateTime
 import java.util.Locale
 import kotlin.math.roundToInt
 
+private val FIRST_ROW_INTERVAL_PRESETS = listOf(30, 60, 90)
+private val SECOND_ROW_INTERVAL_PRESETS = listOf(120, 180)
+
 private enum class ReminderTimeField(val title: String) {
     START("Başlangıç saati"),
     END("Bitiş saati"),
@@ -370,14 +373,11 @@ fun WaterReminderScreen(
                     NutraSectionHeader(title = "Hatırlatma periyodu")
 
                     NutraCard(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        val firstRowPresets = listOf(30, 60, 90)
-                        val secondRowPresets = listOf(120, 180)
-
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            firstRowPresets.forEach { preset ->
+                            FIRST_ROW_INTERVAL_PRESETS.forEach { preset ->
                                 NutraChip(
                                     text = WaterReminderScheduleCalculator.formatInterval(preset),
                                     selected = !isCustomMode && intervalMinutes == preset,
@@ -394,7 +394,7 @@ fun WaterReminderScreen(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            secondRowPresets.forEach { preset ->
+                            SECOND_ROW_INTERVAL_PRESETS.forEach { preset ->
                                 NutraChip(
                                     text = WaterReminderScheduleCalculator.formatInterval(preset),
                                     selected = !isCustomMode && intervalMinutes == preset,

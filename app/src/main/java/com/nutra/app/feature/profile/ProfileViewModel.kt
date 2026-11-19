@@ -31,11 +31,43 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
 import java.time.LocalDate
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import kotlin.math.abs
+
+internal const val MAX_BACKUP_FILE_BYTES = 20 * 1024 * 1024
+
+internal sealed interface BoundedReadResult {
+    data class Success(val text: String) : BoundedReadResult
+    data object TooLarge : BoundedReadResult
+    data object EmptyOrFailed : BoundedReadResult
+}
+
+internal fun readBoundedUtf8Stream(
+    inputStream: InputStream,
+    maxBytes: Int = MAX_BACKUP_FILE_BYTES,
+): BoundedReadResult {
+    val buffer = ByteArray(16 * 1024)
+    val output = ByteArrayOutputStream(8 * 1024)
+    var totalRead = 0
+    while (true) {
+        val count = inputStream.read(buffer)
+        if (count < 0) break
+        if (count == 0) continue
+        totalRead += count
+        if (totalRead > maxBytes) {
+            return BoundedReadResult.TooLarge
+        }
+        output.write(buffer, 0, count)
+    }
+    if (totalRead == 0) return BoundedReadResult.EmptyOrFailed
+    val text = output.toString(Charsets.UTF_8.name())
+    return if (text.isBlank()) BoundedReadResult.EmptyOrFailed else BoundedReadResult.Success(text)
+}
 
 @Immutable
 data class ProfileFeedback(
@@ -74,6 +106,11 @@ class ProfileViewModel @Inject constructor(
     private val feedbackSeq = AtomicLong(0L)
     private val feedbackFlow = MutableStateFlow<ProfileFeedback?>(null)
 
+    private val initialUiState: ProfileUiState =
+        preferencesDataStore.currentCachedProfile()?.let { cached ->
+            ProfileUiState(isLoading = false, profile = cached)
+        } ?: ProfileUiState()
+
     val uiState: StateFlow<ProfileUiState> = combine(
         preferencesDataStore.userProfileFlow,
         pendingGoalsFlow,
@@ -89,7 +126,7 @@ class ProfileViewModel @Inject constructor(
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(30_000),
-        initialValue = ProfileUiState(),
+        initialValue = initialUiState,
     )
 
     private fun emitFeedback(
@@ -294,7 +331,11 @@ class ProfileViewModel @Inject constructor(
                 updatedGoals = updatedGoals,
             )
             if (abs(currentWeightKg - previousWeight) >= 0.05f) {
-                nutritionRepository.logWeight(LocalDate.now().toString(), currentWeightKg)
+                nutritionRepository.logWeight(
+                    dateIso = LocalDate.now().toString(),
+                    weightKg = currentWeightKg,
+                    syncProfileWeight = false,
+                )
             }
             emitFeedback(
                 if (recalculateGoals) {
@@ -335,8 +376,7 @@ class ProfileViewModel @Inject constructor(
     }
 
     fun exportBackupToUri(contentResolver: ContentResolver, uri: Uri) {
-        if (isBackupBusyFlow.value) return
-        isBackupBusyFlow.value = true
+        if (!isBackupBusyFlow.compareAndSet(false, true)) return
         viewModelScope.launch {
             try {
                 when (val res = nutritionRepository.exportBackupJson()) {
@@ -368,20 +408,29 @@ class ProfileViewModel @Inject constructor(
     }
 
     fun importBackupFromUri(contentResolver: ContentResolver, uri: Uri) {
-        if (isBackupBusyFlow.value) return
-        isBackupBusyFlow.value = true
+        if (!isBackupBusyFlow.compareAndSet(false, true)) return
         viewModelScope.launch {
             try {
-                val raw = withContext(Dispatchers.IO) {
+                val readResult = withContext(Dispatchers.IO) {
                     runCatching {
-                        contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-                    }.getOrNull()
+                        contentResolver.openInputStream(uri)?.use { stream ->
+                            readBoundedUtf8Stream(stream, MAX_BACKUP_FILE_BYTES)
+                        } ?: BoundedReadResult.EmptyOrFailed
+                    }.getOrDefault(BoundedReadResult.EmptyOrFailed)
                 }
-                if (raw.isNullOrBlank()) {
-                    emitFeedback("Yedek dosyası okunamadı", NutraSnackbarTone.Error)
-                    return@launch
+                when (readResult) {
+                    BoundedReadResult.TooLarge -> {
+                        emitFeedback("Yedek dosyası çok büyük (en fazla 20 MB).", NutraSnackbarTone.Error)
+                        return@launch
+                    }
+                    BoundedReadResult.EmptyOrFailed -> {
+                        emitFeedback("Yedek dosyası okunamadı", NutraSnackbarTone.Error)
+                        return@launch
+                    }
+                    is BoundedReadResult.Success -> {
+                        importBackupJsonInternal(readResult.text)
+                    }
                 }
-                importBackupJsonInternal(raw)
             } finally {
                 isBackupBusyFlow.value = false
             }

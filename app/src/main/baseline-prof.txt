@@ -1,14 +1,31 @@
-HSPLcom/nutra/app/NutraApplication;-><init>()V
+# Cold-start critical path (Hot + Startup + Post-startup)
+HSPLcom/nutra/app/NutraApplication;->**(**)**
+HSPLcom/nutra/app/NutraApplication$**;->**(**)**
 HSPLcom/nutra/app/MainActivity;->**(**)**
+HSPLcom/nutra/app/MainActivity$**;->**(**)**
 HSPLcom/nutra/app/MainActivityKt;->**(**)**
+HSPLcom/nutra/app/PrimaryDestination;->**(**)**
 HSPLcom/nutra/app/core/datastore/UserPreferencesDataStore;->**(**)**
 HSPLcom/nutra/app/core/datastore/UserPreferencesDataStore$**;->**(**)**
-HSPLcom/nutra/app/core/database/**;->**(**)**
+HSPLcom/nutra/app/core/database/NutraDatabase;->**(**)**
+HSPLcom/nutra/app/core/database/NutraDatabase_Impl;->**(**)**
+HSPLcom/nutra/app/core/database/NutraDao;->**(**)**
+HSPLcom/nutra/app/core/database/NutraDao_Impl;->**(**)**
+HSPLcom/nutra/app/core/database/NutraDao_Impl$**;->**(**)**
+HSPLcom/nutra/app/core/database/MealLogEntity;->**(**)**
+HSPLcom/nutra/app/core/database/WaterLogEntity;->**(**)**
+HSPLcom/nutra/app/core/database/EntitiesKt;->**(**)**
 HSPLcom/nutra/app/core/designsystem/**;->**(**)**
 HSPLcom/nutra/app/domain/model/**;->**(**)**
 HSPLcom/nutra/app/domain/repository/NutritionRepository;->**(**)**
 HSPLcom/nutra/app/domain/repository/NutritionRepository$**;->**(**)**
 HSPLcom/nutra/app/feature/dashboard/**;->**(**)**
-HSPLcom/nutra/app/feature/logging/**;->**(**)**
-HSPLcom/nutra/app/feature/analytics/**;->**(**)**
-HSPLcom/nutra/app/feature/profile/**;->**(**)**
+
+# Post-startup interactive journeys (Hot + Post-startup, excluded from startup dex layout)
+HPLcom/nutra/app/core/database/FoodItemEntity;->**(**)**
+HPLcom/nutra/app/core/database/WeightLogEntity;->**(**)**
+HPLcom/nutra/app/domain/usecase/**;->**(**)**
+HPLcom/nutra/app/feature/logging/**;->**(**)**
+HPLcom/nutra/app/feature/analytics/**;->**(**)**
+HPLcom/nutra/app/feature/profile/**;->**(**)**
+HPLcom/nutra/app/feature/onboarding/**;->**(**)**

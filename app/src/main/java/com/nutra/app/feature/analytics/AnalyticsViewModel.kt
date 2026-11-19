@@ -1,6 +1,7 @@
 package com.nutra.app.feature.analytics
 
 import androidx.compose.runtime.Immutable
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nutra.app.core.datastore.UserPreferencesDataStore
@@ -19,6 +20,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
@@ -46,6 +48,7 @@ data class AnalyticsProfileSlice(
 @Immutable
 data class AnalyticsUiState(
     val isLoading: Boolean = true,
+    val todayIso: String = LocalDate.now().toString(),
     val selectedRange: AnalyticsRangeOption = AnalyticsRangeOption.DAYS_7,
     val dailyPoints: List<DailyAnalyticsPoint> = emptyList(),
     val averageCalories: Int = 0,
@@ -78,15 +81,23 @@ internal data class AnalyticsRangeSummary(
     val averageProteinGrams: Float,
     val averageCarbsGrams: Float,
     val averageFatGrams: Float,
+    val option: AnalyticsRangeOption = AnalyticsRangeOption.DAYS_7,
+    val endDateIso: String = "",
 )
 
 internal data class WeightRangeSummary(
     val pointsInRange: List<WeightTrendPoint>,
     val latestRecordedWeightKg: Float?,
     val hasAnyHistory: Boolean,
+    val option: AnalyticsRangeOption = AnalyticsRangeOption.DAYS_7,
+    val endDateIso: String = "",
 )
 
-internal fun summarizeAnalyticsRange(points: List<DailyAnalyticsPoint>): AnalyticsRangeSummary {
+internal fun summarizeAnalyticsRange(
+    points: List<DailyAnalyticsPoint>,
+    option: AnalyticsRangeOption = AnalyticsRangeOption.DAYS_7,
+    endDateIso: String = "",
+): AnalyticsRangeSummary {
     var calSum = 0
     var calCount = 0
     var waterSum = 0
@@ -95,7 +106,8 @@ internal fun summarizeAnalyticsRange(points: List<DailyAnalyticsPoint>): Analyti
     var carbsSum = 0.0
     var fatSum = 0.0
     var macroDayCount = 0
-    for (pt in points) {
+    for (i in points.indices) {
+        val pt = points[i]
         if (pt.calories > 0) {
             calSum += pt.calories
             calCount++
@@ -118,6 +130,8 @@ internal fun summarizeAnalyticsRange(points: List<DailyAnalyticsPoint>): Analyti
         averageProteinGrams = if (macroDayCount == 0) 0f else (proteinSum / macroDayCount).toFloat(),
         averageCarbsGrams = if (macroDayCount == 0) 0f else (carbsSum / macroDayCount).toFloat(),
         averageFatGrams = if (macroDayCount == 0) 0f else (fatSum / macroDayCount).toFloat(),
+        option = option,
+        endDateIso = endDateIso,
     )
 }
 
@@ -132,6 +146,8 @@ internal fun filterWeightTrendForRange(
         pointsInRange = allTrendPoints.filter { it.dateIso in startIso..endIso },
         latestRecordedWeightKg = allTrendPoints.lastOrNull()?.rawWeightKg,
         hasAnyHistory = allTrendPoints.isNotEmpty(),
+        option = option,
+        endDateIso = endIso,
     )
 }
 
@@ -147,13 +163,22 @@ private data class AnalyticsInteractionState(
 @OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class AnalyticsViewModel @Inject constructor(
+    private val savedStateHandle: SavedStateHandle,
     private val nutritionRepository: NutritionRepository,
     preferencesDataStore: UserPreferencesDataStore,
     private val weightTrendCalculator: WeightTrendCalculator,
 ) : ViewModel() {
 
+    private companion object {
+        const val KEY_SELECTED_RANGE = "analytics_selected_range"
+        val RANGE_BY_NAME: Map<String, AnalyticsRangeOption> = AnalyticsRangeOption.entries.associateBy { it.name }
+    }
+
     private val todayFlow = MutableStateFlow(LocalDate.now())
-    private val rangeFlow = MutableStateFlow(AnalyticsRangeOption.DAYS_7)
+    private val rangeFlow = MutableStateFlow(
+        savedStateHandle.get<String>(KEY_SELECTED_RANGE)?.let { RANGE_BY_NAME[it] }
+            ?: AnalyticsRangeOption.DAYS_7,
+    )
     private val scrubbedDayIndexFlow = MutableStateFlow<Int?>(null)
     private val scrubbedWaterIndexFlow = MutableStateFlow<Int?>(null)
     private val scrubbedWeightIndexFlow = MutableStateFlow<Int?>(null)
@@ -165,13 +190,15 @@ class AnalyticsViewModel @Inject constructor(
         option to end
     }.flatMapLatest { (option, end) ->
         val start = end.minusDays((option.days - 1).toLong())
+        val endIso = end.toString()
         nutritionRepository.observeAnalyticsRange(start, end)
-            .map(::summarizeAnalyticsRange)
+            .map { points -> summarizeAnalyticsRange(points, option = option, endDateIso = endIso) }
             .flowOn(Dispatchers.Default)
     }
 
     private val allWeightTrendPointsFlow = nutritionRepository.observeWeightEntries()
         .map { entries -> weightTrendCalculator.calculateTrend(entries) }
+        .distinctUntilChanged()
         .flowOn(Dispatchers.Default)
 
     private val weightRangeSummaryFlow = combine(
@@ -210,18 +237,22 @@ class AnalyticsViewModel @Inject constructor(
         }
         .distinctUntilChanged()
 
+    // Pair rangeSummary and weightRangeSummary atomically so rapid 7 -> 30 -> 14 switches never mix periods.
     val uiState: StateFlow<AnalyticsUiState> = combine(
-        rangeFlow,
         rangeSummaryFlow,
         weightRangeSummaryFlow,
         analyticsProfileFlow,
         interactionStateFlow,
-    ) { range, summary, weightSummary, profile, interaction ->
+    ) { summary, weightSummary, profile, interaction ->
+        if (summary.option != weightSummary.option || summary.endDateIso != weightSummary.endDateIso) {
+            return@combine null
+        }
         val points = summary.points
         val trendPoints = weightSummary.pointsInRange
         AnalyticsUiState(
             isLoading = false,
-            selectedRange = range,
+            todayIso = summary.endDateIso.ifBlank { todayFlow.value.toString() },
+            selectedRange = summary.option,
             dailyPoints = points,
             averageCalories = summary.averageCalories,
             averageWaterMl = summary.averageWaterMl,
@@ -239,10 +270,10 @@ class AnalyticsViewModel @Inject constructor(
             feedbackMessage = interaction.feedbackMessage,
             feedbackEventId = interaction.feedbackEventId,
         )
-    }.stateIn(
+    }.filterNotNull().stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(30_000),
-        initialValue = AnalyticsUiState(),
+        initialValue = AnalyticsUiState(selectedRange = rangeFlow.value),
     )
 
     fun refreshToday() {
@@ -253,7 +284,9 @@ class AnalyticsViewModel @Inject constructor(
     }
 
     fun selectRange(option: AnalyticsRangeOption) {
+        if (rangeFlow.value == option) return
         rangeFlow.value = option
+        savedStateHandle[KEY_SELECTED_RANGE] = option.name
         scrubbedDayIndexFlow.value = null
         scrubbedWaterIndexFlow.value = null
         scrubbedWeightIndexFlow.value = null

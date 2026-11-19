@@ -40,11 +40,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
@@ -59,7 +60,6 @@ import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -70,9 +70,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalAccessibilityManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -114,6 +116,12 @@ import java.time.LocalDate
 import java.time.format.TextStyle
 import kotlin.math.roundToInt
 
+private val MealCardTopShape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+private val MealCardBottomShape = RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp)
+private val WaterPillPressSpring = spring<Float>(dampingRatio = 0.78f, stiffness = 700f)
+private val EDIT_RAW_GRAM_PRESETS = listOf(50f, 100f, 150f, 200f)
+private val EDIT_MULT_PRESETS = listOf(0.5f, 1f, 1.5f, 2f)
+
 @Composable
 fun DashboardScreen(
     viewModel: DashboardViewModel,
@@ -130,6 +138,7 @@ fun DashboardScreen(
     }
     val haptic = LocalHapticFeedback.current
     val layoutDirection = LocalLayoutDirection.current
+    val accessibilityManager = LocalAccessibilityManager.current
     val listState = rememberLazyListState()
 
     LaunchedEffect(scrollToTopTrigger) {
@@ -140,10 +149,19 @@ fun DashboardScreen(
 
     LaunchedEffect(state.bannerEventId, state.lastDeletedItem, state.statusBannerMessage) {
         if (state.lastDeletedItem != null || state.statusBannerMessage != null) {
-            delay(4500)
+            val timeoutMs = accessibilityManager?.calculateRecommendedTimeoutMillis(
+                originalTimeoutMillis = 4500L,
+                containsIcons = false,
+                containsText = true,
+                containsControls = state.lastDeletedItem != null,
+            ) ?: 4500L
+            delay(timeoutMs)
             viewModel.dismissUndoBanner()
         }
     }
+
+    val meals = state.dailySummary.meals
+    val expandedMeals = state.expandedMeals
 
     Box(
         modifier = Modifier
@@ -162,10 +180,10 @@ fun DashboardScreen(
                 top = contentPadding.calculateTopPadding() + 28.dp,
                 bottom = contentPadding.calculateBottomPadding() + 16.dp,
             ),
-            verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.md),
+            verticalArrangement = Arrangement.Top,
         ) {
-            item(key = "header") {
-                Column(modifier = Modifier.padding(bottom = NutraTheme.spacing.sm)) {
+            item(key = "header", contentType = "header") {
+                Column(modifier = Modifier.padding(bottom = NutraTheme.spacing.xl)) {
                     DashboardHeader(
                         today = state.today,
                         selectedDate = state.selectedDate,
@@ -194,8 +212,8 @@ fun DashboardScreen(
                 }
             }
 
-            item(key = "hero_summary") {
-                Box(modifier = Modifier.padding(bottom = NutraTheme.spacing.sm)) {
+            item(key = "hero_summary", contentType = "hero_summary") {
+                Box(modifier = Modifier.padding(bottom = NutraTheme.spacing.xl)) {
                     HeroNutritionCard(
                         consumedCalories = state.dailySummary.consumedCalories,
                         targetCalories = state.dailySummary.goals.calories,
@@ -209,8 +227,8 @@ fun DashboardScreen(
                 }
             }
 
-            item(key = "water_card") {
-                Box(modifier = Modifier.padding(bottom = NutraTheme.spacing.sm)) {
+            item(key = "water_card", contentType = "water_card") {
+                Box(modifier = Modifier.padding(bottom = NutraTheme.spacing.xl)) {
                     WaterTrackerCard(
                         currentWaterMl = state.dailySummary.waterMl,
                         targetWaterMl = state.dailySummary.goals.waterMl,
@@ -219,30 +237,60 @@ fun DashboardScreen(
                 }
             }
 
-            item(key = "meals_header") {
-                NutraSectionHeader(title = "Öğünler")
+            item(key = "meals_header", contentType = "meals_header") {
+                Box(modifier = Modifier.padding(bottom = NutraTheme.spacing.md)) {
+                    NutraSectionHeader(title = "Öğünler")
+                }
             }
 
-            items(
-                items = state.dailySummary.meals,
-                key = { it.mealType.name },
-                contentType = { "meal_card" },
-            ) { mealSummary ->
-                MealCard(
-                    mealSummary = mealSummary,
-                    isExpanded = state.expandedMeals.contains(mealSummary.mealType),
-                    onToggleExpand = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        viewModel.toggleMealExpanded(mealSummary.mealType)
-                    },
-                    onAddFoodClick = { viewModel.openAddFoodModal(mealSummary.mealType) },
-                    onEditLogItem = viewModel::openEditLoggedItem,
-                    onDeleteLogItem = { item ->
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        viewModel.deleteLoggedItem(item)
-                    },
-                    modifier = Modifier.animateItem(),
-                )
+            // Flattened lazy meal cards: only visible meal log rows are composed & measured (O(viewport))
+            meals.forEachIndexed { mealIndex, mealSummary ->
+                val mealType = mealSummary.mealType
+                val hasItems = mealSummary.items.isNotEmpty()
+                val isExpanded = hasItems && expandedMeals.contains(mealType)
+                val isLastMeal = mealIndex == meals.lastIndex
+
+                item(
+                    key = "meal_header_${mealType.name}",
+                    contentType = "meal_header",
+                ) {
+                    MealCardHeaderRow(
+                        mealType = mealType,
+                        itemCount = mealSummary.items.size,
+                        totalCalories = mealSummary.totalCalories,
+                        isExpanded = isExpanded,
+                        addBottomGap = !isExpanded && !isLastMeal,
+                        onToggleExpand = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            viewModel.toggleMealExpanded(mealType)
+                        },
+                        onAddFoodClick = { viewModel.openAddFoodModal(mealType) },
+                        modifier = Modifier.animateItem(),
+                    )
+                }
+
+                if (isExpanded) {
+                    itemsIndexed(
+                        items = mealSummary.items,
+                        key = { _, item -> "meal_item_${item.id}" },
+                        contentType = { _, _ -> "meal_item" },
+                    ) { idx, item ->
+                        val isFirst = idx == 0
+                        val isLast = idx == mealSummary.items.lastIndex
+                        MealLogLazyRowContainer(
+                            item = item,
+                            isFirst = isFirst,
+                            isLast = isLast,
+                            addBottomCardGap = isLast && !isLastMeal,
+                            onEdit = viewModel::openEditLoggedItem,
+                            onDelete = { deleted ->
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                viewModel.deleteLoggedItem(deleted)
+                            },
+                            modifier = Modifier.animateItem(),
+                        )
+                    }
+                }
             }
         }
 
@@ -295,6 +343,10 @@ fun DashboardScreen(
         val context = LocalContext.current
         val loggingState by viewModel.loggingUiState.collectAsStateWithLifecycle()
         val searchQuery by viewModel.searchQueryState.collectAsStateWithLifecycle()
+        val onRunAiAnalysis = remember(viewModel) { { viewModel.analyzeWithAi(null) } }
+        val onAnalyzePhotoUri = remember(viewModel, context) {
+            { uri: android.net.Uri -> viewModel.analyzePhotoWithAi(context.contentResolver, uri) }
+        }
         AddFoodModalSheet(
             state = loggingState,
             searchQuery = searchQuery,
@@ -312,8 +364,8 @@ fun DashboardScreen(
             onConfirmLogFood = viewModel::logFoodWithPortion,
             onLogSmartCombo = viewModel::logSmartCombo,
             onAiPromptChange = viewModel::updateAiPromptText,
-            onRunAiAnalysis = { viewModel.analyzeWithAi(null) },
-            onAnalyzePhotoUri = { uri -> viewModel.analyzePhotoWithAi(context.contentResolver, uri) },
+            onRunAiAnalysis = onRunAiAnalysis,
+            onAnalyzePhotoUri = onAnalyzePhotoUri,
             onUpdateAiItemMultiplier = viewModel::updateAiItemMultiplier,
             onToggleAiItemIncluded = viewModel::toggleAiItemIncluded,
             onCommitAiItems = viewModel::commitAiAnalyzedItems,
@@ -595,78 +647,93 @@ private fun WeekDateStrip(
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 renderedWeekDays.forEach { day ->
-                    val isSelected = day == selectedDate
-                    val isDayToday = day == today
-                    val isFuture = day.isAfter(today)
-
-                    val circleBgState = animateColorAsState(
-                        targetValue = when {
-                            isSelected -> NutraTheme.colors.ink
-                            isDayToday -> NutraTheme.colors.accentSoft
-                            else -> Color.Transparent
-                        },
-                        animationSpec = tween(160),
-                        label = "dayCircleBg",
+                    WeekDayCell(
+                        day = day,
+                        isSelected = day == selectedDate,
+                        isDayToday = day == today,
+                        isFuture = day.isAfter(today),
+                        onSelectDate = onSelectDate,
+                        modifier = Modifier.weight(1f),
                     )
-                    val dayNumberColor by animateColorAsState(
-                        targetValue = when {
-                            isSelected -> NutraTheme.colors.onInk
-                            isDayToday -> NutraTheme.colors.onAccentSoft
-                            isFuture -> NutraTheme.colors.textTertiary
-                            else -> NutraTheme.colors.textPrimary
-                        },
-                        animationSpec = tween(160),
-                        label = "dayText",
-                    )
-
-                    val dayShort = remember(day) {
-                        NutraFormatters.capitalizeTr(
-                            day.dayOfWeek.getDisplayName(TextStyle.SHORT, NutraFormatters.TR_LOCALE)
-                                .trimEnd('.')
-                                .take(3),
-                        )
-                    }
-
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(NutraTheme.shapes.md)
-                            .selectable(
-                                selected = isSelected,
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = LocalIndication.current,
-                                role = Role.Tab,
-                            ) {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                onSelectDate(day)
-                            }
-                            .padding(vertical = 4.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Text(
-                            text = dayShort,
-                            style = NutraTheme.typography.caption,
-                            color = if (isSelected) NutraTheme.colors.textPrimary else NutraTheme.colors.textTertiary,
-                            maxLines = 1,
-                        )
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .drawBehind { drawRect(circleBgState.value) },
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                text = "${day.dayOfMonth}",
-                                style = NutraTheme.typography.titleSmall,
-                                color = dayNumberColor,
-                                maxLines = 1,
-                            )
-                        }
-                    }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun WeekDayCell(
+    day: LocalDate,
+    isSelected: Boolean,
+    isDayToday: Boolean,
+    isFuture: Boolean,
+    onSelectDate: (LocalDate) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val haptic = LocalHapticFeedback.current
+    val colors = NutraTheme.colors
+    val circleBgState = animateColorAsState(
+        targetValue = when {
+            isSelected -> colors.ink
+            isDayToday -> colors.accentSoft
+            else -> Color.Transparent
+        },
+        animationSpec = tween(160),
+        label = "dayCircleBg",
+    )
+    val dayNumberColor by animateColorAsState(
+        targetValue = when {
+            isSelected -> colors.onInk
+            isDayToday -> colors.onAccentSoft
+            isFuture -> colors.textTertiary
+            else -> colors.textPrimary
+        },
+        animationSpec = tween(160),
+        label = "dayText",
+    )
+    val dayShort = remember(day) {
+        NutraFormatters.capitalizeTr(
+            day.dayOfWeek.getDisplayName(TextStyle.SHORT, NutraFormatters.TR_LOCALE)
+                .trimEnd('.')
+                .take(3),
+        )
+    }
+
+    Column(
+        modifier = modifier
+            .clip(NutraTheme.shapes.md)
+            .selectable(
+                selected = isSelected,
+                interactionSource = remember { MutableInteractionSource() },
+                indication = LocalIndication.current,
+                role = Role.Tab,
+            ) {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onSelectDate(day)
+            }
+            .padding(vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            text = dayShort,
+            style = NutraTheme.typography.caption,
+            color = if (isSelected) colors.textPrimary else colors.textTertiary,
+            maxLines = 1,
+        )
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .drawBehind { drawRect(circleBgState.value) },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = "${day.dayOfMonth}",
+                style = NutraTheme.typography.titleSmall,
+                color = dayNumberColor,
+                maxLines = 1,
+            )
         }
     }
 }
@@ -685,17 +752,7 @@ private fun HeroNutritionCard(
     val safeTarget = targetCalories.coerceAtLeast(1)
     val isOver = consumedCalories > safeTarget
     val deltaCalories = if (isOver) consumedCalories - safeTarget else safeTarget - consumedCalories
-    val animatedConsumed by animateIntAsState(
-        targetValue = consumedCalories,
-        animationSpec = tween(240),
-        label = "heroCalories",
-    )
-    val animatedDelta by animateIntAsState(
-        targetValue = deltaCalories,
-        animationSpec = tween(240),
-        label = "heroDelta",
-    )
-    val completionPercent = ((animatedConsumed.toFloat() / safeTarget) * 100f).roundToInt()
+    val actualCompletionPercent = ((consumedCalories.toFloat() / safeTarget) * 100f).roundToInt()
     val progress = consumedCalories.toFloat() / safeTarget
 
     NutraCard(
@@ -720,10 +777,8 @@ private fun HeroNutritionCard(
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    Text(
-                        text = NutraFormatters.formatInt(animatedConsumed),
-                        style = NutraTheme.typography.numberHero,
-                        color = NutraTheme.colors.textPrimary,
+                    AnimatedHeroCalorieText(
+                        consumedCalories = consumedCalories,
                         modifier = Modifier.alignByBaseline(),
                     )
                     Text(
@@ -741,7 +796,7 @@ private fun HeroNutritionCard(
                 height = 8.dp,
                 overflowProgress = if (isOver) (progress - 1f).coerceAtLeast(0.05f) else 0f,
                 overflowColor = NutraTheme.colors.warning,
-                contentDescription = "Günlük kalori $consumedCalories / $safeTarget kcal, %$completionPercent",
+                contentDescription = "Günlük kalori $consumedCalories / $safeTarget kcal, %$actualCompletionPercent",
             )
 
             Row(
@@ -752,10 +807,9 @@ private fun HeroNutritionCard(
                     modifier = Modifier.weight(1f),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Text(
-                        text = "${NutraFormatters.formatInt(animatedDelta)} kcal",
-                        style = NutraTheme.typography.numberSmall,
-                        color = if (isOver) NutraTheme.colors.warningText else NutraTheme.colors.textPrimary,
+                    AnimatedHeroDeltaText(
+                        deltaCalories = deltaCalories,
+                        isOver = isOver,
                     )
                     Text(
                         text = if (isOver) "Hedef fazlası" else "Kalan",
@@ -775,10 +829,9 @@ private fun HeroNutritionCard(
                     modifier = Modifier.weight(1f),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Text(
-                        text = "%$completionPercent",
-                        style = NutraTheme.typography.numberSmall,
-                        color = NutraTheme.colors.textPrimary,
+                    AnimatedHeroPercentText(
+                        consumedCalories = consumedCalories,
+                        safeTarget = safeTarget,
                     )
                     Text(
                         text = "Tamamlandı",
@@ -821,19 +874,67 @@ private fun HeroNutritionCard(
 }
 
 @Composable
+private fun AnimatedHeroCalorieText(
+    consumedCalories: Int,
+    modifier: Modifier = Modifier,
+) {
+    val animatedConsumed by animateIntAsState(
+        targetValue = consumedCalories,
+        animationSpec = tween(240),
+        label = "heroCalories",
+    )
+    Text(
+        text = NutraFormatters.formatInt(animatedConsumed),
+        style = NutraTheme.typography.numberHero,
+        color = NutraTheme.colors.textPrimary,
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun AnimatedHeroDeltaText(
+    deltaCalories: Int,
+    isOver: Boolean,
+) {
+    val animatedDelta by animateIntAsState(
+        targetValue = deltaCalories,
+        animationSpec = tween(240),
+        label = "heroDelta",
+    )
+    Text(
+        text = "${NutraFormatters.formatInt(animatedDelta)} kcal",
+        style = NutraTheme.typography.numberSmall,
+        color = if (isOver) NutraTheme.colors.warningText else NutraTheme.colors.textPrimary,
+    )
+}
+
+@Composable
+private fun AnimatedHeroPercentText(
+    consumedCalories: Int,
+    safeTarget: Int,
+) {
+    val animatedConsumed by animateIntAsState(
+        targetValue = consumedCalories,
+        animationSpec = tween(240),
+        label = "heroPercent",
+    )
+    val completionPercent = ((animatedConsumed.toFloat() / safeTarget) * 100f).roundToInt()
+    Text(
+        text = "%$completionPercent",
+        style = NutraTheme.typography.numberSmall,
+        color = NutraTheme.colors.textPrimary,
+    )
+}
+
+@Composable
 private fun WaterTrackerCard(
     currentWaterMl: Int,
     targetWaterMl: Int,
     onAddWater: (Int) -> Unit,
 ) {
     val safeTarget = targetWaterMl.coerceAtLeast(1)
-    val animatedWater by animateIntAsState(
-        targetValue = currentWaterMl,
-        animationSpec = tween(220),
-        label = "waterMl",
-    )
     val fraction = (currentWaterMl.toFloat() / safeTarget.toFloat()).coerceIn(0f, 1f)
-    val actualPercent = ((animatedWater.toFloat() / safeTarget.toFloat()) * 100f).roundToInt()
+    val targetPercent = ((currentWaterMl.toFloat() / safeTarget.toFloat()) * 100f).roundToInt()
     val isGoalReached = currentWaterMl >= safeTarget
 
     NutraCard(
@@ -857,18 +958,16 @@ private fun WaterTrackerCard(
                     style = NutraTheme.typography.titleSmall,
                     color = NutraTheme.colors.textPrimary,
                 )
-                Text(
-                    text = "%$actualPercent tamamlandı",
-                    style = NutraTheme.typography.caption,
-                    color = if (isGoalReached) NutraTheme.colors.accent else NutraTheme.colors.textTertiary,
+                AnimatedWaterPercentText(
+                    currentWaterMl = currentWaterMl,
+                    safeTarget = safeTarget,
+                    isGoalReached = isGoalReached,
                 )
             }
 
             Row {
-                Text(
-                    text = NutraFormatters.formatInt(animatedWater),
-                    style = NutraTheme.typography.numberMedium,
-                    color = NutraTheme.colors.textPrimary,
+                AnimatedWaterAmountText(
+                    currentWaterMl = currentWaterMl,
                     modifier = Modifier.alignByBaseline(),
                 )
                 Text(
@@ -884,7 +983,7 @@ private fun WaterTrackerCard(
             progress = fraction,
             color = NutraTheme.colors.water,
             height = 6.dp,
-            contentDescription = "Su takibi $currentWaterMl / $safeTarget ml, %$actualPercent",
+            contentDescription = "Su takibi $currentWaterMl / $safeTarget ml, %$targetPercent",
         )
 
         Row(
@@ -919,6 +1018,43 @@ private fun WaterTrackerCard(
 }
 
 @Composable
+private fun AnimatedWaterAmountText(
+    currentWaterMl: Int,
+    modifier: Modifier = Modifier,
+) {
+    val animatedWater by animateIntAsState(
+        targetValue = currentWaterMl,
+        animationSpec = tween(220),
+        label = "waterMl",
+    )
+    Text(
+        text = NutraFormatters.formatInt(animatedWater),
+        style = NutraTheme.typography.numberMedium,
+        color = NutraTheme.colors.textPrimary,
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun AnimatedWaterPercentText(
+    currentWaterMl: Int,
+    safeTarget: Int,
+    isGoalReached: Boolean,
+) {
+    val animatedWater by animateIntAsState(
+        targetValue = currentWaterMl,
+        animationSpec = tween(220),
+        label = "waterPercent",
+    )
+    val actualPercent = ((animatedWater.toFloat() / safeTarget.toFloat()) * 100f).roundToInt()
+    Text(
+        text = "%$actualPercent tamamlandı",
+        style = NutraTheme.typography.caption,
+        color = if (isGoalReached) NutraTheme.colors.accent else NutraTheme.colors.textTertiary,
+    )
+}
+
+@Composable
 private fun WaterQuickPill(
     amountText: String,
     onClick: () -> Unit,
@@ -929,7 +1065,7 @@ private fun WaterQuickPill(
     val isPressed by interactionSource.collectIsPressedAsState()
     val pressScaleState = animateFloatAsState(
         targetValue = if (isPressed) 0.95f else 1f,
-        animationSpec = spring(dampingRatio = 0.78f, stiffness = 700f),
+        animationSpec = WaterPillPressSpring,
         label = "waterPillScale",
     )
     Box(
@@ -964,18 +1100,19 @@ private fun WaterQuickPill(
 }
 
 @Composable
-private fun MealCard(
-    mealSummary: MealSummary,
+private fun MealCardHeaderRow(
+    mealType: MealType,
+    itemCount: Int,
+    totalCalories: Int,
     isExpanded: Boolean,
+    addBottomGap: Boolean,
     onToggleExpand: () -> Unit,
     onAddFoodClick: () -> Unit,
-    onEditLogItem: (MealLogItem) -> Unit,
-    onDeleteLogItem: (MealLogItem) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val haptic = LocalHapticFeedback.current
-    val hasItems = mealSummary.items.isNotEmpty()
-    val mealIcon = when (mealSummary.mealType) {
+    val hasItems = itemCount > 0
+    val mealIcon = when (mealType) {
         MealType.BREAKFAST -> NutraIcons.WbSunny
         MealType.LUNCH -> NutraIcons.Restaurant
         MealType.DINNER -> NutraIcons.DinnerDining
@@ -986,10 +1123,20 @@ private fun MealCard(
         animationSpec = tween(200),
         label = "mealChevron",
     )
+    val cardShape = if (isExpanded) MealCardTopShape else NutraTheme.shapes.lg
 
-    NutraCard(
-        modifier = modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(horizontal = NutraTheme.spacing.card, vertical = NutraTheme.spacing.lg),
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .then(if (addBottomGap) Modifier.padding(bottom = NutraTheme.spacing.md) else Modifier)
+            .clip(cardShape)
+            .background(NutraTheme.colors.surface)
+            .padding(
+                start = NutraTheme.spacing.card,
+                end = NutraTheme.spacing.card,
+                top = NutraTheme.spacing.lg,
+                bottom = if (isExpanded) 14.dp else NutraTheme.spacing.lg,
+            ),
     ) {
         Row(
             modifier = Modifier
@@ -1032,7 +1179,7 @@ private fun MealCard(
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         Text(
-                            text = mealSummary.mealType.title,
+                            text = mealType.title,
                             style = NutraTheme.typography.titleSmall,
                             color = NutraTheme.colors.textPrimary,
                             maxLines = 1,
@@ -1052,7 +1199,7 @@ private fun MealCard(
 
                     Text(
                         text = if (hasItems) {
-                            "${mealSummary.items.size} besin"
+                            "$itemCount besin"
                         } else {
                             "Henüz eklenmedi"
                         },
@@ -1070,14 +1217,14 @@ private fun MealCard(
             ) {
                 if (hasItems) {
                     Text(
-                        text = "${NutraFormatters.formatInt(mealSummary.totalCalories)} kcal",
+                        text = "${NutraFormatters.formatInt(totalCalories)} kcal",
                         style = NutraTheme.typography.numberSmall,
                         color = NutraTheme.colors.textPrimary,
                     )
                 }
                 NutraIconButton(
                     icon = Icons.Rounded.Add,
-                    contentDescription = "${mealSummary.mealType.title} besin ekle",
+                    contentDescription = "${mealType.title} besin ekle",
                     onClick = onAddFoodClick,
                     size = 44.dp,
                     iconSize = 20.dp,
@@ -1086,103 +1233,128 @@ private fun MealCard(
                 )
             }
         }
+    }
+}
 
-        AnimatedVisibility(
-            visible = hasItems && isExpanded,
-            enter = expandVertically(tween(220)) + fadeIn(tween(180)),
-            exit = shrinkVertically(tween(180)) + fadeOut(tween(120)),
-        ) {
-            Column(
-                modifier = Modifier.padding(top = 14.dp),
-            ) {
-                NutraDivider()
-                mealSummary.items.forEachIndexed { idx, item ->
-                    key(item.id) {
-                        val dismissState = rememberSwipeToDismissBoxState()
-                        var dismissDispatched by remember(item.id, item.timestampMillis) { mutableStateOf(false) }
+@Composable
+private fun MealLogLazyRowContainer(
+    item: MealLogItem,
+    isFirst: Boolean,
+    isLast: Boolean,
+    addBottomCardGap: Boolean,
+    onEdit: (MealLogItem) -> Unit,
+    onDelete: (MealLogItem) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val dismissState = rememberSwipeToDismissBoxState()
+    var dismissDispatched by remember(item.id, item.timestampMillis) { mutableStateOf(false) }
+    val macroSummary = remember(
+        item.id,
+        item.formattedQuantity,
+        item.proteinGrams,
+        item.carbsGrams,
+        item.fatGrams,
+    ) {
+        "${item.formattedQuantity} · P ${item.proteinGrams.roundToInt()}g · K ${item.carbsGrams.roundToInt()}g · Y ${item.fatGrams.roundToInt()}g"
+    }
+    val caloriesText = remember(item.calories) {
+        "${NutraFormatters.formatInt(item.calories)} kcal"
+    }
+    val containerShape = if (isLast) MealCardBottomShape else RectangleShape
 
-                        SwipeToDismissBox(
-                            state = dismissState,
-                            enableDismissFromStartToEnd = false,
-                            onDismiss = { value ->
-                                if (value == SwipeToDismissBoxValue.EndToStart && !dismissDispatched) {
-                                    dismissDispatched = true
-                                    onDeleteLogItem(item)
-                                }
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .then(if (addBottomCardGap) Modifier.padding(bottom = NutraTheme.spacing.md) else Modifier)
+            .clip(containerShape)
+            .background(NutraTheme.colors.surface)
+            .padding(
+                start = NutraTheme.spacing.card,
+                end = NutraTheme.spacing.card,
+                bottom = if (isLast) NutraTheme.spacing.lg else 0.dp,
+            ),
+    ) {
+        if (isFirst) {
+            NutraDivider()
+        }
+        SwipeToDismissBox(
+            state = dismissState,
+            enableDismissFromStartToEnd = false,
+            onDismiss = { value ->
+                if (value == SwipeToDismissBoxValue.EndToStart && !dismissDispatched) {
+                    dismissDispatched = true
+                    onDelete(item)
+                }
+            },
+            backgroundContent = {
+                val isSwipingToDelete =
+                    dismissState.dismissDirection == SwipeToDismissBoxValue.EndToStart ||
+                        dismissState.targetValue == SwipeToDismissBoxValue.EndToStart
+                if (isSwipingToDelete) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(NutraTheme.shapes.sm)
+                            .background(NutraTheme.colors.dangerSoft)
+                            .padding(horizontal = 16.dp),
+                        contentAlignment = Alignment.CenterEnd,
+                    ) {
+                        Icon(
+                            imageVector = NutraIcons.DeleteOutline,
+                            contentDescription = "Sil",
+                            tint = NutraTheme.colors.dangerText,
+                            modifier = Modifier.graphicsLayer {
+                                val p = dismissState.progress.coerceIn(0f, 1f)
+                                val scale = 0.8f + (0.3f * p)
+                                scaleX = scale
+                                scaleY = scale
+                                alpha = 0.45f + (0.55f * p)
                             },
-                            backgroundContent = {
-                                val isSwipingToDelete =
-                                    dismissState.dismissDirection == SwipeToDismissBoxValue.EndToStart ||
-                                        dismissState.targetValue == SwipeToDismissBoxValue.EndToStart
-                                if (isSwipingToDelete) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .clip(NutraTheme.shapes.sm)
-                                            .background(NutraTheme.colors.dangerSoft)
-                                            .padding(horizontal = 16.dp),
-                                        contentAlignment = Alignment.CenterEnd,
-                                    ) {
-                                        Icon(
-                                            imageVector = NutraIcons.DeleteOutline,
-                                            contentDescription = "Sil",
-                                            tint = NutraTheme.colors.dangerText,
-                                            modifier = Modifier.graphicsLayer {
-                                                val p = dismissState.progress.coerceIn(0f, 1f)
-                                                val scale = 0.8f + (0.3f * p)
-                                                scaleX = scale
-                                                scaleY = scale
-                                                alpha = 0.45f + (0.55f * p)
-                                            },
-                                        )
-                                    }
-                                }
-                            },
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(NutraTheme.shapes.sm)
-                                    .background(NutraTheme.colors.surface)
-                                    .clickable(role = Role.Button) { onEditLogItem(item) }
-                                    .padding(horizontal = 4.dp, vertical = 12.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Column(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .padding(end = 12.dp),
-                                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                                ) {
-                                    Text(
-                                        text = item.foodName,
-                                        style = NutraTheme.typography.titleSmall,
-                                        color = NutraTheme.colors.textPrimary,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                    Text(
-                                        text = "${item.formattedQuantity} · P ${item.proteinGrams.roundToInt()}g · K ${item.carbsGrams.roundToInt()}g · Y ${item.fatGrams.roundToInt()}g",
-                                        style = NutraTheme.typography.caption,
-                                        color = NutraTheme.colors.textSecondary,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
-                                Text(
-                                    text = "${NutraFormatters.formatInt(item.calories)} kcal",
-                                    style = NutraTheme.typography.numberSmall,
-                                    color = NutraTheme.colors.textPrimary,
-                                )
-                            }
-                        }
-                        if (idx < mealSummary.items.lastIndex) {
-                            NutraDivider()
-                        }
+                        )
                     }
                 }
+            },
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(NutraTheme.shapes.sm)
+                    .background(NutraTheme.colors.surface)
+                    .clickable(role = Role.Button) { onEdit(item) }
+                    .padding(horizontal = 4.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Text(
+                        text = item.foodName,
+                        style = NutraTheme.typography.titleSmall,
+                        color = NutraTheme.colors.textPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = macroSummary,
+                        style = NutraTheme.typography.caption,
+                        color = NutraTheme.colors.textSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Text(
+                    text = caloriesText,
+                    style = NutraTheme.typography.numberSmall,
+                    color = NutraTheme.colors.textPrimary,
+                )
             }
+        }
+        if (!isLast) {
+            NutraDivider()
         }
     }
 }
@@ -1223,7 +1395,7 @@ private fun EditLoggedFoodPortionDialog(
     } else {
         "${NutraFormatters.formatMultiplier(multiplier)}x"
     }
-    val presets = if (isRawGramMode) listOf(50f, 100f, 150f, 200f) else listOf(0.5f, 1f, 1.5f, 2f)
+    val presets = if (isRawGramMode) EDIT_RAW_GRAM_PRESETS else EDIT_MULT_PRESETS
 
     NutraDialog(
         onDismissRequest = onDismiss,

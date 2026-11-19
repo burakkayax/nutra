@@ -1,6 +1,7 @@
 package com.nutra.app.feature.onboarding
 
 import androidx.compose.runtime.Immutable
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nutra.app.core.datastore.UserPreferencesDataStore
@@ -41,16 +42,25 @@ data class OnboardingUiState(
 
 @HiltViewModel
 class OnboardingViewModel @Inject constructor(
+    private val savedStateHandle: SavedStateHandle,
     private val preferencesDataStore: UserPreferencesDataStore,
     private val nutritionRepository: NutritionRepository,
     private val calculatorUseCase: NutritionCalculatorUseCase,
 ) : ViewModel() {
 
+    private companion object {
+        const val KEY_STEP_INDEX = "onboarding_step_index"
+    }
+
     private val onboardingGoalBounds = MacroGoalBounds()
 
     private var calorieScalingBaseline: MacroGoals? = null
 
-    private val _uiState = MutableStateFlow(OnboardingUiState())
+    private val _uiState = MutableStateFlow(
+        OnboardingUiState(
+            stepIndex = (savedStateHandle.get<Int>(KEY_STEP_INDEX) ?: 0).coerceIn(0, 2),
+        ),
+    )
     val uiState: StateFlow<OnboardingUiState> = _uiState.asStateFlow()
 
     init {
@@ -106,11 +116,19 @@ class OnboardingViewModel @Inject constructor(
     }
 
     fun nextStep() {
-        _uiState.update { it.copy(stepIndex = (it.stepIndex + 1).coerceAtMost(2)) }
+        _uiState.update { state ->
+            val next = (state.stepIndex + 1).coerceAtMost(2)
+            savedStateHandle[KEY_STEP_INDEX] = next
+            state.copy(stepIndex = next)
+        }
     }
 
     fun previousStep() {
-        _uiState.update { it.copy(stepIndex = (it.stepIndex - 1).coerceAtLeast(0)) }
+        _uiState.update { state ->
+            val prev = (state.stepIndex - 1).coerceAtLeast(0)
+            savedStateHandle[KEY_STEP_INDEX] = prev
+            state.copy(stepIndex = prev)
+        }
     }
 
     fun adjustCustomCalories(delta: Int) = setCustomCalories(_uiState.value.customGoals.calories + delta)
@@ -182,7 +200,11 @@ class OnboardingViewModel @Inject constructor(
         _uiState.update { it.copy(isCompleting = true) }
         viewModelScope.launch {
             try {
-                nutritionRepository.logWeight(LocalDate.now().toString(), state.currentWeightKg)
+                nutritionRepository.logWeight(
+                    dateIso = LocalDate.now().toString(),
+                    weightKg = state.currentWeightKg,
+                    syncProfileWeight = false,
+                )
                 val profile = UserProfile(
                     sex = state.sex,
                     age = state.age,

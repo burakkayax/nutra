@@ -120,6 +120,14 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
+private val CalorieValueProvider: (DailyAnalyticsPoint) -> Int = { it.calories }
+private val WaterValueProvider: (DailyAnalyticsPoint) -> Int = { it.waterMl }
+private val WEIGHT_QUICK_DELTAS = listOf(-1.0f, -0.5f, 0.5f, 1.0f)
+private val WeightPillPressSpring = spring<Float>(dampingRatio = 0.78f, stiffness = 700f)
+private val BarTargetDashEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f))
+private val WeightTargetDashEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f))
+private val WeightCursorDashEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f))
+
 @Composable
 fun AnalyticsScreen(
     viewModel: AnalyticsViewModel,
@@ -136,6 +144,8 @@ fun AnalyticsScreen(
     val listState = rememberLazyListState()
     var lastAnimatedCalorieRange by rememberSaveable { mutableStateOf<AnalyticsRangeOption?>(null) }
     var lastAnimatedWaterRange by rememberSaveable { mutableStateOf<AnalyticsRangeOption?>(null) }
+    val onRevealCalorieRange = remember { { range: AnalyticsRangeOption -> lastAnimatedCalorieRange = range } }
+    val onRevealWaterRange = remember { { range: AnalyticsRangeOption -> lastAnimatedWaterRange = range } }
 
     LaunchedEffect(scrollToTopTrigger) {
         if (scrollToTopTrigger > 0) {
@@ -201,12 +211,13 @@ fun AnalyticsScreen(
                         item(key = "calorie_chart") {
                             HapticScrubbingCalorieChartCard(
                                 points = uiState.dailyPoints,
+                                todayIso = uiState.todayIso,
                                 scrubbedIndex = uiState.scrubbedDayIndex,
                                 targetCalories = uiState.profile.goals.calories,
                                 averageCalories = uiState.averageCalories,
                                 selectedRange = uiState.selectedRange,
                                 lastAnimatedRange = lastAnimatedCalorieRange,
-                                onRevealRangeAnimated = { lastAnimatedCalorieRange = it },
+                                onRevealRangeAnimated = onRevealCalorieRange,
                                 onScrub = viewModel::updateScrubbedDayIndex,
                             )
                         }
@@ -223,6 +234,7 @@ fun AnalyticsScreen(
                         item(key = "weight_trend") {
                             WeightTrendBezierCard(
                                 points = uiState.weightTrendPoints,
+                                todayIso = uiState.todayIso,
                                 hasAnyWeightHistory = uiState.hasAnyWeightHistory,
                                 selectedRange = uiState.selectedRange,
                                 scrubbedIndex = uiState.scrubbedWeightIndex,
@@ -235,12 +247,13 @@ fun AnalyticsScreen(
                         item(key = "water_chart") {
                             HapticScrubbingWaterChartCard(
                                 points = uiState.dailyPoints,
+                                todayIso = uiState.todayIso,
                                 scrubbedIndex = uiState.scrubbedWaterIndex,
                                 targetWaterMl = uiState.profile.goals.waterMl,
                                 averageWaterMl = uiState.averageWaterMl,
                                 selectedRange = uiState.selectedRange,
                                 lastAnimatedRange = lastAnimatedWaterRange,
-                                onRevealRangeAnimated = { lastAnimatedWaterRange = it },
+                                onRevealRangeAnimated = onRevealWaterRange,
                                 onScrub = viewModel::updateScrubbedWaterIndex,
                             )
                         }
@@ -345,6 +358,7 @@ private fun AnalyticsLoadingSkeleton(
 @Composable
 private fun HapticScrubbingCalorieChartCard(
     points: List<DailyAnalyticsPoint>,
+    todayIso: String,
     scrubbedIndex: Int?,
     targetCalories: Int,
     averageCalories: Int,
@@ -356,9 +370,18 @@ private fun HapticScrubbingCalorieChartCard(
     val colors = NutraTheme.colors
     val hasAnyCalories = remember(points) { points.any { it.calories > 0 } }
     val scrubbedPoint = scrubbedIndex?.let { points.getOrNull(it) }
-    val scrubbedDateLabel = scrubbedPoint?.let { NutraFormatters.formatShortDate(it.dateIso) }
+    val scrubbedDateLabel = scrubbedPoint?.let { NutraFormatters.formatShortDate(it.dateIso, todayIso) }
     val displayedCalories = scrubbedPoint?.calories ?: averageCalories
     val displayedTargetCalories = scrubbedPoint?.targetCalories ?: targetCalories
+    val barColorProvider = remember(colors.surfaceMuted, colors.warning, colors.accent) {
+        { pt: DailyAnalyticsPoint ->
+            when {
+                pt.calories == 0 -> colors.surfaceMuted
+                pt.calories > pt.targetCalories -> colors.warning
+                else -> colors.accent
+            }
+        }
+    }
 
     NutraCard {
         Row(
@@ -425,19 +448,14 @@ private fun HapticScrubbingCalorieChartCard(
 
         HapticScrubbingBarChart(
             points = points,
+            todayIso = todayIso,
             scrubbedIndex = scrubbedIndex,
             activePoint = scrubbedPoint,
-            valueProvider = { it.calories },
+            valueProvider = CalorieValueProvider,
             targetValue = targetCalories,
             targetLineLabel = NutraFormatters.formatInt(targetCalories),
             maxChartValue = maxChartCalories,
-            barColorProvider = { pt ->
-                when {
-                    pt.calories == 0 -> colors.surfaceMuted
-                    pt.calories > pt.targetCalories -> colors.warning
-                    else -> colors.accent
-                }
-            },
+            barColorProvider = barColorProvider,
             selectedRange = selectedRange,
             lastAnimatedRange = lastAnimatedRange,
             onRevealRangeAnimated = onRevealRangeAnimated,
@@ -463,6 +481,7 @@ private fun HapticScrubbingCalorieChartCard(
 @Composable
 private fun HapticScrubbingWaterChartCard(
     points: List<DailyAnalyticsPoint>,
+    todayIso: String,
     scrubbedIndex: Int?,
     targetWaterMl: Int,
     averageWaterMl: Int,
@@ -474,8 +493,13 @@ private fun HapticScrubbingWaterChartCard(
     val colors = NutraTheme.colors
     val hasAnyWater = remember(points) { points.any { it.waterMl > 0 } }
     val scrubbedPoint = scrubbedIndex?.let { points.getOrNull(it) }
-    val scrubbedDateLabel = scrubbedPoint?.let { NutraFormatters.formatShortDate(it.dateIso) }
+    val scrubbedDateLabel = scrubbedPoint?.let { NutraFormatters.formatShortDate(it.dateIso, todayIso) }
     val displayedWaterMl = scrubbedPoint?.waterMl ?: averageWaterMl
+    val barColorProvider = remember(colors.surfaceMuted, colors.water) {
+        { pt: DailyAnalyticsPoint ->
+            if (pt.waterMl == 0) colors.surfaceMuted else colors.water
+        }
+    }
 
     NutraCard {
         Row(
@@ -542,15 +566,14 @@ private fun HapticScrubbingWaterChartCard(
 
         HapticScrubbingBarChart(
             points = points,
+            todayIso = todayIso,
             scrubbedIndex = scrubbedIndex,
             activePoint = scrubbedPoint,
-            valueProvider = { it.waterMl },
+            valueProvider = WaterValueProvider,
             targetValue = targetWaterMl,
             targetLineLabel = NutraFormatters.formatWaterLitres(targetWaterMl),
             maxChartValue = maxChartWater,
-            barColorProvider = { pt ->
-                if (pt.waterMl == 0) colors.surfaceMuted else colors.water
-            },
+            barColorProvider = barColorProvider,
             selectedRange = selectedRange,
             lastAnimatedRange = lastAnimatedRange,
             onRevealRangeAnimated = onRevealRangeAnimated,
@@ -575,6 +598,7 @@ private fun HapticScrubbingWaterChartCard(
 @Composable
 private fun HapticScrubbingBarChart(
     points: List<DailyAnalyticsPoint>,
+    todayIso: String,
     scrubbedIndex: Int?,
     activePoint: DailyAnalyticsPoint?,
     valueProvider: (DailyAnalyticsPoint) -> Int,
@@ -604,20 +628,27 @@ private fun HapticScrubbingBarChart(
         }
     }
 
-    BarChartCanvas(
-        points = points,
-        scrubbedIndexState = currentScrubState,
-        barGrowthState = barGrowth.asState(),
-        valueProvider = valueProvider,
-        targetValue = targetValue,
-        targetLineLabel = targetLineLabel,
-        maxChartValue = maxChartValue,
-        barColorProvider = barColorProvider,
-        selectedRange = selectedRange,
-        colors = colors,
-        accessibilityLabel = chartAccessibilityLabel,
-        onScrub = onScrub,
-    )
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 20.dp)
+            .height(156.dp)
+            .semantics { contentDescription = chartAccessibilityLabel },
+    ) {
+        BarChartCanvas(
+            points = points,
+            scrubbedIndexState = currentScrubState,
+            barGrowthState = barGrowth.asState(),
+            valueProvider = valueProvider,
+            targetValue = targetValue,
+            targetLineLabel = targetLineLabel,
+            maxChartValue = maxChartValue,
+            barColorProvider = barColorProvider,
+            selectedRange = selectedRange,
+            colors = colors,
+            onScrub = onScrub,
+        )
+    }
 
     // X-axis date strip
     AnimatedContent(
@@ -644,13 +675,13 @@ private fun HapticScrubbingBarChart(
                 }
             } else {
                 Text(
-                    text = NutraFormatters.formatShortDate(points.firstOrNull()?.dateIso),
+                    text = NutraFormatters.formatShortDate(points.firstOrNull()?.dateIso, todayIso),
                     style = NutraTheme.typography.caption,
                     color = colors.textTertiary,
                 )
                 if (scrubbedIndex != null && activePoint != null) {
                     Text(
-                        text = NutraFormatters.formatShortDate(activePoint.dateIso),
+                        text = NutraFormatters.formatShortDate(activePoint.dateIso, todayIso),
                         style = NutraTheme.typography.labelSmall,
                         color = colors.textPrimary,
                     )
@@ -662,7 +693,7 @@ private fun HapticScrubbingBarChart(
                     )
                 }
                 Text(
-                    text = NutraFormatters.formatShortDate(points.lastOrNull()?.dateIso),
+                    text = NutraFormatters.formatShortDate(points.lastOrNull()?.dateIso, todayIso),
                     style = NutraTheme.typography.caption,
                     color = colors.textTertiary,
                 )
@@ -676,7 +707,7 @@ private fun resolveBarIndex(touchX: Float, widthPx: Int, count: Int): Int =
 
 private fun computeWeightXFractions(points: List<WeightTrendPoint>): FloatArray {
     val count = points.size
-    if (count <= 1) return FloatArray(count) { 0f }
+    if (count <= 1) return FloatArray(count)
     val dates = points.map { runCatching { LocalDate.parse(it.dateIso) }.getOrNull() }
     val firstDate = dates.firstOrNull()
     val lastDate = dates.lastOrNull()
@@ -695,23 +726,40 @@ private fun computeWeightXFractions(points: List<WeightTrendPoint>): FloatArray 
     }
 }
 
-private fun resolveNearestXIndex(
+internal fun resolveNearestXIndex(
     touchX: Float,
     widthPx: Int,
     padXPx: Float,
     xFractions: FloatArray,
 ): Int {
-    if (xFractions.isEmpty()) return 0
+    val size = xFractions.size
+    if (size <= 1) return 0
     val usableWidth = (widthPx - padXPx * 2f).coerceAtLeast(1f)
-    var bestIdx = 0
-    var bestDist = Float.MAX_VALUE
-    for (i in xFractions.indices) {
-        val x = padXPx + usableWidth * xFractions[i]
-        val d = abs(touchX - x)
-        if (d < bestDist) {
-            bestDist = d
-            bestIdx = i
+    val targetFraction = (touchX - padXPx) / usableWidth
+    if (targetFraction <= xFractions[0]) return 0
+    if (targetFraction >= xFractions[size - 1]) {
+        // Match first occurrence if duplicate max fractions exist
+        var idx = size - 1
+        while (idx > 0 && xFractions[idx - 1] == xFractions[idx]) idx--
+        return idx
+    }
+    // Binary search for first index where xFractions[lo] >= targetFraction (O(log N))
+    var lo = 0
+    var hi = size - 1
+    while (lo < hi) {
+        val mid = (lo + hi) ushr 1
+        if (xFractions[mid] < targetFraction) {
+            lo = mid + 1
+        } else {
+            hi = mid
         }
+    }
+    val leftIdx = (lo - 1).coerceAtLeast(0)
+    val leftDist = abs(targetFraction - xFractions[leftIdx])
+    val rightDist = abs(targetFraction - xFractions[lo])
+    var bestIdx = if (leftDist <= rightDist) leftIdx else lo
+    while (bestIdx > 0 && xFractions[bestIdx - 1] == xFractions[bestIdx]) {
+        bestIdx--
     }
     return bestIdx
 }
@@ -789,148 +837,141 @@ private fun BarChartCanvas(
     barColorProvider: (DailyAnalyticsPoint) -> Color,
     selectedRange: AnalyticsRangeOption,
     colors: NutraColors,
-    accessibilityLabel: String,
     onScrub: (Int?) -> Unit,
 ) {
     val haptic = LocalHapticFeedback.current
     val latestOnScrub by rememberUpdatedState(onScrub)
-    val dashEffect = remember { PathEffect.dashPathEffect(floatArrayOf(10f, 8f)) }
     val subtleTertiary = remember(colors.textTertiary) { colors.textTertiary.copy(alpha = 0.45f) }
     val textMeasurer = rememberTextMeasurer()
-    val targetLabelStyle = NutraTheme.typography.overline.copy(
-        color = colors.textTertiary,
-        letterSpacing = NutraTheme.typography.caption.letterSpacing,
-    )
+    val typography = NutraTheme.typography
+    val targetLabelStyle = remember(typography.overline, typography.caption, colors.textTertiary) {
+        typography.overline.copy(
+            color = colors.textTertiary,
+            letterSpacing = typography.caption.letterSpacing,
+        )
+    }
 
-    Box(
+    Spacer(
         modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 20.dp)
-            .height(156.dp),
-    ) {
-        Spacer(
-            modifier = Modifier
-                .fillMaxSize()
-                .semantics { contentDescription = accessibilityLabel }
-                .pointerInput(points.size) {
-                    detectTapGestures { offset ->
-                        if (points.isEmpty()) return@detectTapGestures
-                        val idx = resolveBarIndex(offset.x, size.width, points.size)
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        latestOnScrub(if (scrubbedIndexState.value == idx) null else idx)
-                    }
+            .fillMaxSize()
+            .pointerInput(points.size) {
+                detectTapGestures { offset ->
+                    if (points.isEmpty()) return@detectTapGestures
+                    val idx = resolveBarIndex(offset.x, size.width, points.size)
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    latestOnScrub(if (scrubbedIndexState.value == idx) null else idx)
                 }
-                .pointerInput(points.size) {
-                    var lastDraggedIndex = -1
-                    detectHorizontalDragGestures(
-                        onDragStart = { offset ->
-                            if (points.isEmpty()) return@detectHorizontalDragGestures
-                            val idx = resolveBarIndex(offset.x, size.width, points.size)
+            }
+            .pointerInput(points.size) {
+                var lastDraggedIndex = -1
+                detectHorizontalDragGestures(
+                    onDragStart = { offset ->
+                        if (points.isEmpty()) return@detectHorizontalDragGestures
+                        val idx = resolveBarIndex(offset.x, size.width, points.size)
+                        lastDraggedIndex = idx
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        latestOnScrub(idx)
+                    },
+                    onHorizontalDrag = { change, _ ->
+                        if (points.isEmpty()) return@detectHorizontalDragGestures
+                        change.consume()
+                        val idx = resolveBarIndex(change.position.x, size.width, points.size)
+                        if (idx != lastDraggedIndex) {
                             lastDraggedIndex = idx
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             latestOnScrub(idx)
-                        },
-                        onHorizontalDrag = { change, _ ->
-                            if (points.isEmpty()) return@detectHorizontalDragGestures
-                            change.consume()
-                            val idx = resolveBarIndex(change.position.x, size.width, points.size)
-                            if (idx != lastDraggedIndex) {
-                                lastDraggedIndex = idx
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                latestOnScrub(idx)
-                            }
-                        },
-                        onDragEnd = {
-                            lastDraggedIndex = -1
-                        },
-                        onDragCancel = {
-                            lastDraggedIndex = -1
-                        },
+                        }
+                    },
+                    onDragEnd = {
+                        lastDraggedIndex = -1
+                    },
+                    onDragCancel = {
+                        lastDraggedIndex = -1
+                    },
+                )
+            }
+            .drawWithCache {
+                val count = points.size
+                val targetY = size.height * (1f - (targetValue / maxChartValue).coerceIn(0f, 1f))
+                val strokePx = 1.dp.toPx()
+                val minStubHeight = 6.dp.toPx()
+                val slotWidth = if (count > 0) size.width / count.toFloat() else 0f
+                val maxBarWidth = when (selectedRange) {
+                    AnalyticsRangeOption.DAYS_7 -> 22.dp.toPx()
+                    AnalyticsRangeOption.DAYS_14 -> 12.dp.toPx()
+                    AnalyticsRangeOption.DAYS_30 -> 6.dp.toPx()
+                }
+                val barWidth = (slotWidth * 0.56f).coerceIn(3.dp.toPx(), maxBarWidth)
+                val corner = CornerRadius(barWidth / 2f, barWidth / 2f)
+                val measuredTarget = textMeasurer.measure(targetLineLabel, style = targetLabelStyle)
+                val labelPadX = 6.dp.toPx()
+                val labelPadY = 2.dp.toPx()
+                val labelBgW = measuredTarget.size.width + labelPadX * 2f
+                val labelBgH = measuredTarget.size.height + labelPadY * 2f
+                val labelBgTop = (targetY - labelBgH - 3.dp.toPx()).coerceAtLeast(0f)
+                val labelBgLeft = (size.width - labelBgW).coerceAtLeast(0f)
+                val labelBgCorner = CornerRadius(labelBgH / 2f, labelBgH / 2f)
+                val labelBgColor = colors.surface.copy(alpha = 0.88f)
+
+                val barX = FloatArray(count)
+                val targetHeights = FloatArray(count)
+                val activeColors = Array(count) { Color.Transparent }
+                val dimmedColors = Array(count) { Color.Transparent }
+                for (index in 0 until count) {
+                    val pt = points[index]
+                    val value = valueProvider(pt)
+                    barX[index] = index * slotWidth + (slotWidth - barWidth) / 2f
+                    targetHeights[index] = if (value > 0) {
+                        size.height * (value / maxChartValue).coerceIn(0f, 1f)
+                    } else {
+                        0f
+                    }
+                    val baseColor = barColorProvider(pt)
+                    activeColors[index] = baseColor
+                    dimmedColors[index] = baseColor.copy(alpha = 0.28f)
+                }
+
+                onDrawBehind {
+                    drawLine(
+                        color = subtleTertiary,
+                        start = Offset(0f, targetY),
+                        end = Offset(size.width, targetY),
+                        strokeWidth = strokePx,
+                        pathEffect = BarTargetDashEffect,
+                    )
+                    if (count == 0) return@onDrawBehind
+
+                    val activeIdx = scrubbedIndexState.value
+                    val growth = barGrowthState.value
+                    for (index in 0 until count) {
+                        val tHeight = targetHeights[index]
+                        val rawHeight = if (tHeight > 0f) {
+                            (tHeight * growth).coerceAtLeast(minStubHeight)
+                        } else {
+                            minStubHeight
+                        }
+                        val isSelected = activeIdx == null || activeIdx == index
+                        drawRoundRect(
+                            color = if (isSelected) activeColors[index] else dimmedColors[index],
+                            topLeft = Offset(barX[index], size.height - rawHeight),
+                            size = Size(barWidth, rawHeight),
+                            cornerRadius = corner,
+                        )
+                    }
+
+                    drawRoundRect(
+                        color = labelBgColor,
+                        topLeft = Offset(labelBgLeft, labelBgTop),
+                        size = Size(labelBgW, labelBgH),
+                        cornerRadius = labelBgCorner,
+                    )
+                    drawText(
+                        textLayoutResult = measuredTarget,
+                        topLeft = Offset(labelBgLeft + labelPadX, labelBgTop + labelPadY),
                     )
                 }
-                .drawWithCache {
-                    val count = points.size
-                    val targetY = size.height * (1f - (targetValue / maxChartValue).coerceIn(0f, 1f))
-                    val strokePx = 1.dp.toPx()
-                    val minStubHeight = 6.dp.toPx()
-                    val slotWidth = if (count > 0) size.width / count.toFloat() else 0f
-                    val maxBarWidth = when (selectedRange) {
-                        AnalyticsRangeOption.DAYS_7 -> 22.dp.toPx()
-                        AnalyticsRangeOption.DAYS_14 -> 12.dp.toPx()
-                        AnalyticsRangeOption.DAYS_30 -> 6.dp.toPx()
-                    }
-                    val barWidth = (slotWidth * 0.56f).coerceIn(3.dp.toPx(), maxBarWidth)
-                    val corner = CornerRadius(barWidth / 2f, barWidth / 2f)
-                    val measuredTarget = textMeasurer.measure(targetLineLabel, style = targetLabelStyle)
-                    val labelPadX = 6.dp.toPx()
-                    val labelPadY = 2.dp.toPx()
-                    val labelBgW = measuredTarget.size.width + labelPadX * 2f
-                    val labelBgH = measuredTarget.size.height + labelPadY * 2f
-                    val labelBgTop = (targetY - labelBgH - 3.dp.toPx()).coerceAtLeast(0f)
-                    val labelBgLeft = (size.width - labelBgW).coerceAtLeast(0f)
-                    val labelBgCorner = CornerRadius(labelBgH / 2f, labelBgH / 2f)
-                    val labelBgColor = colors.surface.copy(alpha = 0.88f)
-
-                    val barX = FloatArray(count)
-                    val targetHeights = FloatArray(count)
-                    val activeColors = Array(count) { Color.Transparent }
-                    val dimmedColors = Array(count) { Color.Transparent }
-                    for (index in 0 until count) {
-                        val pt = points[index]
-                        val value = valueProvider(pt)
-                        barX[index] = index * slotWidth + (slotWidth - barWidth) / 2f
-                        targetHeights[index] = if (value > 0) {
-                            size.height * (value / maxChartValue).coerceIn(0f, 1f)
-                        } else {
-                            0f
-                        }
-                        val baseColor = barColorProvider(pt)
-                        activeColors[index] = baseColor
-                        dimmedColors[index] = baseColor.copy(alpha = 0.28f)
-                    }
-
-                    onDrawBehind {
-                        drawLine(
-                            color = subtleTertiary,
-                            start = Offset(0f, targetY),
-                            end = Offset(size.width, targetY),
-                            strokeWidth = strokePx,
-                            pathEffect = dashEffect,
-                        )
-                        if (count == 0) return@onDrawBehind
-
-                        val activeIdx = scrubbedIndexState.value
-                        val growth = barGrowthState.value
-                        for (index in 0 until count) {
-                            val tHeight = targetHeights[index]
-                            val rawHeight = if (tHeight > 0f) {
-                                (tHeight * growth).coerceAtLeast(minStubHeight)
-                            } else {
-                                minStubHeight
-                            }
-                            val isSelected = activeIdx == null || activeIdx == index
-                            drawRoundRect(
-                                color = if (isSelected) activeColors[index] else dimmedColors[index],
-                                topLeft = Offset(barX[index], size.height - rawHeight),
-                                size = Size(barWidth, rawHeight),
-                                cornerRadius = corner,
-                            )
-                        }
-
-                        drawRoundRect(
-                            color = labelBgColor,
-                            topLeft = Offset(labelBgLeft, labelBgTop),
-                            size = Size(labelBgW, labelBgH),
-                            cornerRadius = labelBgCorner,
-                        )
-                        drawText(
-                            textLayoutResult = measuredTarget,
-                            topLeft = Offset(labelBgLeft + labelPadX, labelBgTop + labelPadY),
-                        )
-                    }
-                },
-        )
-    }
+            },
+    )
 }
 
 @Composable
@@ -1113,6 +1154,7 @@ private fun MacroSplitColumn(
 @Composable
 private fun WeightTrendBezierCard(
     points: List<WeightTrendPoint>,
+    todayIso: String,
     hasAnyWeightHistory: Boolean,
     selectedRange: AnalyticsRangeOption,
     scrubbedIndex: Int?,
@@ -1186,7 +1228,7 @@ private fun WeightTrendBezierCard(
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
-                        text = NutraFormatters.formatShortDate(only.dateIso),
+                        text = NutraFormatters.formatShortDate(only.dateIso, todayIso),
                         style = NutraTheme.typography.caption,
                         color = colors.textSecondary,
                     )
@@ -1239,7 +1281,7 @@ private fun WeightTrendBezierCard(
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 Text(
-                    text = NutraFormatters.formatShortDate(activePoint.dateIso),
+                    text = NutraFormatters.formatShortDate(activePoint.dateIso, todayIso),
                     style = NutraTheme.typography.caption,
                     color = if (scrubbedIndex != null) colors.accent else colors.textSecondary,
                 )
@@ -1291,16 +1333,24 @@ private fun WeightTrendBezierCard(
         }
 
         val currentScrubState = rememberUpdatedState(scrubbedIndex)
-        WeightTrendCanvas(
-            points = points,
-            targetWeight = targetWeight,
-            minY = minY,
-            maxY = maxY,
-            colors = colors,
-            scrubbedIndexState = currentScrubState,
-            accessibilityLabel = "Kilo trendi grafiği. ${NutraFormatters.formatShortDate(activePoint.dateIso)} trend: ${NutraFormatters.formatKg(activePoint.emaTrendKg)} kg, ham tartı: ${NutraFormatters.formatKg(activePoint.rawWeightKg)} kg, hedef: ${NutraFormatters.formatKg(targetWeight)} kg.",
-            onScrub = onScrub,
-        )
+        val weightChartA11y = "Kilo trendi grafiği. ${NutraFormatters.formatShortDate(activePoint.dateIso, todayIso)} trend: ${NutraFormatters.formatKg(activePoint.emaTrendKg)} kg, ham tartı: ${NutraFormatters.formatKg(activePoint.rawWeightKg)} kg, hedef: ${NutraFormatters.formatKg(targetWeight)} kg."
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 18.dp)
+                .height(172.dp)
+                .semantics { contentDescription = weightChartA11y },
+        ) {
+            WeightTrendCanvas(
+                points = points,
+                targetWeight = targetWeight,
+                minY = minY,
+                maxY = maxY,
+                colors = colors,
+                scrubbedIndexState = currentScrubState,
+                onScrub = onScrub,
+            )
+        }
 
         // Bottom range dates + compact legend
         Row(
@@ -1311,19 +1361,19 @@ private fun WeightTrendBezierCard(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = NutraFormatters.formatShortDate(points.first().dateIso),
+                text = NutraFormatters.formatShortDate(points.first().dateIso, todayIso),
                 style = NutraTheme.typography.caption,
                 color = colors.textTertiary,
             )
             if (scrubbedIndex != null) {
                 Text(
-                    text = NutraFormatters.formatShortDate(activePoint.dateIso),
+                    text = NutraFormatters.formatShortDate(activePoint.dateIso, todayIso),
                     style = NutraTheme.typography.labelSmall,
                     color = colors.textPrimary,
                 )
             }
             Text(
-                text = NutraFormatters.formatShortDate(points.last().dateIso),
+                text = NutraFormatters.formatShortDate(points.last().dateIso, todayIso),
                 style = NutraTheme.typography.caption,
                 color = if (scrubbedIndex == null) colors.textSecondary else colors.textTertiary,
             )
@@ -1362,182 +1412,171 @@ private fun WeightTrendCanvas(
     maxY: Float,
     colors: NutraColors,
     scrubbedIndexState: State<Int?>,
-    accessibilityLabel: String,
     onScrub: (Int?) -> Unit,
 ) {
     val haptic = LocalHapticFeedback.current
     val latestOnScrub by rememberUpdatedState(onScrub)
     val xFractions = remember(points) { computeWeightXFractions(points) }
 
-    Box(
+    Spacer(
         modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 18.dp)
-            .height(172.dp),
-    ) {
-        Spacer(
-            modifier = Modifier
-                .fillMaxSize()
-                .semantics { contentDescription = accessibilityLabel }
-                .pointerInput(points, xFractions) {
-                    val padPx = 8.dp.toPx()
-                    detectTapGestures { offset ->
-                        if (points.size < 2) return@detectTapGestures
-                        val idx = resolveNearestXIndex(offset.x, size.width, padPx, xFractions)
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        latestOnScrub(if (scrubbedIndexState.value == idx) null else idx)
-                    }
+            .fillMaxSize()
+            .pointerInput(points, xFractions) {
+                val padPx = 8.dp.toPx()
+                detectTapGestures { offset ->
+                    if (points.size < 2) return@detectTapGestures
+                    val idx = resolveNearestXIndex(offset.x, size.width, padPx, xFractions)
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    latestOnScrub(if (scrubbedIndexState.value == idx) null else idx)
                 }
-                .pointerInput(points, xFractions) {
-                    val padPx = 8.dp.toPx()
-                    var lastDraggedIndex = -1
-                    detectHorizontalDragGestures(
-                        onDragStart = { offset ->
-                            if (points.size < 2) return@detectHorizontalDragGestures
-                            val idx = resolveNearestXIndex(offset.x, size.width, padPx, xFractions)
+            }
+            .pointerInput(points, xFractions) {
+                val padPx = 8.dp.toPx()
+                var lastDraggedIndex = -1
+                detectHorizontalDragGestures(
+                    onDragStart = { offset ->
+                        if (points.size < 2) return@detectHorizontalDragGestures
+                        val idx = resolveNearestXIndex(offset.x, size.width, padPx, xFractions)
+                        lastDraggedIndex = idx
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        latestOnScrub(idx)
+                    },
+                    onHorizontalDrag = { change, _ ->
+                        if (points.size < 2) return@detectHorizontalDragGestures
+                        change.consume()
+                        val idx = resolveNearestXIndex(change.position.x, size.width, padPx, xFractions)
+                        if (idx != lastDraggedIndex) {
                             lastDraggedIndex = idx
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             latestOnScrub(idx)
-                        },
-                        onHorizontalDrag = { change, _ ->
-                            if (points.size < 2) return@detectHorizontalDragGestures
-                            change.consume()
-                            val idx = resolveNearestXIndex(change.position.x, size.width, padPx, xFractions)
-                            if (idx != lastDraggedIndex) {
-                                lastDraggedIndex = idx
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                latestOnScrub(idx)
-                            }
-                        },
-                        onDragEnd = {
-                            lastDraggedIndex = -1
-                        },
-                        onDragCancel = {
-                            lastDraggedIndex = -1
-                        },
+                        }
+                    },
+                    onDragEnd = {
+                        lastDraggedIndex = -1
+                    },
+                    onDragCancel = {
+                        lastDraggedIndex = -1
+                    },
+                )
+            }
+            .drawWithCache {
+                val range = (maxY - minY).coerceAtLeast(0.5f)
+                val padX = 8.dp.toPx()
+                val usableWidth = (size.width - padX * 2f).coerceAtLeast(1f)
+                val padTop = 8.dp.toPx()
+                val usableHeight = (size.height - padTop * 2f).coerceAtLeast(1f)
+
+                fun yFor(weight: Float): Float {
+                    val norm = ((weight - minY) / range).coerceIn(0f, 1f)
+                    return padTop + usableHeight * (1f - norm)
+                }
+
+                fun xFor(index: Int): Float {
+                    val frac = xFractions.getOrElse(index) {
+                        index.toFloat() / points.lastIndex.coerceAtLeast(1)
+                    }
+                    return padX + usableWidth * frac
+                }
+
+                val hasTargetLine = targetWeight in minY..maxY
+                val targetLineY = if (hasTargetLine) yFor(targetWeight) else 0f
+
+                val emaPoints = ArrayList<Offset>(points.size)
+                val rawPoints = ArrayList<Offset>(points.size)
+                for (idx in points.indices) {
+                    val pt = points[idx]
+                    val x = xFor(idx)
+                    emaPoints.add(Offset(x, yFor(pt.emaTrendKg)))
+                    rawPoints.add(Offset(x, yFor(pt.rawWeightKg)))
+                }
+
+                val curvePath = buildMonotoneCubicPath(emaPoints)
+
+                val fillPath = Path().apply {
+                    addPath(curvePath)
+                    lineTo(emaPoints.last().x, size.height)
+                    lineTo(emaPoints.first().x, size.height)
+                    close()
+                }
+
+                val fillBrush = Brush.verticalGradient(
+                    colors = listOf(
+                        colors.accent.copy(alpha = 0.16f),
+                        Color.Transparent,
+                    ),
+                    startY = 0f,
+                    endY = size.height,
+                )
+
+                val curveStroke = Stroke(
+                    width = 2.5.dp.toPx(),
+                    cap = StrokeCap.Round,
+                    join = StrokeJoin.Round,
+                )
+                val targetStrokePx = 1.dp.toPx()
+                val rawDotRadiusPx = 2.75.dp.toPx()
+                val activeRawDotRadiusPx = 3.5.dp.toPx()
+                val focusOuterRadiusPx = 6.dp.toPx()
+                val focusInnerRadiusPx = 4.dp.toPx()
+                val targetLineColor = colors.accent.copy(alpha = 0.45f)
+                val rawDotColor = colors.accent.copy(alpha = 0.36f)
+                val activeRawDotColor = colors.accent.copy(alpha = 0.72f)
+                val accentColor = colors.accent
+                val surfaceColor = colors.surface
+                val dividerColor = colors.divider
+
+                onDrawBehind {
+                    if (hasTargetLine) {
+                        drawLine(
+                            color = targetLineColor,
+                            start = Offset(padX, targetLineY),
+                            end = Offset(size.width - padX, targetLineY),
+                            strokeWidth = targetStrokePx,
+                            pathEffect = WeightTargetDashEffect,
+                        )
+                    }
+
+                    drawPath(path = fillPath, brush = fillBrush)
+
+                    // Raw weigh-in markers behind the smoothed trend curve
+                    val activeScrub = scrubbedIndexState.value
+                    val focusIdx = (activeScrub ?: emaPoints.lastIndex).coerceIn(0, emaPoints.lastIndex)
+                    for (idx in rawPoints.indices) {
+                        val isFocusRaw = idx == focusIdx
+                        drawCircle(
+                            color = if (isFocusRaw) activeRawDotColor else rawDotColor,
+                            radius = if (isFocusRaw) activeRawDotRadiusPx else rawDotRadiusPx,
+                            center = rawPoints[idx],
+                        )
+                    }
+
+                    drawPath(path = curvePath, color = accentColor, style = curveStroke)
+
+                    val focusOffset = emaPoints[focusIdx]
+
+                    if (activeScrub != null) {
+                        drawLine(
+                            color = dividerColor,
+                            start = Offset(focusOffset.x, 0f),
+                            end = Offset(focusOffset.x, size.height),
+                            strokeWidth = targetStrokePx,
+                            pathEffect = WeightCursorDashEffect,
+                        )
+                    }
+
+                    drawCircle(
+                        color = surfaceColor,
+                        radius = focusOuterRadiusPx,
+                        center = focusOffset,
+                    )
+                    drawCircle(
+                        color = accentColor,
+                        radius = focusInnerRadiusPx,
+                        center = focusOffset,
                     )
                 }
-                .drawWithCache {
-                    val range = (maxY - minY).coerceAtLeast(0.5f)
-                    val padX = 8.dp.toPx()
-                    val usableWidth = (size.width - padX * 2f).coerceAtLeast(1f)
-                    val padTop = 8.dp.toPx()
-                    val usableHeight = (size.height - padTop * 2f).coerceAtLeast(1f)
-
-                    fun yFor(weight: Float): Float {
-                        val norm = ((weight - minY) / range).coerceIn(0f, 1f)
-                        return padTop + usableHeight * (1f - norm)
-                    }
-
-                    fun xFor(index: Int): Float {
-                        val frac = xFractions.getOrElse(index) {
-                            index.toFloat() / points.lastIndex.coerceAtLeast(1)
-                        }
-                        return padX + usableWidth * frac
-                    }
-
-                    val hasTargetLine = targetWeight in minY..maxY
-                    val targetLineY = if (hasTargetLine) yFor(targetWeight) else 0f
-                    val targetDashEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f))
-                    val cursorDashEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f))
-
-                    val emaPoints = ArrayList<Offset>(points.size)
-                    val rawPoints = ArrayList<Offset>(points.size)
-                    for (idx in points.indices) {
-                        val pt = points[idx]
-                        val x = xFor(idx)
-                        emaPoints.add(Offset(x, yFor(pt.emaTrendKg)))
-                        rawPoints.add(Offset(x, yFor(pt.rawWeightKg)))
-                    }
-
-                    val curvePath = buildMonotoneCubicPath(emaPoints)
-
-                    val fillPath = Path().apply {
-                        addPath(curvePath)
-                        lineTo(emaPoints.last().x, size.height)
-                        lineTo(emaPoints.first().x, size.height)
-                        close()
-                    }
-
-                    val fillBrush = Brush.verticalGradient(
-                        colors = listOf(
-                            colors.accent.copy(alpha = 0.16f),
-                            Color.Transparent,
-                        ),
-                        startY = 0f,
-                        endY = size.height,
-                    )
-
-                    val curveStroke = Stroke(
-                        width = 2.5.dp.toPx(),
-                        cap = StrokeCap.Round,
-                        join = StrokeJoin.Round,
-                    )
-                    val targetStrokePx = 1.dp.toPx()
-                    val rawDotRadiusPx = 2.75.dp.toPx()
-                    val activeRawDotRadiusPx = 3.5.dp.toPx()
-                    val focusOuterRadiusPx = 6.dp.toPx()
-                    val focusInnerRadiusPx = 4.dp.toPx()
-                    val targetLineColor = colors.accent.copy(alpha = 0.45f)
-                    val rawDotColor = colors.accent.copy(alpha = 0.36f)
-                    val activeRawDotColor = colors.accent.copy(alpha = 0.72f)
-                    val accentColor = colors.accent
-                    val surfaceColor = colors.surface
-                    val dividerColor = colors.divider
-
-                    onDrawBehind {
-                        if (hasTargetLine) {
-                            drawLine(
-                                color = targetLineColor,
-                                start = Offset(padX, targetLineY),
-                                end = Offset(size.width - padX, targetLineY),
-                                strokeWidth = targetStrokePx,
-                                pathEffect = targetDashEffect,
-                            )
-                        }
-
-                        drawPath(path = fillPath, brush = fillBrush)
-
-                        // Raw weigh-in markers behind the smoothed trend curve
-                        val activeScrub = scrubbedIndexState.value
-                        val focusIdx = (activeScrub ?: emaPoints.lastIndex).coerceIn(0, emaPoints.lastIndex)
-                        for (idx in rawPoints.indices) {
-                            val isFocusRaw = idx == focusIdx
-                            drawCircle(
-                                color = if (isFocusRaw) activeRawDotColor else rawDotColor,
-                                radius = if (isFocusRaw) activeRawDotRadiusPx else rawDotRadiusPx,
-                                center = rawPoints[idx],
-                            )
-                        }
-
-                        drawPath(path = curvePath, color = accentColor, style = curveStroke)
-
-                        val focusOffset = emaPoints[focusIdx]
-
-                        if (activeScrub != null) {
-                            drawLine(
-                                color = dividerColor,
-                                start = Offset(focusOffset.x, 0f),
-                                end = Offset(focusOffset.x, size.height),
-                                strokeWidth = targetStrokePx,
-                                pathEffect = cursorDashEffect,
-                            )
-                        }
-
-                        drawCircle(
-                            color = surfaceColor,
-                            radius = focusOuterRadiusPx,
-                            center = focusOffset,
-                        )
-                        drawCircle(
-                            color = accentColor,
-                            radius = focusInnerRadiusPx,
-                            center = focusOffset,
-                        )
-                    }
-                },
-        )
-    }
+            },
+    )
 }
 
 @Composable
@@ -1628,7 +1667,7 @@ private fun LogWeightDialog(
             val isWeightPillPressed by weightPillInteraction.collectIsPressedAsState()
             val weightPillScaleState = animateFloatAsState(
                 targetValue = if (isWeightPillPressed) 0.97f else 1f,
-                animationSpec = spring(dampingRatio = 0.78f, stiffness = 700f),
+                animationSpec = WeightPillPressSpring,
                 label = "weightPillPressScale",
             )
             Surface(
@@ -1680,14 +1719,14 @@ private fun LogWeightDialog(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                listOf(-1.0f, -0.5f, 0.5f, 1.0f).forEach { delta ->
+                WEIGHT_QUICK_DELTAS.forEach { delta ->
                     val prefix = if (delta > 0f) "+" else ""
                     val label = "$prefix${NutraFormatters.formatKg(delta)}"
                     val offsetInteraction = remember { MutableInteractionSource() }
                     val isOffsetPressed by offsetInteraction.collectIsPressedAsState()
                     val offsetScaleState = animateFloatAsState(
                         targetValue = if (isOffsetPressed) 0.97f else 1f,
-                        animationSpec = spring(dampingRatio = 0.78f, stiffness = 700f),
+                        animationSpec = WeightPillPressSpring,
                         label = "weightOffsetPressScale",
                     )
                     Surface(

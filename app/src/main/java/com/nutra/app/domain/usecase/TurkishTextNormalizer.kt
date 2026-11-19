@@ -35,7 +35,20 @@ object TurkishTextNormalizer {
 
     fun tokenizeNormalized(normalizedQuery: String): List<String> {
         if (normalizedQuery.isEmpty()) return emptyList()
-        return normalizedQuery.split(' ').filter { it.isNotEmpty() }
+        val firstSpace = normalizedQuery.indexOf(' ')
+        if (firstSpace < 0) return listOf(normalizedQuery)
+        val tokens = ArrayList<String>(4)
+        var start = 0
+        val len = normalizedQuery.length
+        while (start < len) {
+            while (start < len && normalizedQuery[start] == ' ') start++
+            if (start >= len) break
+            var end = normalizedQuery.indexOf(' ', start)
+            if (end < 0) end = len
+            tokens.add(normalizedQuery.substring(start, end))
+            start = end + 1
+        }
+        return tokens
     }
 
     fun matchesNormalizedTokens(normalizedTarget: String, tokens: List<String>): Boolean {

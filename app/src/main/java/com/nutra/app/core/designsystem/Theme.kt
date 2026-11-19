@@ -81,11 +81,11 @@ fun NutraTheme(
     val isDark = themePreference.resolveIsDark()
 
     val context = LocalContext.current
-    val configuration = LocalConfiguration.current
+    val dynamicConfigKey = if (useDynamicColor) LocalConfiguration.current else null
     val baseColors = if (isDark) DarkNutraColors else LightNutraColors
 
     // Dynamic color only re-tints the brand accent; neutrals stay calm.
-    val colors = remember(isDark, useDynamicColor, context, configuration) {
+    val colors = remember(isDark, useDynamicColor, context, dynamicConfigKey) {
         if (useDynamicColor) {
             val dynamic = if (isDark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
             baseColors.copy(

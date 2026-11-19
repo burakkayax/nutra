@@ -9,7 +9,9 @@ import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import java.time.LocalDate
 import java.time.LocalTime
 import javax.inject.Inject
@@ -29,19 +31,25 @@ class WaterReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action ?: return
         val pendingResult = goAsync()
-        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        scope.launch {
             try {
-                when (action) {
-                    WaterReminderScheduler.ACTION_REMINDER_TRIGGER -> handleReminderTrigger()
-                    WaterReminderScheduler.ACTION_LOG_WATER_QUICK -> {
-                        val deltaMl = intent.getIntExtra(WaterReminderScheduler.EXTRA_WATER_ML, 200)
-                            .coerceIn(50, 1000)
-                        nutritionRepository.addWaterMl(LocalDate.now().toString(), deltaMl)
-                        waterReminderScheduler.dismissNotification()
+                withTimeout(RECEIVER_TIMEOUT_MS) {
+                    runCatching {
+                        when (action) {
+                            WaterReminderScheduler.ACTION_REMINDER_TRIGGER -> handleReminderTrigger()
+                            WaterReminderScheduler.ACTION_LOG_WATER_QUICK -> {
+                                val deltaMl = intent.getIntExtra(WaterReminderScheduler.EXTRA_WATER_ML, 200)
+                                    .coerceIn(50, 1000)
+                                nutritionRepository.addWaterMl(LocalDate.now().toString(), deltaMl)
+                                waterReminderScheduler.dismissNotification()
+                            }
+                        }
                     }
                 }
             } finally {
                 pendingResult.finish()
+                scope.cancel()
             }
         }
     }
@@ -67,5 +75,9 @@ class WaterReminderReceiver : BroadcastReceiver() {
         }
 
         waterReminderScheduler.sync(settings, minLeadSeconds = 60L)
+    }
+
+    private companion object {
+        const val RECEIVER_TIMEOUT_MS = 8_000L
     }
 }

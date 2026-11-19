@@ -8,7 +8,9 @@ import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -25,17 +27,24 @@ class WaterReminderBootReceiver : BroadcastReceiver() {
         if (action !in SUPPORTED_ACTIONS) return
 
         val pendingResult = goAsync()
-        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        scope.launch {
             try {
-                val settings = preferencesDataStore.getSnapshot().waterReminder
-                waterReminderScheduler.sync(settings)
+                withTimeout(RECEIVER_TIMEOUT_MS) {
+                    runCatching {
+                        val settings = preferencesDataStore.getSnapshot().waterReminder
+                        waterReminderScheduler.sync(settings)
+                    }
+                }
             } finally {
                 pendingResult.finish()
+                scope.cancel()
             }
         }
     }
 
     private companion object {
+        const val RECEIVER_TIMEOUT_MS = 8_000L
         val SUPPORTED_ACTIONS = setOf(
             Intent.ACTION_BOOT_COMPLETED,
             Intent.ACTION_MY_PACKAGE_REPLACED,

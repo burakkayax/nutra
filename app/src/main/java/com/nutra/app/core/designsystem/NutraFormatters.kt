@@ -25,29 +25,61 @@ object NutraFormatters {
     private val formattedDateCache = ConcurrentHashMap<String, String>(64)
     private val formattedWeekdayCache = ConcurrentHashMap<String, String>(64)
 
-    fun formatInt(value: Int): String = intFormatter.get()!!.format(value)
+    fun formatInt(value: Int): String =
+        if (value in -999..999) {
+            value.toString()
+        } else {
+            intFormatter.get()!!.format(value)
+        }
 
     fun formatKg(value: Float): String {
         val normalized = if (!value.isFinite() || abs(value) < 0.05f) 0f else value
-        return String.format(TR_LOCALE, "%.1f", normalized)
+        val absVal = abs(normalized)
+        if (absVal >= 1_000_000f) {
+            return String.format(TR_LOCALE, "%.1f", normalized)
+        }
+        val tenths = (absVal.toDouble() * 10.0).roundToInt()
+        val whole = tenths / 10
+        val frac = tenths % 10
+        return if (normalized < 0f && tenths > 0) {
+            "-$whole,$frac"
+        } else {
+            "$whole,$frac"
+        }
     }
 
     fun formatMacroGrams(value: Float): String {
         val safe = if (!value.isFinite() || value <= 0f) 0f else value
+        if (safe >= 1_000_000f) {
+            return String.format(TR_LOCALE, "%.1f", safe)
+        }
         val tenths = (safe * 10f).roundToInt()
-        return if (tenths % 10 == 0) {
+        val frac = tenths % 10
+        return if (frac == 0) {
             formatInt(tenths / 10)
         } else {
-            String.format(TR_LOCALE, "%.1f", tenths / 10f)
+            "${tenths / 10},$frac"
         }
     }
 
     fun formatMultiplier(multiplier: Float): String {
         val safe = if (multiplier.isFinite()) multiplier else 1f
-        return if (safe % 1f == 0f) {
-            safe.toInt().toString()
-        } else {
-            String.format(TR_LOCALE, "%.2f", safe).trimEnd('0').trimEnd(',')
+        if (safe % 1f == 0f) {
+            return safe.toInt().toString()
+        }
+        val absVal = abs(safe)
+        if (absVal >= 100_000f) {
+            return String.format(TR_LOCALE, "%.2f", safe).trimEnd('0').trimEnd(',')
+        }
+        val hundredths = (absVal.toDouble() * 100.0).roundToInt()
+        val sign = if (safe < 0f && hundredths > 0) "-" else ""
+        val whole = hundredths / 100
+        val frac = hundredths % 100
+        return when {
+            frac == 0 -> "$sign$whole"
+            frac % 10 == 0 -> "$sign$whole,${frac / 10}"
+            frac < 10 -> "$sign$whole,0$frac"
+            else -> "$sign$whole,$frac"
         }
     }
 
@@ -72,7 +104,8 @@ object NutraFormatters {
     fun sanitizeNumericInput(input: String, allowDecimal: Boolean = true): String {
         var hasSeparator = false
         return buildString(input.length) {
-            for (ch in input) {
+            for (i in 0 until input.length) {
+                val ch = input[i]
                 when {
                     ch.isDigit() -> append(ch)
                     allowDecimal && (ch == ',' || ch == '.') && !hasSeparator -> {
@@ -92,7 +125,8 @@ object NutraFormatters {
 
     fun formatWaterLitres(ml: Int): String =
         if (ml >= 1000) {
-            String.format(TR_LOCALE, "%.1f L", ml / 1000f)
+            val tenths = (ml.toDouble() / 100.0).roundToInt()
+            "${tenths / 10},${tenths % 10} L"
         } else {
             "${formatInt(ml)} ml"
         }

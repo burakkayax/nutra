@@ -1,5 +1,6 @@
 package com.nutra.app
 
+import android.content.res.Configuration
 import android.os.Bundle
 import android.os.SystemClock
 import android.view.View
@@ -7,6 +8,7 @@ import android.view.ViewTreeObserver
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.ReportDrawnWhen
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedVisibility
@@ -24,6 +26,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -59,6 +62,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -67,6 +72,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
@@ -92,9 +98,15 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nutra.app.core.datastore.UserPreferencesDataStore
@@ -114,7 +126,6 @@ import com.nutra.app.feature.profile.ProfileScreen
 import com.nutra.app.feature.profile.ProfileViewModel
 import com.nutra.app.feature.profile.WaterReminderScreen
 import dagger.hilt.android.AndroidEntryPoint
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
@@ -141,6 +152,12 @@ private data class RootAppConfig(
 
 /** Height reserved at the bottom of every tab so content can scroll above the floating nav bar. */
 private val BottomBarReservedHeight = 96.dp
+private val NavPillSpring = spring<Float>(dampingRatio = 0.85f, stiffness = 420f)
+private val NavIconScaleSpring = spring<Float>(dampingRatio = 0.72f, stiffness = 500f)
+private val NavPressScaleSpring = spring<Float>(dampingRatio = 0.78f, stiffness = 700f)
+
+private const val CONTENT_READY_PREDRAW_TIMEOUT_MS = 350L
+private const val CONFIG_EMERGENCY_PREDRAW_TIMEOUT_MS = 1200L
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -148,20 +165,32 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var preferencesDataStore: UserPreferencesDataStore
 
+    private var hasRootConfig = false
     private var isAppReady = false
     private var lastAppliedIsDark: Boolean? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+
+        val cachedProfile = preferencesDataStore.currentCachedProfile()
+        val initialDark = when (cachedProfile?.themePreference) {
+            ThemePreference.DARK -> true
+            ThemePreference.LIGHT -> false
+            ThemePreference.SYSTEM, null ->
+                (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        }
+        applyEdgeToEdgeForTheme(initialDark)
 
         val contentView: View = findViewById(android.R.id.content)
         val preDrawStartMs = SystemClock.uptimeMillis()
         contentView.viewTreeObserver.addOnPreDrawListener(
             object : ViewTreeObserver.OnPreDrawListener {
                 override fun onPreDraw(): Boolean {
-                    val timedOut = SystemClock.uptimeMillis() - preDrawStartMs > 1500L
-                    return if (isAppReady || timedOut) {
+                    val elapsed = SystemClock.uptimeMillis() - preDrawStartMs
+                    val allowDraw = isAppReady ||
+                        (hasRootConfig && elapsed >= CONTENT_READY_PREDRAW_TIMEOUT_MS) ||
+                        elapsed >= CONFIG_EMERGENCY_PREDRAW_TIMEOUT_MS
+                    return if (allowDraw) {
                         contentView.viewTreeObserver.removeOnPreDrawListener(this)
                         true
                     } else {
@@ -183,7 +212,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val initialConfig = remember {
-                preferencesDataStore.currentCachedProfile()?.let { profile ->
+                cachedProfile?.let { profile ->
                     RootAppConfig(
                         onboardingCompleted = profile.onboardingCompleted,
                         themePreference = profile.themePreference,
@@ -195,31 +224,23 @@ class MainActivity : ComponentActivity() {
 
             val config = rootConfig
             if (config == null) {
-                SideEffect { isAppReady = false }
+                SideEffect {
+                    hasRootConfig = false
+                    isAppReady = false
+                }
                 return@setContent
             }
 
+            SideEffect { hasRootConfig = true }
+
             LaunchedEffect(config.themePreference) {
+                withFrameNanos { }
                 preferencesDataStore.applySystemNightMode(config.themePreference)
             }
 
             val isDark = config.themePreference.resolveIsDark()
             SideEffect {
-                if (lastAppliedIsDark != isDark) {
-                    lastAppliedIsDark = isDark
-                    val barStyle = if (isDark) {
-                        SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
-                    } else {
-                        SystemBarStyle.light(
-                            android.graphics.Color.TRANSPARENT,
-                            android.graphics.Color.TRANSPARENT,
-                        )
-                    }
-                    enableEdgeToEdge(
-                        statusBarStyle = barStyle,
-                        navigationBarStyle = barStyle,
-                    )
-                }
+                applyEdgeToEdgeForTheme(isDark)
             }
 
             NutraTheme(
@@ -233,12 +254,34 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    private fun applyEdgeToEdgeForTheme(isDark: Boolean) {
+        if (lastAppliedIsDark == isDark) return
+        lastAppliedIsDark = isDark
+        val barStyle = if (isDark) {
+            SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+        } else {
+            SystemBarStyle.light(
+                android.graphics.Color.TRANSPARENT,
+                android.graphics.Color.TRANSPARENT,
+            )
+        }
+        enableEdgeToEdge(
+            statusBarStyle = barStyle,
+            navigationBarStyle = barStyle,
+        )
+    }
 }
 
 private enum class ProfileSubScreen {
     NONE,
     EDIT_BODY_PROFILE,
     WATER_REMINDER,
+}
+
+private class TabLifecycleOwner : LifecycleOwner {
+    val registry = LifecycleRegistry(this)
+    override val lifecycle: Lifecycle get() = registry
 }
 
 @Composable
@@ -256,6 +299,7 @@ fun NutraAppRoot(
     ) { isCompleted ->
         if (!isCompleted) {
             SideEffect { onReadyChanged(true) }
+            ReportDrawnWhen { true }
             val onboardingViewModel: OnboardingViewModel = viewModel()
             OnboardingScreen(
                 viewModel = onboardingViewModel,
@@ -268,22 +312,13 @@ fun NutraAppRoot(
             val dashboardViewModel: DashboardViewModel = viewModel()
             val isDashboardReady by dashboardViewModel.isReady.collectAsStateWithLifecycle()
             SideEffect { onReadyChanged(isDashboardReady) }
-            if (!isDashboardReady) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(NutraTheme.colors.background),
-                )
-                return@Crossfade
-            }
+            ReportDrawnWhen { isDashboardReady }
 
-            // Mount Dashboard immediately for first frame, then stagger-warm secondary tabs off-screen.
+            // Lazy-mount secondary tabs on first visit, then keep visited tabs warm with paused hidden lifecycles.
             var hasVisitedAnalytics by rememberSaveable { mutableStateOf(false) }
             var hasVisitedProfile by rememberSaveable { mutableStateOf(false) }
-            var prewarmAnalytics by remember { mutableStateOf(false) }
-            var prewarmProfile by remember { mutableStateOf(false) }
 
-            SideEffect {
+            LaunchedEffect(activeTab) {
                 if (activeTab == PrimaryDestination.ANALYTICS && !hasVisitedAnalytics) {
                     hasVisitedAnalytics = true
                 }
@@ -292,23 +327,8 @@ fun NutraAppRoot(
                 }
             }
 
-            LaunchedEffect(Unit) {
-                delay(180)
-                withFrameNanos { }
-                prewarmAnalytics = true
-                delay(120)
-                withFrameNanos { }
-                prewarmProfile = true
-            }
-
-            LaunchedEffect(activeTab) {
-                if (activeTab == PrimaryDestination.DASHBOARD) {
-                    dashboardViewModel.refreshToday()
-                }
-            }
-
-            val mountAnalytics = hasVisitedAnalytics || prewarmAnalytics || activeTab == PrimaryDestination.ANALYTICS
-            val mountProfile = hasVisitedProfile || prewarmProfile || activeTab == PrimaryDestination.PROFILE
+            val mountAnalytics = hasVisitedAnalytics || activeTab == PrimaryDestination.ANALYTICS
+            val mountProfile = hasVisitedProfile || activeTab == PrimaryDestination.PROFILE
             val saveableStateHolder = rememberSaveableStateHolder()
             val showEditBodyProfile = activeTab == PrimaryDestination.PROFILE && profileSubScreen == ProfileSubScreen.EDIT_BODY_PROFILE
             val showWaterReminder = activeTab == PrimaryDestination.PROFILE && profileSubScreen == ProfileSubScreen.WATER_REMINDER
@@ -361,11 +381,6 @@ fun NutraAppRoot(
                         TabSlotBox(isSelected = activeTab == PrimaryDestination.ANALYTICS && !hasProfileSubScreen) {
                             saveableStateHolder.SaveableStateProvider(PrimaryDestination.ANALYTICS) {
                                 val analyticsViewModel: AnalyticsViewModel = viewModel()
-                                LaunchedEffect(activeTab) {
-                                    if (activeTab == PrimaryDestination.ANALYTICS) {
-                                        analyticsViewModel.refreshToday()
-                                    }
-                                }
                                 AnalyticsScreen(
                                     viewModel = analyticsViewModel,
                                     contentPadding = contentPadding,
@@ -491,21 +506,64 @@ fun NutraAppRoot(
 }
 
 /**
- * Keeps mounted tab state alive off-screen while skipping measure/placement, focus, and accessibility when hidden.
+ * Keeps visited tab UI state warm off-screen while pausing its Lifecycle to CREATED (stopping
+ * collectAsStateWithLifecycle subscriptions & background recompositions) and skipping measure/layout,
+ * focus, pointer input, and accessibility when hidden.
  */
 @Composable
 private fun TabSlotBox(
     isSelected: Boolean,
     content: @Composable () -> Unit,
 ) {
+    val parentLifecycleOwner = LocalLifecycleOwner.current
+    val tabLifecycleOwner = remember(parentLifecycleOwner) {
+        TabLifecycleOwner().apply {
+            val parentState = parentLifecycleOwner.lifecycle.currentState
+            val maxState = if (isSelected) Lifecycle.State.RESUMED else Lifecycle.State.CREATED
+            val initial = if (parentState.isAtLeast(maxState)) maxState else parentState
+            if (initial != Lifecycle.State.INITIALIZED) {
+                registry.currentState = initial
+            }
+        }
+    }
+    val latestIsSelected = rememberUpdatedState(isSelected)
+
+    fun syncTabLifecycle(parentState: Lifecycle.State, selected: Boolean) {
+        val current = tabLifecycleOwner.registry.currentState
+        if (current == Lifecycle.State.DESTROYED) return
+        val maxState = if (selected) Lifecycle.State.RESUMED else Lifecycle.State.CREATED
+        val target = if (parentState.isAtLeast(maxState)) maxState else parentState
+        if (target == Lifecycle.State.INITIALIZED || current == target) return
+        if (current == Lifecycle.State.INITIALIZED && target == Lifecycle.State.DESTROYED) return
+        tabLifecycleOwner.registry.currentState = target
+    }
+
+    DisposableEffect(parentLifecycleOwner) {
+        val observer = LifecycleEventObserver { source, _ ->
+            syncTabLifecycle(source.lifecycle.currentState, latestIsSelected.value)
+        }
+        syncTabLifecycle(parentLifecycleOwner.lifecycle.currentState, latestIsSelected.value)
+        parentLifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            parentLifecycleOwner.lifecycle.removeObserver(observer)
+            if (tabLifecycleOwner.registry.currentState.isAtLeast(Lifecycle.State.CREATED)) {
+                tabLifecycleOwner.registry.currentState = Lifecycle.State.DESTROYED
+            }
+        }
+    }
+
+    SideEffect {
+        syncTabLifecycle(parentLifecycleOwner.lifecycle.currentState, isSelected)
+    }
+
     val alphaState = animateFloatAsState(
         targetValue = if (isSelected) 1f else 0f,
         animationSpec = tween(durationMillis = 150),
         label = "tabAlpha",
     )
     // Only invalidate layout when crossing visibility threshold, keeping per-frame fade GPU-only.
-    val shouldLayoutState = remember(isSelected) {
-        derivedStateOf { isSelected || alphaState.value > 0.01f }
+    val shouldLayoutState = remember {
+        derivedStateOf { latestIsSelected.value || alphaState.value > 0.01f }
     }
 
     val baseModifier = Modifier
@@ -523,29 +581,27 @@ private fun TabSlotBox(
                 }
             }
         }
-        .then(
-            if (isSelected) {
-                Modifier
-            } else {
-                Modifier.pointerInput(Unit) {
-                    awaitPointerEventScope {
-                        while (true) {
-                            val event = awaitPointerEvent(PointerEventPass.Initial)
-                            event.changes.forEach { it.consume() }
-                        }
+        .pointerInput(Unit) {
+            awaitPointerEventScope {
+                while (true) {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    if (!latestIsSelected.value) {
+                        event.changes.forEach { it.consume() }
                     }
                 }
-            },
-        )
+            }
+        }
 
-    Box(
-        modifier = if (isSelected) {
-            baseModifier
-        } else {
-            baseModifier.clearAndSetSemantics {}
-        },
-    ) {
-        content()
+    CompositionLocalProvider(LocalLifecycleOwner provides tabLifecycleOwner) {
+        Box(
+            modifier = if (isSelected) {
+                baseModifier
+            } else {
+                baseModifier.clearAndSetSemantics {}
+            },
+        ) {
+            content()
+        }
     }
 }
 
@@ -558,8 +614,8 @@ private fun NutraBottomBar(
     onSelectTab: (PrimaryDestination) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val haptic = LocalHapticFeedback.current
     val colors = NutraTheme.colors
+    val typography = NutraTheme.typography
     val layoutDirection = LocalLayoutDirection.current
     val shadowElevation = if (colors.isDark) 0.dp else 2.dp
     val shadowTint = colors.ink.copy(alpha = 0.28f)
@@ -578,10 +634,14 @@ private fun NutraBottomBar(
             1f to colors.background.copy(alpha = 0.96f),
         )
     }
+    val labelStyle = remember(typography.overline, typography.caption) {
+        typography.overline.copy(letterSpacing = typography.caption.letterSpacing)
+    }
     val activePillColor = if (colors.isDark) colors.segmentThumb.copy(alpha = 0.65f) else colors.surfaceMuted
+    val holdHighlightBase = colors.ink.copy(alpha = if (colors.isDark) 0.12f else 0.07f)
     val animatedIndexState = animateFloatAsState(
         targetValue = selectedTab.ordinal.toFloat(),
-        animationSpec = spring(dampingRatio = 0.85f, stiffness = 420f),
+        animationSpec = NavPillSpring,
         label = "navPillIndex",
     )
 
@@ -638,71 +698,103 @@ private fun NutraBottomBar(
                     },
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                val holdHighlightBase = colors.ink.copy(alpha = if (colors.isDark) 0.12f else 0.07f)
                 PrimaryDestination.entries.forEach { dest ->
-                    val selected = dest == selectedTab
-                    val interactionSource = remember { MutableInteractionSource() }
-                    val holdAlphaState = rememberHoldHighlightAlpha(
-                        interactionSource = interactionSource,
-                        label = "navHoldAlpha",
+                    NutraBottomBarItem(
+                        destination = dest,
+                        selected = dest == selectedTab,
+                        selectedColor = colors.textPrimary,
+                        unselectedColor = colors.textTertiary,
+                        holdHighlightBase = holdHighlightBase,
+                        labelStyle = labelStyle,
+                        onSelect = onSelectTab,
+                        modifier = Modifier.weight(1f),
                     )
-                    val tint by animateColorAsState(
-                        targetValue = if (selected) colors.textPrimary else colors.textTertiary,
-                        animationSpec = tween(180),
-                        label = "navTint",
-                    )
-                    val iconScaleState = animateFloatAsState(
-                        targetValue = if (selected) 1.06f else 1f,
-                        animationSpec = spring(dampingRatio = 0.72f, stiffness = 500f),
-                        label = "navIconScale",
-                    )
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight()
-                            .heightIn(min = 52.dp)
-                            .clip(NutraTheme.shapes.pill)
-                            .drawBehind {
-                                val a = holdAlphaState.value
-                                if (a > 0.005f) {
-                                    drawRect(holdHighlightBase.copy(alpha = holdHighlightBase.alpha * a))
-                                }
-                            }
-                            .selectable(
-                                selected = selected,
-                                interactionSource = interactionSource,
-                                indication = null,
-                                role = Role.Tab,
-                            ) {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                onSelectTab(dest)
-                            }
-                            .padding(vertical = 6.dp, horizontal = 4.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center,
-                    ) {
-                        Icon(
-                            imageVector = dest.iconVector(selected),
-                            contentDescription = null,
-                            tint = tint,
-                            modifier = Modifier
-                                .size(22.dp)
-                                .graphicsLayer {
-                                    val s = iconScaleState.value
-                                    scaleX = s
-                                    scaleY = s
-                                },
-                        )
-                        Spacer(Modifier.height(3.dp))
-                        Text(
-                            text = dest.title,
-                            style = NutraTheme.typography.overline.copy(letterSpacing = NutraTheme.typography.caption.letterSpacing),
-                            color = tint,
-                            maxLines = 1,
-                        )
-                    }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun NutraBottomBarItem(
+    destination: PrimaryDestination,
+    selected: Boolean,
+    selectedColor: Color,
+    unselectedColor: Color,
+    holdHighlightBase: Color,
+    labelStyle: TextStyle,
+    onSelect: (PrimaryDestination) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val haptic = LocalHapticFeedback.current
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val holdAlphaState = rememberHoldHighlightAlpha(
+        interactionSource = interactionSource,
+        label = "navHoldAlpha",
+    )
+    val pressScaleState = animateFloatAsState(
+        targetValue = if (isPressed) 0.96f else 1f,
+        animationSpec = NavPressScaleSpring,
+        label = "navPressScale",
+    )
+    val tint by animateColorAsState(
+        targetValue = if (selected) selectedColor else unselectedColor,
+        animationSpec = tween(180),
+        label = "navTint",
+    )
+    val iconScaleState = animateFloatAsState(
+        targetValue = if (selected) 1.06f else 1f,
+        animationSpec = NavIconScaleSpring,
+        label = "navIconScale",
+    )
+    Column(
+        modifier = modifier
+            .fillMaxHeight()
+            .heightIn(min = 52.dp)
+            .graphicsLayer {
+                val s = pressScaleState.value
+                scaleX = s
+                scaleY = s
+            }
+            .clip(NutraTheme.shapes.pill)
+            .drawBehind {
+                val a = holdAlphaState.value
+                if (a > 0.005f) {
+                    drawRect(holdHighlightBase.copy(alpha = holdHighlightBase.alpha * a))
+                }
+            }
+            .selectable(
+                selected = selected,
+                interactionSource = interactionSource,
+                indication = null,
+                role = Role.Tab,
+            ) {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onSelect(destination)
+            }
+            .padding(vertical = 6.dp, horizontal = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(
+            imageVector = destination.iconVector(selected),
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier
+                .size(22.dp)
+                .graphicsLayer {
+                    val s = iconScaleState.value
+                    scaleX = s
+                    scaleY = s
+                },
+        )
+        Spacer(Modifier.height(3.dp))
+        Text(
+            text = destination.title,
+            style = labelStyle,
+            color = tint,
+            maxLines = 1,
+        )
     }
 }

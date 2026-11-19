@@ -150,6 +150,8 @@ enum class NutraButtonSize(val height: Dp, val horizontalPadding: Dp, val iconSi
 /** Animation spec used for all progress indicators. */
 private val ProgressSpring = spring<Float>(dampingRatio = 0.9f, stiffness = 260f)
 private val PressScaleSpring = spring<Float>(dampingRatio = 0.78f, stiffness = 700f)
+private val RatioSpring = spring<Float>(dampingRatio = 0.88f, stiffness = 360f)
+private val SegmentThumbSpring = spring<Float>(dampingRatio = 0.86f, stiffness = 420f)
 
 private fun Modifier.nutraRoundedStroke(
     color: () -> Color,
@@ -613,10 +615,9 @@ fun NutraStackedRatioBar(
     val fColor = colors.fat.copy(alpha = alpha)
     val trackColor = colors.surfaceMuted
 
-    val ratioSpring = remember { spring<Float>(dampingRatio = 0.88f, stiffness = 360f) }
-    val animPState = animateFloatAsState(if (hasData) proteinRatio.coerceAtLeast(0f) else 0f, ratioSpring, label = "macroRatioP")
-    val animCState = animateFloatAsState(if (hasData) carbsRatio.coerceAtLeast(0f) else 0f, ratioSpring, label = "macroRatioC")
-    val animFState = animateFloatAsState(if (hasData) fatRatio.coerceAtLeast(0f) else 0f, ratioSpring, label = "macroRatioF")
+    val animPState = animateFloatAsState(if (hasData) proteinRatio.coerceAtLeast(0f) else 0f, RatioSpring, label = "macroRatioP")
+    val animCState = animateFloatAsState(if (hasData) carbsRatio.coerceAtLeast(0f) else 0f, RatioSpring, label = "macroRatioC")
+    val animFState = animateFloatAsState(if (hasData) fatRatio.coerceAtLeast(0f) else 0f, RatioSpring, label = "macroRatioF")
 
     Spacer(
         modifier = modifier
@@ -800,7 +801,7 @@ fun <T> NutraSegmentedControl(
     val selectedIndex = items.indexOf(selectedItem).coerceAtLeast(0)
     val animatedIndexState = animateFloatAsState(
         targetValue = selectedIndex.toFloat(),
-        animationSpec = spring(dampingRatio = 0.86f, stiffness = 420f),
+        animationSpec = SegmentThumbSpring,
         label = "segThumbIndex",
     )
     val gap = 2.dp
@@ -839,53 +840,85 @@ fun <T> NutraSegmentedControl(
         ) {
             items.forEach { item ->
                 val isSelected = item == selectedItem
-                val interactionSource = remember { MutableInteractionSource() }
-                val holdAlphaState = rememberHoldHighlightAlpha(
-                    interactionSource = interactionSource,
-                    label = "segHoldAlpha",
-                )
-                val fg by animateColorAsState(
-                    targetValue = if (isSelected) textPrimary else textSecondary,
-                    animationSpec = tween(180),
-                    label = "segFg",
-                )
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .heightIn(min = 38.dp)
-                        .clip(NutraTheme.shapes.pill)
-                        .drawBehind {
-                            val a = holdAlphaState.value
-                            if (a > 0.005f) {
-                                drawRect(holdHighlightBase.copy(alpha = holdHighlightBase.alpha * a))
-                            }
+                NutraSegmentedControlItem(
+                    label = labelProvider(item),
+                    isSelected = isSelected,
+                    selectedColor = textPrimary,
+                    unselectedColor = textSecondary,
+                    holdHighlightBase = holdHighlightBase,
+                    onClick = {
+                        if (!isSelected) {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onItemSelected(item)
                         }
-                        .selectable(
-                            selected = isSelected,
-                            interactionSource = interactionSource,
-                            indication = null,
-                            role = Role.Tab,
-                        ) {
-                            if (!isSelected) {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                onItemSelected(item)
-                            }
-                        }
-                        .padding(horizontal = 6.dp, vertical = 8.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = labelProvider(item),
-                        style = NutraTheme.typography.labelSmall,
-                        color = fg,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Center,
-                    )
-                }
+                    },
+                    modifier = Modifier.weight(1f),
+                )
             }
         }
+    }
+}
+
+@Composable
+private fun NutraSegmentedControlItem(
+    label: String,
+    isSelected: Boolean,
+    selectedColor: Color,
+    unselectedColor: Color,
+    holdHighlightBase: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val holdAlphaState = rememberHoldHighlightAlpha(
+        interactionSource = interactionSource,
+        label = "segHoldAlpha",
+    )
+    val pressScaleState = animateFloatAsState(
+        targetValue = if (isPressed && !isSelected) 0.97f else 1f,
+        animationSpec = PressScaleSpring,
+        label = "segPressScale",
+    )
+    val fg by animateColorAsState(
+        targetValue = if (isSelected) selectedColor else unselectedColor,
+        animationSpec = tween(180),
+        label = "segFg",
+    )
+    Box(
+        modifier = modifier
+            .fillMaxHeight()
+            .heightIn(min = 38.dp)
+            .graphicsLayer {
+                val s = pressScaleState.value
+                scaleX = s
+                scaleY = s
+            }
+            .clip(NutraTheme.shapes.pill)
+            .drawBehind {
+                val a = holdAlphaState.value
+                if (a > 0.005f) {
+                    drawRect(holdHighlightBase.copy(alpha = holdHighlightBase.alpha * a))
+                }
+            }
+            .selectable(
+                selected = isSelected,
+                interactionSource = interactionSource,
+                indication = null,
+                role = Role.Tab,
+                onClick = onClick,
+            )
+            .padding(horizontal = 6.dp, vertical = 8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            style = NutraTheme.typography.labelSmall,
+            color = fg,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+        )
     }
 }
 
@@ -1090,15 +1123,20 @@ fun NutraStepperButton(
                             delay(if (ticks >= 8) 55L else 95L)
                         }
                     }
-                    val up = waitForUpOrCancellation()
-                    repeatJob.cancel()
-                    scope.launch {
-                        pressEmitJob.join()
-                        interactionSource.emit(
-                            if (up != null) PressInteraction.Release(press) else PressInteraction.Cancel(press),
-                        )
+                    var releasedNormally = false
+                    try {
+                        val up = waitForUpOrCancellation()
+                        releasedNormally = up != null
+                    } finally {
+                        repeatJob.cancel()
+                        scope.launch {
+                            pressEmitJob.join()
+                            interactionSource.emit(
+                                if (releasedNormally) PressInteraction.Release(press) else PressInteraction.Cancel(press),
+                            )
+                        }
                     }
-                    if (up != null && !didRepeat && latestEnabled) {
+                    if (releasedNormally && !didRepeat && latestEnabled) {
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         latestOnClick()
                     }
@@ -1263,6 +1301,10 @@ fun NutraTextField(
         animationSpec = tween(150),
         label = "textFieldStroke",
     )
+    val resolvedTextStyle = remember(textStyle, colors.textPrimary) {
+        textStyle.copy(color = colors.textPrimary)
+    }
+    val cursorBrush = remember(colors.accent) { SolidColor(colors.accent) }
     val startPad = if (compact) 12.dp else 16.dp
     val endPad = when {
         trailing != null && singleLine -> 6.dp
@@ -1281,8 +1323,8 @@ fun NutraTextField(
             minLines = minLines,
             maxLines = maxLines,
             interactionSource = interactionSource,
-            textStyle = textStyle.copy(color = colors.textPrimary),
-            cursorBrush = SolidColor(colors.accent),
+            textStyle = resolvedTextStyle,
+            cursorBrush = cursorBrush,
             keyboardOptions = keyboardOptions,
             keyboardActions = keyboardActions,
             visualTransformation = visualTransformation,
@@ -1495,7 +1537,7 @@ private fun NutraSnackbar(
 private data class SnackbarSnapshot(
     val message: String,
     val actionLabel: String?,
-    val onAction: (() -> Unit)?,
+    val hasAction: Boolean,
     val icon: ImageVector?,
     val tone: NutraSnackbarTone,
 )
@@ -1510,15 +1552,19 @@ fun NutraSnackbarHost(
     icon: ImageVector? = null,
     tone: NutraSnackbarTone = NutraSnackbarTone.Neutral,
 ) {
+    val latestOnAction by rememberUpdatedState(onAction)
     var cached by remember { mutableStateOf<SnackbarSnapshot?>(null) }
     if (visible && message.isNotBlank()) {
-        cached = SnackbarSnapshot(
+        val next = SnackbarSnapshot(
             message = message,
             actionLabel = actionLabel,
-            onAction = onAction,
+            hasAction = onAction != null,
             icon = icon,
             tone = tone,
         )
+        if (cached != next) {
+            cached = next
+        }
     }
     AnimatedVisibility(
         visible = visible && cached != null,
@@ -1530,7 +1576,11 @@ fun NutraSnackbarHost(
         NutraSnackbar(
             message = snapshot.message,
             actionLabel = snapshot.actionLabel,
-            onAction = snapshot.onAction,
+            onAction = if (snapshot.hasAction) {
+                { latestOnAction?.invoke() }
+            } else {
+                null
+            },
             icon = snapshot.icon,
             tone = snapshot.tone,
         )

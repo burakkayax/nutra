@@ -7,6 +7,14 @@ import androidx.room.Query
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
+data class DailyMealTotalsTuple(
+    val dateIso: String,
+    val totalCalories: Int,
+    val totalProtein: Double,
+    val totalCarbs: Double,
+    val totalFat: Double,
+)
+
 @Dao
 interface NutraDao {
 
@@ -47,6 +55,23 @@ interface NutraDao {
 
     @Query("SELECT * FROM meal_logs WHERE dateIso BETWEEN :startDateIso AND :endDateIso ORDER BY dateIso ASC, timestampMillis ASC")
     fun observeMealLogsInRange(startDateIso: String, endDateIso: String): Flow<List<MealLogEntity>>
+
+    @Query(
+        """
+        SELECT dateIso,
+               COALESCE(SUM(calories), 0) AS totalCalories,
+               COALESCE(SUM(proteinGrams), 0.0) AS totalProtein,
+               COALESCE(SUM(carbsGrams), 0.0) AS totalCarbs,
+               COALESCE(SUM(fatGrams), 0.0) AS totalFat
+        FROM meal_logs
+        WHERE dateIso BETWEEN :startDateIso AND :endDateIso
+        GROUP BY dateIso
+        """,
+    )
+    fun observeDailyMealTotalsInRange(
+        startDateIso: String,
+        endDateIso: String,
+    ): Flow<List<DailyMealTotalsTuple>>
 
     @Query("SELECT * FROM meal_logs ORDER BY timestampMillis DESC LIMIT 600")
     fun observeRecentHistoricalMealLogs(): Flow<List<MealLogEntity>>

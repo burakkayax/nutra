@@ -38,17 +38,23 @@ class WaterReminderScheduler @Inject constructor(
         private const val WATER_ACCENT_ARGB = 0xFF2F9BEF.toInt()
     }
 
+    @Volatile
+    private var channelEnsured = false
+
     fun ensureNotificationChannel() {
+        if (channelEnsured) return
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
-        if (manager.getNotificationChannel(CHANNEL_ID) != null) return
-        val channel = NotificationChannel(
-            CHANNEL_ID,
-            "Su hatırlatıcı",
-            NotificationManager.IMPORTANCE_DEFAULT,
-        ).apply {
-            description = "Gün içinde düzenli su içmen için hatırlatma bildirimleri"
+        if (manager.getNotificationChannel(CHANNEL_ID) == null) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "Su hatırlatıcı",
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ).apply {
+                description = "Gün içinde düzenli su içmen için hatırlatma bildirimleri"
+            }
+            manager.createNotificationChannel(channel)
         }
-        manager.createNotificationChannel(channel)
+        channelEnsured = true
     }
 
     fun hasNotificationPermission(): Boolean {
@@ -86,13 +92,7 @@ class WaterReminderScheduler @Inject constructor(
         alarmManager.cancel(pendingIntent)
 
         val scheduledExact = if (alarmManager.canScheduleExactAlarms()) {
-            runCatching {
-                alarmManager.setExactAndAllowWhileIdle(
-                    AlarmManager.RTC_WAKEUP,
-                    triggerAtMillis,
-                    pendingIntent,
-                )
-            }.isSuccess
+            scheduleExactAlarm(alarmManager, triggerAtMillis, pendingIntent)
         } else {
             false
         }
@@ -107,6 +107,19 @@ class WaterReminderScheduler @Inject constructor(
             }
         }
     }
+
+    @SuppressLint("MissingPermission")
+    private fun scheduleExactAlarm(
+        alarmManager: AlarmManager,
+        triggerAtMillis: Long,
+        pendingIntent: PendingIntent,
+    ): Boolean = runCatching {
+        alarmManager.setExactAndAllowWhileIdle(
+            AlarmManager.RTC_WAKEUP,
+            triggerAtMillis,
+            pendingIntent,
+        )
+    }.isSuccess
 
     fun cancel() {
         val alarmManager = context.getSystemService(AlarmManager::class.java)

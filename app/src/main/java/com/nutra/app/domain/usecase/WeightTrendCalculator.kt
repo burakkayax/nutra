@@ -17,20 +17,46 @@ class WeightTrendCalculator @Inject constructor() {
     ): List<WeightTrendPoint> {
         if (entries.isEmpty()) return emptyList()
 
-        val sortedByDate = entries
-            .groupBy { it.dateIso }
-            .mapValues { (_, list) -> list.maxBy { it.timestampMillis } }
-            .values
-            .sortedBy { it.dateIso }
+        // Single-pass deduplication keeping the latest weigh-in per calendar day
+        val latestByDate = LinkedHashMap<String, WeightEntry>(entries.size.coerceAtMost(256))
+        var isAlreadySorted = true
+        var lastInsertedDate: String? = null
 
-        val result = ArrayList<WeightTrendPoint>(sortedByDate.size)
-        var currentEma = sortedByDate.first().weightKg
+        for (i in entries.indices) {
+            val entry = entries[i]
+            val existing = latestByDate[entry.dateIso]
+            if (existing == null) {
+                if (isAlreadySorted && lastInsertedDate != null && entry.dateIso < lastInsertedDate) {
+                    isAlreadySorted = false
+                }
+                latestByDate[entry.dateIso] = entry
+                lastInsertedDate = entry.dateIso
+            } else if (
+                entry.timestampMillis > existing.timestampMillis ||
+                (entry.timestampMillis == existing.timestampMillis && entry.id > existing.id)
+            ) {
+                latestByDate[entry.dateIso] = entry
+            }
+        }
 
-        for ((index, entry) in sortedByDate.withIndex()) {
-            currentEma = if (index == 0) {
+        val dailyEntries = ArrayList<WeightEntry>(latestByDate.size)
+        for (entry in latestByDate.values) {
+            dailyEntries.add(entry)
+        }
+        if (!isAlreadySorted) {
+            dailyEntries.sortBy { it.dateIso }
+        }
+
+        val result = ArrayList<WeightTrendPoint>(dailyEntries.size)
+        var currentEma = dailyEntries[0].weightKg
+        val decay = 1f - smoothingFactor
+
+        for (i in dailyEntries.indices) {
+            val entry = dailyEntries[i]
+            currentEma = if (i == 0) {
                 entry.weightKg
             } else {
-                (smoothingFactor * entry.weightKg) + ((1f - smoothingFactor) * currentEma)
+                (smoothingFactor * entry.weightKg) + (decay * currentEma)
             }
             val roundedEma = (currentEma * 10f).roundToInt() / 10f
             result.add(

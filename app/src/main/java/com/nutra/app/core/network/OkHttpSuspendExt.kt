@@ -5,7 +5,6 @@ import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.Response
 import java.io.IOException
-import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 internal suspend fun Call.await(): Response = suspendCancellableCoroutine { cont ->
@@ -16,9 +15,11 @@ internal suspend fun Call.await(): Response = suspendCancellableCoroutine { cont
         object : Callback {
             override fun onResponse(call: Call, response: Response) {
                 if (cont.isActive) {
-                    cont.resume(response)
+                    cont.resume(response) { _, res, _ ->
+                        runCatching { res.close() }
+                    }
                 } else {
-                    response.close()
+                    runCatching { response.close() }
                 }
             }
 

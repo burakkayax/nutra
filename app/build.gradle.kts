@@ -52,6 +52,15 @@ kotlin {
     }
 }
 
+composeCompiler {
+    stabilityConfigurationFiles.add(layout.projectDirectory.file("compose_compiler_config.conf"))
+    if (providers.gradleProperty("nutra.enableComposeCompilerReports").orNull == "true") {
+        val reportsDir = layout.buildDirectory.dir("compose_compiler")
+        reportsDestination.set(reportsDir)
+        metricsDestination.set(reportsDir)
+    }
+}
+
 ksp {
     arg("room.incremental", "true")
     arg("room.generateKotlin", "true")

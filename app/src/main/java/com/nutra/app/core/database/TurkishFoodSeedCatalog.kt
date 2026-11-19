@@ -8,7 +8,10 @@ import com.nutra.app.domain.usecase.TurkishTextNormalizer
 
 object TurkishFoodSeedCatalog {
 
-    val initialFoods: List<FoodItem> = listOf(
+    val initialFoods: List<FoodItem>
+        get() = buildInitialFoods()
+
+    private fun buildInitialFoods(): List<FoodItem> = listOf(
         // --- KAHVALTILIK ---
         FoodItem(
             name = "Haşlanmış Yumurta",
@@ -595,7 +598,7 @@ object TurkishFoodSeedCatalog {
         ),
     )
 
-    fun toEntities(): List<FoodItemEntity> = initialFoods.map { item ->
+    fun toEntities(): List<FoodItemEntity> = buildInitialFoods().map { item ->
         val normText = TurkishTextNormalizer.normalize("${item.name} ${item.subtitle} ${item.category.title}")
         FoodItemEntity.fromDomain(item, normText)
     }

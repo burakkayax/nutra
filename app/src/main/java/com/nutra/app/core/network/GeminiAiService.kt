@@ -73,6 +73,62 @@ class GeminiAiService @Inject constructor(
         val WHITESPACE_REGEX = Regex("\\s+")
         const val MAX_IMAGE_DIMENSION_PX = 1024
         const val JPEG_QUALITY = 82
+        val SYSTEM_INSTRUCTION = """
+            Sen uzman bir Türk diyetisyen ve besin veri analistisin.
+            Kullanıcının yazdığı metindeki veya yemek fotoğrafındaki her bir besin kalemini ayrıştır.
+            Her besin için Türkçe isim (name), doğal porsiyon açıklaması (unitLabel, örn. '2 Adet (Orta)', '1 Kase', '40g Dilim'),
+            toplam gramaj (grams), toplam kalori (calories), protein (proteinGrams), karbonhidrat (carbsGrams),
+            yağ (fatGrams) ve tahmin güven skoru (confidence: 0.70 - 0.99 arası) hesapla.
+        """.trimIndent()
+        val RESPONSE_SCHEMA: JsonObject = buildJsonObject {
+            put("type", "OBJECT")
+            put(
+                "properties",
+                buildJsonObject {
+                    put(
+                        "items",
+                        buildJsonObject {
+                            put("type", "ARRAY")
+                            put(
+                                "items",
+                                buildJsonObject {
+                                    put("type", "OBJECT")
+                                    put(
+                                        "properties",
+                                        buildJsonObject {
+                                            put("name", buildJsonObject { put("type", "STRING") })
+                                            put("unitLabel", buildJsonObject { put("type", "STRING") })
+                                            put("grams", buildJsonObject { put("type", "NUMBER") })
+                                            put("calories", buildJsonObject { put("type", "INTEGER") })
+                                            put("proteinGrams", buildJsonObject { put("type", "NUMBER") })
+                                            put("carbsGrams", buildJsonObject { put("type", "NUMBER") })
+                                            put("fatGrams", buildJsonObject { put("type", "NUMBER") })
+                                            put("confidence", buildJsonObject { put("type", "NUMBER") })
+                                        },
+                                    )
+                                    put(
+                                        "required",
+                                        JsonArray(
+                                            listOf(
+                                                "name",
+                                                "unitLabel",
+                                                "grams",
+                                                "calories",
+                                                "proteinGrams",
+                                                "carbsGrams",
+                                                "fatGrams",
+                                                "confidence",
+                                            ).map { JsonPrimitive(it) },
+                                        ),
+                                    )
+                                },
+                            )
+                        },
+                    )
+                },
+            )
+            put("required", JsonArray(listOf(JsonPrimitive("items"))))
+        }
     }
 
     suspend fun loadCompressedImageBytes(
@@ -190,14 +246,6 @@ class GeminiAiService @Inject constructor(
         modelName: String,
     ): AppResult<List<AiAnalyzedFoodItem>> {
         return try {
-            val systemInstruction = """
-                Sen uzman bir Türk diyetisyen ve besin veri analistisin.
-                Kullanıcının yazdığı metindeki veya yemek fotoğrafındaki her bir besin kalemini ayrıştır.
-                Her besin için Türkçe isim (name), doğal porsiyon açıklaması (unitLabel, örn. '2 Adet (Orta)', '1 Kase', '40g Dilim'),
-                toplam gramaj (grams), toplam kalori (calories), protein (proteinGrams), karbonhidrat (carbsGrams),
-                yağ (fatGrams) ve tahmin güven skoru (confidence: 0.70 - 0.99 arası) hesapla.
-            """.trimIndent()
-
             val partsArray = buildJsonArray {
                 if (imageBytes != null) {
                     val base64Img = Base64.encodeToString(imageBytes, Base64.NO_WRAP)
@@ -216,57 +264,7 @@ class GeminiAiService @Inject constructor(
                 val effectivePrompt = promptText.ifBlank {
                     "Bu fotoğraftaki tabakta yer alan yiyecekleri, tahmini porsiyon ve gramajlarıyla ayrıştır."
                 }
-                add(buildJsonObject { put("text", "$systemInstruction\n\nKullanıcı girdisi: $effectivePrompt") })
-            }
-
-            val responseSchema = buildJsonObject {
-                put("type", "OBJECT")
-                put(
-                    "properties",
-                    buildJsonObject {
-                        put(
-                            "items",
-                            buildJsonObject {
-                                put("type", "ARRAY")
-                                put(
-                                    "items",
-                                    buildJsonObject {
-                                        put("type", "OBJECT")
-                                        put(
-                                            "properties",
-                                            buildJsonObject {
-                                                put("name", buildJsonObject { put("type", "STRING") })
-                                                put("unitLabel", buildJsonObject { put("type", "STRING") })
-                                                put("grams", buildJsonObject { put("type", "NUMBER") })
-                                                put("calories", buildJsonObject { put("type", "INTEGER") })
-                                                put("proteinGrams", buildJsonObject { put("type", "NUMBER") })
-                                                put("carbsGrams", buildJsonObject { put("type", "NUMBER") })
-                                                put("fatGrams", buildJsonObject { put("type", "NUMBER") })
-                                                put("confidence", buildJsonObject { put("type", "NUMBER") })
-                                            },
-                                        )
-                                        put(
-                                            "required",
-                                            JsonArray(
-                                                listOf(
-                                                    "name",
-                                                    "unitLabel",
-                                                    "grams",
-                                                    "calories",
-                                                    "proteinGrams",
-                                                    "carbsGrams",
-                                                    "fatGrams",
-                                                    "confidence",
-                                                ).map { JsonPrimitive(it) },
-                                            ),
-                                        )
-                                    },
-                                )
-                            },
-                        )
-                    },
-                )
-                put("required", JsonArray(listOf(JsonPrimitive("items"))))
+                add(buildJsonObject { put("text", "$SYSTEM_INSTRUCTION\n\nKullanıcı girdisi: $effectivePrompt") })
             }
 
             val requestPayload = buildJsonObject {
@@ -284,7 +282,7 @@ class GeminiAiService @Inject constructor(
                     "generationConfig",
                     buildJsonObject {
                         put("responseMimeType", "application/json")
-                        put("responseSchema", responseSchema)
+                        put("responseSchema", RESPONSE_SCHEMA)
                         put("temperature", 0.2)
                     },
                 )
@@ -469,20 +467,26 @@ class GeminiAiService @Inject constructor(
     }
 
     private fun findBestCatalogMatch(query: String, catalogFoods: List<FoodItem>): FoodItem? {
-        val tokens = query.split(' ').filter { it.length >= 2 }
+        val rawTokens = TurkishTextNormalizer.tokenizeNormalized(query)
+        val tokens = ArrayList<String>(rawTokens.size)
+        for (i in rawTokens.indices) {
+            val t = rawTokens[i]
+            if (t.length >= 2) tokens.add(t)
+        }
         if (tokens.isEmpty()) return null
 
         var bestFood: FoodItem? = null
         var bestScore = 17
-        for (food in catalogFoods) {
+        for (i in catalogFoods.indices) {
+            val food = catalogFoods[i]
             val normName = food.normalizedName.ifBlank { TurkishTextNormalizer.normalize(food.name) }
             val normSub = food.normalizedSearchText.ifBlank { TurkishTextNormalizer.normalize(food.subtitle) }
-            val nameWords = normName.split(' ')
             var score = 0
             if (normName == query) score += 100
             if (normName.contains(query)) score += 60
-            for (token in tokens) {
-                if (nameWords.any { it == token }) score += 30
+            for (j in tokens.indices) {
+                val token = tokens[j]
+                if (containsWholeWord(normName, token)) score += 30
                 else if (normName.contains(token)) score += 18
                 else if (normSub.contains(token)) score += 6
             }
@@ -492,6 +496,20 @@ class GeminiAiService @Inject constructor(
             }
         }
         return bestFood
+    }
+
+    private fun containsWholeWord(text: String, word: String): Boolean {
+        val wordLen = word.length
+        if (wordLen == 0 || wordLen > text.length) return false
+        var idx = text.indexOf(word)
+        while (idx >= 0) {
+            val leftOk = idx == 0 || text[idx - 1] == ' '
+            val end = idx + wordLen
+            val rightOk = end == text.length || text[end] == ' '
+            if (leftOk && rightOk) return true
+            idx = text.indexOf(word, idx + 1)
+        }
+        return false
     }
 
     private fun buildSamplePlateForOfflinePhoto(catalogFoods: List<FoodItem>): List<AiAnalyzedFoodItem> {

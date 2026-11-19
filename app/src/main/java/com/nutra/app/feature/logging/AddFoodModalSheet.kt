@@ -135,6 +135,11 @@ private fun sheetCardContainerColor(): Color {
     return if (colors.isDark) colors.surfaceMuted else colors.background
 }
 
+private val NON_ALL_FOOD_CATEGORIES = FoodCategory.entries.filter { it != FoodCategory.ALL }
+private val PORTION_GRAM_PRESETS = listOf(50, 100, 150, 200)
+private val PORTION_MULT_PRESETS = listOf(0.5f, 1f, 1.5f, 2f, 3f)
+private val AI_MULT_PRESETS = listOf(0.5f, 1f, 1.5f, 2f)
+
 private val AI_SAMPLE_PROMPTS = listOf(
     "Kahvaltı tabağı" to "2 haşlanmış yumurta, 30g ezine beyaz peynir, 1 dilim tam buğday ekmeği",
     "Tavuk & bulgur" to "1 kase mercimek çorbası, 150g ızgara tavuk göğsü, 1 porsiyon bulgur pilavı",
@@ -237,8 +242,8 @@ fun AddFoodModalSheet(
                 ) {
                     AnimatedVisibility(
                         visible = portionFood != null,
-                        enter = fadeIn(tween(160)) + expandHorizontally(tween(180)),
-                        exit = fadeOut(tween(120)) + shrinkHorizontally(tween(160)),
+                        enter = fadeIn(tween(150)) + expandHorizontally(tween(160)),
+                        exit = fadeOut(tween(110)) + shrinkHorizontally(tween(140)),
                     ) {
                         NutraIconButton(
                             icon = Icons.AutoMirrored.Rounded.ArrowBack,
@@ -248,20 +253,14 @@ fun AddFoodModalSheet(
                         )
                     }
 
-                    AnimatedContent(
-                        targetState = portionFood != null,
-                        transitionSpec = { fadeIn(tween(160)) togetherWith fadeOut(tween(120)) },
+                    Text(
+                        text = if (portionFood != null) "Porsiyon" else "Besin ekle",
+                        style = NutraTheme.typography.titleMedium,
+                        color = NutraTheme.colors.textPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f),
-                        label = "SheetHeaderTitle",
-                    ) { isPortion ->
-                        Text(
-                            text = if (isPortion) "Porsiyon" else "Besin ekle",
-                            style = NutraTheme.typography.titleMedium,
-                            color = NutraTheme.colors.textPrimary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
+                    )
 
                     MealSelectorDropdownPill(
                         activeMeal = activeMeal,
@@ -299,7 +298,6 @@ fun AddFoodModalSheet(
                     if (selectedFood != null) {
                         PortionPickerContent(
                             food = selectedFood,
-                            mealType = activeMeal,
                             onBack = onClosePortionPicker,
                             onToggleFavorite = { onToggleFavorite(selectedFood) },
                             onConfirm = { unitLabel, unitGrams, multiplier ->
@@ -611,7 +609,7 @@ private fun CatalogCategoryChips(
             )
         }
         items(
-            items = FoodCategory.entries.filter { it != FoodCategory.ALL },
+            items = NON_ALL_FOOD_CATEGORIES,
             key = { it.name },
         ) { cat ->
             NutraChip(
@@ -642,9 +640,6 @@ private fun CatalogFoodResultsList(
     onLogSmartCombo: (SmartComboSuggestion) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val haptic = LocalHapticFeedback.current
-    val pulseAlpha = rememberSkeletonPulseAlpha("catalogSkeletonPulse")
-
     LazyColumn(
         state = listState,
         modifier = modifier,
@@ -661,9 +656,9 @@ private fun CatalogFoodResultsList(
             }
         }
 
-        item(key = "catalog_top_section", contentType = "top_section") {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                if (showSmartCombos) {
+        if (showSmartCombos) {
+            item(key = "catalog_smart_combos", contentType = "smart_combos") {
+                Column(modifier = Modifier.fillMaxWidth()) {
                     NutraSectionHeader(
                         title = "Sık birlikte",
                         modifier = Modifier.padding(
@@ -734,50 +729,28 @@ private fun CatalogFoodResultsList(
 
                     Spacer(Modifier.height(16.dp))
                 }
-
-                val title = when {
-                    favoritesOnly -> "Favoriler"
-                    !isSearchActive && selectedCategory == FoodCategory.ALL -> "${activeMeal.title} için önerilenler"
-                    else -> "Sonuçlar"
-                }
-                NutraSectionHeader(
-                    title = title,
-                    supportingText = if (isCatalogLoading) null else "${NutraFormatters.formatInt(rankedFoods.size)} besin",
-                    modifier = Modifier.padding(
-                        horizontal = NutraTheme.spacing.screen,
-                        vertical = 6.dp,
-                    ),
-                )
             }
         }
 
+        item(key = "catalog_results_header", contentType = "results_header") {
+            val title = when {
+                favoritesOnly -> "Favoriler"
+                !isSearchActive && selectedCategory == FoodCategory.ALL -> "${activeMeal.title} için önerilenler"
+                else -> "Sonuçlar"
+            }
+            NutraSectionHeader(
+                title = title,
+                supportingText = if (isCatalogLoading) null else "${NutraFormatters.formatInt(rankedFoods.size)} besin",
+                modifier = Modifier.padding(
+                    horizontal = NutraTheme.spacing.screen,
+                    vertical = 6.dp,
+                ),
+            )
+        }
+
         if (isCatalogLoading && rankedFoods.isEmpty()) {
-            items(count = 5, key = { "catalog_skeleton_$it" }, contentType = { "skeleton" }) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = NutraTheme.spacing.screen, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        NutraSkeletonBar(
-                            pulseAlphaState = pulseAlpha,
-                            modifier = Modifier.fillMaxWidth(0.55f).height(14.dp),
-                        )
-                        NutraSkeletonBar(
-                            pulseAlphaState = pulseAlpha,
-                            modifier = Modifier.fillMaxWidth(0.75f).height(11.dp),
-                        )
-                    }
-                    NutraSkeletonBar(
-                        pulseAlphaState = pulseAlpha,
-                        modifier = Modifier.size(40.dp),
-                    )
-                }
+            item(key = "catalog_skeleton", contentType = "skeleton") {
+                CatalogLoadingSkeletonRows()
             }
         } else if (!isCatalogLoading && rankedFoods.isEmpty()) {
             item(key = "empty_catalog", contentType = "empty_state") {
@@ -801,97 +774,151 @@ private fun CatalogFoodResultsList(
                 key = { _, item -> item.id },
                 contentType = { _, _ -> "food_row" },
             ) { index, food ->
-                val summaryLine = remember(
-                    food.id,
-                    food.caloriesPer100g,
-                    food.defaultUnitGrams,
-                    food.defaultUnitLabel,
-                ) {
-                    val defaultCal = food.caloriesForGrams(food.defaultUnitGrams)
-                    "${food.defaultUnitLabel} (${NutraFormatters.formatInt(food.defaultUnitGrams.roundToInt())} g) · ${NutraFormatters.formatInt(defaultCal)} kcal"
-                }
-                val macroLine = remember(
-                    food.id,
-                    food.proteinPer100g,
-                    food.carbsPer100g,
-                    food.fatPer100g,
-                    food.defaultUnitGrams,
-                ) {
-                    val defaultP = food.proteinForGrams(food.defaultUnitGrams).roundToInt()
-                    val defaultC = food.carbsForGrams(food.defaultUnitGrams).roundToInt()
-                    val defaultF = food.fatForGrams(food.defaultUnitGrams).roundToInt()
-                    "P ${defaultP}g · K ${defaultC}g · Y ${defaultF}g"
-                }
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(role = Role.Button, onClickLabel = "${food.name} porsiyon seç") {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onSelectFood(food)
-                        }
-                        .padding(
-                            horizontal = NutraTheme.spacing.screen,
-                            vertical = 12.dp,
-                        ),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(3.dp),
-                    ) {
-                        Text(
-                            text = food.name,
-                            style = NutraTheme.typography.titleSmall,
-                            color = NutraTheme.colors.textPrimary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Text(
-                            text = summaryLine,
-                            style = NutraTheme.typography.bodySmall,
-                            color = NutraTheme.colors.textSecondary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Text(
-                            text = macroLine,
-                            style = NutraTheme.typography.caption,
-                            color = NutraTheme.colors.textTertiary,
-                            maxLines = 1,
-                        )
-                    }
-
-                    NutraIconButton(
-                        icon = if (food.isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                        contentDescription = if (food.isFavorite) "Favorilerden çıkar" else "Favorilere ekle",
-                        onClick = { onToggleFavorite(food) },
-                        size = 44.dp,
-                        iconSize = 18.dp,
-                        containerColor = Color.Transparent,
-                        contentColor = if (food.isFavorite) NutraTheme.colors.favorite else NutraTheme.colors.textTertiary,
-                    )
-
-                    NutraIconButton(
-                        icon = Icons.Rounded.Add,
-                        contentDescription = "${food.name} hızlı ekle (${food.defaultUnitLabel})",
-                        onClick = { onQuickAddFood(food) },
-                        size = 44.dp,
-                        iconSize = 20.dp,
-                        containerColor = NutraTheme.colors.surfaceMuted,
-                        contentColor = NutraTheme.colors.textPrimary,
-                        hapticFeedback = HapticFeedbackType.Confirm,
-                    )
-                }
-
-                if (index < rankedFoods.lastIndex) {
-                    NutraDivider(
-                        startIndent = NutraTheme.spacing.screen,
-                        endIndent = NutraTheme.spacing.screen,
-                    )
-                }
+                CatalogFoodRow(
+                    food = food,
+                    showBottomDivider = index < rankedFoods.lastIndex,
+                    onSelectFood = onSelectFood,
+                    onToggleFavorite = onToggleFavorite,
+                    onQuickAddFood = onQuickAddFood,
+                )
             }
+        }
+    }
+}
+
+@Composable
+private fun CatalogLoadingSkeletonRows() {
+    val pulseAlpha = rememberSkeletonPulseAlpha("catalogSkeletonPulse")
+    Column(modifier = Modifier.fillMaxWidth()) {
+        repeat(5) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = NutraTheme.spacing.screen, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    NutraSkeletonBar(
+                        pulseAlphaState = pulseAlpha,
+                        modifier = Modifier.fillMaxWidth(0.55f).height(14.dp),
+                    )
+                    NutraSkeletonBar(
+                        pulseAlphaState = pulseAlpha,
+                        modifier = Modifier.fillMaxWidth(0.75f).height(11.dp),
+                    )
+                }
+                NutraSkeletonBar(
+                    pulseAlphaState = pulseAlpha,
+                    modifier = Modifier.size(40.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CatalogFoodRow(
+    food: FoodItem,
+    showBottomDivider: Boolean,
+    onSelectFood: (FoodItem) -> Unit,
+    onToggleFavorite: (FoodItem) -> Unit,
+    onQuickAddFood: (FoodItem) -> Unit,
+) {
+    val haptic = LocalHapticFeedback.current
+    val summaryLine = remember(
+        food.id,
+        food.caloriesPer100g,
+        food.defaultUnitGrams,
+        food.defaultUnitLabel,
+    ) {
+        val defaultCal = food.caloriesForGrams(food.defaultUnitGrams)
+        "${food.defaultUnitLabel} (${NutraFormatters.formatInt(food.defaultUnitGrams.roundToInt())} g) · ${NutraFormatters.formatInt(defaultCal)} kcal"
+    }
+    val macroLine = remember(
+        food.id,
+        food.proteinPer100g,
+        food.carbsPer100g,
+        food.fatPer100g,
+        food.defaultUnitGrams,
+    ) {
+        val defaultP = food.proteinForGrams(food.defaultUnitGrams).roundToInt()
+        val defaultC = food.carbsForGrams(food.defaultUnitGrams).roundToInt()
+        val defaultF = food.fatForGrams(food.defaultUnitGrams).roundToInt()
+        "P ${defaultP}g · K ${defaultC}g · Y ${defaultF}g"
+    }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(role = Role.Button, onClickLabel = "${food.name} porsiyon seç") {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onSelectFood(food)
+                }
+                .padding(
+                    horizontal = NutraTheme.spacing.screen,
+                    vertical = 12.dp,
+                ),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                Text(
+                    text = food.name,
+                    style = NutraTheme.typography.titleSmall,
+                    color = NutraTheme.colors.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = summaryLine,
+                    style = NutraTheme.typography.bodySmall,
+                    color = NutraTheme.colors.textSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = macroLine,
+                    style = NutraTheme.typography.caption,
+                    color = NutraTheme.colors.textTertiary,
+                    maxLines = 1,
+                )
+            }
+
+            NutraIconButton(
+                icon = if (food.isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                contentDescription = if (food.isFavorite) "Favorilerden çıkar" else "Favorilere ekle",
+                onClick = { onToggleFavorite(food) },
+                size = 44.dp,
+                iconSize = 18.dp,
+                containerColor = Color.Transparent,
+                contentColor = if (food.isFavorite) NutraTheme.colors.favorite else NutraTheme.colors.textTertiary,
+            )
+
+            NutraIconButton(
+                icon = Icons.Rounded.Add,
+                contentDescription = "${food.name} hızlı ekle (${food.defaultUnitLabel})",
+                onClick = { onQuickAddFood(food) },
+                size = 44.dp,
+                iconSize = 20.dp,
+                containerColor = NutraTheme.colors.surfaceMuted,
+                contentColor = NutraTheme.colors.textPrimary,
+                hapticFeedback = HapticFeedbackType.Confirm,
+            )
+        }
+
+        if (showBottomDivider) {
+            NutraDivider(
+                startIndent = NutraTheme.spacing.screen,
+                endIndent = NutraTheme.spacing.screen,
+            )
         }
     }
 }
@@ -899,7 +926,6 @@ private fun CatalogFoodResultsList(
 @Composable
 private fun PortionPickerContent(
     food: FoodItem,
-    mealType: MealType,
     onBack: () -> Unit,
     onToggleFavorite: () -> Unit,
     onConfirm: (unitLabel: String, unitGrams: Float, multiplier: Float) -> Unit,
@@ -1084,7 +1110,7 @@ private fun PortionPickerContent(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        listOf(50, 100, 150, 200).forEach { gramPreset ->
+                        PORTION_GRAM_PRESETS.forEach { gramPreset ->
                             CompactMultiplierPill(
                                 text = "$gramPreset g",
                                 selected = parsedCustomGrams?.roundToInt() == gramPreset,
@@ -1142,7 +1168,7 @@ private fun PortionPickerContent(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        listOf(0.5f, 1f, 1.5f, 2f, 3f).forEach { preset ->
+                        PORTION_MULT_PRESETS.forEach { preset ->
                             val label = "${NutraFormatters.formatMultiplier(preset)}x"
                             CompactMultiplierPill(
                                 text = label,
@@ -1530,7 +1556,7 @@ private fun AiAnalyzeTab(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 ) {
-                                    listOf(0.5f, 1f, 1.5f, 2f).forEach { mult ->
+                                    AI_MULT_PRESETS.forEach { mult ->
                                         CompactMultiplierPill(
                                             text = "${NutraFormatters.formatMultiplier(mult)}x",
                                             selected = item.multiplier == mult,
