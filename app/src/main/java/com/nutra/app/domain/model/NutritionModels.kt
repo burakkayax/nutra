@@ -179,6 +179,18 @@ data class MacroGoals(
 
 @Immutable
 @Serializable
+data class WaterReminderSettings(
+    val enabled: Boolean = false,
+    val intervalMinutes: Int = 120,
+    val startHour: Int = 9,
+    val startMinute: Int = 0,
+    val endHour: Int = 22,
+    val endMinute: Int = 0,
+    val stopWhenGoalReached: Boolean = true,
+)
+
+@Immutable
+@Serializable
 data class UserProfile(
     val sex: BiologicalSex = BiologicalSex.MALE,
     val age: Int = 28,
@@ -193,6 +205,7 @@ data class UserProfile(
     val useDynamicColor: Boolean = false,
     val geminiApiKey: String = "",
     val geminiModel: String = "gemini-2.5-flash",
+    val waterReminder: WaterReminderSettings = WaterReminderSettings(),
 )
 
 @Immutable

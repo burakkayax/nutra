@@ -41,6 +41,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -201,7 +202,6 @@ fun AnalyticsScreen(
                             HapticScrubbingCalorieChartCard(
                                 points = uiState.dailyPoints,
                                 scrubbedIndex = uiState.scrubbedDayIndex,
-                                activePoint = uiState.activeDayPoint,
                                 targetCalories = uiState.profile.goals.calories,
                                 averageCalories = uiState.averageCalories,
                                 selectedRange = uiState.selectedRange,
@@ -213,7 +213,9 @@ fun AnalyticsScreen(
 
                         item(key = "macro_split") {
                             MacroSplitComparisonCard(
-                                activeDay = uiState.activeDayPoint,
+                                averageProteinGrams = uiState.averageProteinGrams,
+                                averageCarbsGrams = uiState.averageCarbsGrams,
+                                averageFatGrams = uiState.averageFatGrams,
                                 goals = uiState.profile.goals,
                             )
                         }
@@ -221,6 +223,8 @@ fun AnalyticsScreen(
                         item(key = "weight_trend") {
                             WeightTrendBezierCard(
                                 points = uiState.weightTrendPoints,
+                                hasAnyWeightHistory = uiState.hasAnyWeightHistory,
+                                selectedRange = uiState.selectedRange,
                                 scrubbedIndex = uiState.scrubbedWeightIndex,
                                 profile = uiState.profile,
                                 onScrub = viewModel::updateScrubbedWeightIndex,
@@ -232,7 +236,6 @@ fun AnalyticsScreen(
                             HapticScrubbingWaterChartCard(
                                 points = uiState.dailyPoints,
                                 scrubbedIndex = uiState.scrubbedWaterIndex,
-                                activePoint = uiState.activeWaterDayPoint,
                                 targetWaterMl = uiState.profile.goals.waterMl,
                                 averageWaterMl = uiState.averageWaterMl,
                                 selectedRange = uiState.selectedRange,
@@ -261,7 +264,7 @@ fun AnalyticsScreen(
     }
 
     if (uiState.showAddWeightDialog) {
-        val latestWeight = uiState.weightTrendPoints.lastOrNull()?.rawWeightKg
+        val latestWeight = uiState.latestRecordedWeightKg
             ?: uiState.profile.currentWeightKg
         LogWeightDialog(
             initialWeight = latestWeight,
@@ -343,7 +346,6 @@ private fun AnalyticsLoadingSkeleton(
 private fun HapticScrubbingCalorieChartCard(
     points: List<DailyAnalyticsPoint>,
     scrubbedIndex: Int?,
-    activePoint: DailyAnalyticsPoint?,
     targetCalories: Int,
     averageCalories: Int,
     selectedRange: AnalyticsRangeOption,
@@ -353,38 +355,41 @@ private fun HapticScrubbingCalorieChartCard(
 ) {
     val colors = NutraTheme.colors
     val hasAnyCalories = remember(points) { points.any { it.calories > 0 } }
-    val activeDateLabel = activePoint?.let { NutraFormatters.formatShortDate(it.dateIso) }
+    val scrubbedPoint = scrubbedIndex?.let { points.getOrNull(it) }
+    val scrubbedDateLabel = scrubbedPoint?.let { NutraFormatters.formatShortDate(it.dateIso) }
+    val displayedCalories = scrubbedPoint?.calories ?: averageCalories
+    val displayedTargetCalories = scrubbedPoint?.targetCalories ?: targetCalories
 
     NutraCard {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 Text(
-                    text = if (activeDateLabel != null) {
-                        "$activeDateLabel · Kalori"
+                    text = if (scrubbedDateLabel != null) {
+                        "$scrubbedDateLabel · Kalori"
                     } else {
-                        "Kalori geçmişi"
+                        "Kalori"
                     },
                     style = NutraTheme.typography.caption,
-                    color = if (scrubbedIndex != null) colors.accent else colors.textSecondary,
+                    color = if (scrubbedPoint != null) colors.accent else colors.textSecondary,
                 )
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Text(
-                        text = NutraFormatters.formatInt(activePoint?.calories ?: 0),
+                        text = NutraFormatters.formatInt(displayedCalories),
                         style = NutraTheme.typography.numberLarge,
                         color = colors.textPrimary,
                         modifier = Modifier.alignByBaseline(),
                     )
                     Text(
-                        text = "/ ${NutraFormatters.formatInt(activePoint?.targetCalories ?: targetCalories)} kcal",
+                        text = "/ ${NutraFormatters.formatInt(displayedTargetCalories)} kcal",
                         style = NutraTheme.typography.body,
                         color = colors.textSecondary,
                         modifier = Modifier.alignByBaseline(),
@@ -392,27 +397,14 @@ private fun HapticScrubbingCalorieChartCard(
                 }
             }
 
-            Column(
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Text(
-                    text = "Ort. ${NutraFormatters.formatInt(averageCalories)} kcal",
-                    style = NutraTheme.typography.caption,
-                    color = colors.textSecondary,
+            if (scrubbedPoint != null) {
+                NutraButton(
+                    text = "Ortalama",
+                    onClick = { onScrub(null) },
+                    style = NutraButtonStyle.Secondary,
+                    size = NutraButtonSize.Small,
+                    leadingIcon = Icons.Rounded.Refresh,
                 )
-                if (scrubbedIndex != null) {
-                    Text(
-                        text = "Bugüne dön",
-                        style = NutraTheme.typography.labelSmall,
-                        color = colors.onAccentSoft,
-                        modifier = Modifier
-                            .clip(NutraTheme.shapes.pill)
-                            .background(colors.accentSoft)
-                            .clickable(role = Role.Button) { onScrub(null) }
-                            .padding(horizontal = 8.dp, vertical = 2.dp),
-                    )
-                }
             }
         }
 
@@ -434,7 +426,7 @@ private fun HapticScrubbingCalorieChartCard(
         HapticScrubbingBarChart(
             points = points,
             scrubbedIndex = scrubbedIndex,
-            activePoint = activePoint,
+            activePoint = scrubbedPoint,
             valueProvider = { it.calories },
             targetValue = targetCalories,
             targetLineLabel = NutraFormatters.formatInt(targetCalories),
@@ -450,7 +442,7 @@ private fun HapticScrubbingCalorieChartCard(
             lastAnimatedRange = lastAnimatedRange,
             onRevealRangeAnimated = onRevealRangeAnimated,
             targetSummaryText = "Hedef: ${NutraFormatters.formatInt(targetCalories)} kcal",
-            chartAccessibilityLabel = "Kalori geçmişi grafiği. ${activeDateLabel ?: "Bugün"}: ${activePoint?.calories ?: 0} kcal. Dönem ortalaması: $averageCalories kcal. Hedef: $targetCalories kcal.",
+            chartAccessibilityLabel = "Kalori geçmişi grafiği. ${scrubbedDateLabel ?: "${selectedRange.title} ortalaması"}: $displayedCalories kcal. Hedef: $displayedTargetCalories kcal.",
             onScrub = onScrub,
         )
 
@@ -472,7 +464,6 @@ private fun HapticScrubbingCalorieChartCard(
 private fun HapticScrubbingWaterChartCard(
     points: List<DailyAnalyticsPoint>,
     scrubbedIndex: Int?,
-    activePoint: DailyAnalyticsPoint?,
     targetWaterMl: Int,
     averageWaterMl: Int,
     selectedRange: AnalyticsRangeOption,
@@ -482,32 +473,34 @@ private fun HapticScrubbingWaterChartCard(
 ) {
     val colors = NutraTheme.colors
     val hasAnyWater = remember(points) { points.any { it.waterMl > 0 } }
-    val activeDateLabel = activePoint?.let { NutraFormatters.formatShortDate(it.dateIso) }
+    val scrubbedPoint = scrubbedIndex?.let { points.getOrNull(it) }
+    val scrubbedDateLabel = scrubbedPoint?.let { NutraFormatters.formatShortDate(it.dateIso) }
+    val displayedWaterMl = scrubbedPoint?.waterMl ?: averageWaterMl
 
     NutraCard {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 Text(
-                    text = if (activeDateLabel != null) {
-                        "$activeDateLabel · Su"
+                    text = if (scrubbedDateLabel != null) {
+                        "$scrubbedDateLabel · Su"
                     } else {
-                        "Su geçmişi"
+                        "Su"
                     },
                     style = NutraTheme.typography.caption,
-                    color = if (scrubbedIndex != null) colors.accent else colors.textSecondary,
+                    color = if (scrubbedPoint != null) colors.accent else colors.textSecondary,
                 )
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Text(
-                        text = NutraFormatters.formatInt(activePoint?.waterMl ?: 0),
+                        text = NutraFormatters.formatInt(displayedWaterMl),
                         style = NutraTheme.typography.numberLarge,
                         color = colors.textPrimary,
                         modifier = Modifier.alignByBaseline(),
@@ -521,27 +514,14 @@ private fun HapticScrubbingWaterChartCard(
                 }
             }
 
-            Column(
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Text(
-                    text = "Ort. ${NutraFormatters.formatWaterLitres(averageWaterMl)}",
-                    style = NutraTheme.typography.caption,
-                    color = colors.textSecondary,
+            if (scrubbedPoint != null) {
+                NutraButton(
+                    text = "Ortalama",
+                    onClick = { onScrub(null) },
+                    style = NutraButtonStyle.Secondary,
+                    size = NutraButtonSize.Small,
+                    leadingIcon = Icons.Rounded.Refresh,
                 )
-                if (scrubbedIndex != null) {
-                    Text(
-                        text = "Bugüne dön",
-                        style = NutraTheme.typography.labelSmall,
-                        color = colors.onAccentSoft,
-                        modifier = Modifier
-                            .clip(NutraTheme.shapes.pill)
-                            .background(colors.accentSoft)
-                            .clickable(role = Role.Button) { onScrub(null) }
-                            .padding(horizontal = 8.dp, vertical = 2.dp),
-                    )
-                }
             }
         }
 
@@ -563,7 +543,7 @@ private fun HapticScrubbingWaterChartCard(
         HapticScrubbingBarChart(
             points = points,
             scrubbedIndex = scrubbedIndex,
-            activePoint = activePoint,
+            activePoint = scrubbedPoint,
             valueProvider = { it.waterMl },
             targetValue = targetWaterMl,
             targetLineLabel = NutraFormatters.formatWaterLitres(targetWaterMl),
@@ -575,7 +555,7 @@ private fun HapticScrubbingWaterChartCard(
             lastAnimatedRange = lastAnimatedRange,
             onRevealRangeAnimated = onRevealRangeAnimated,
             targetSummaryText = "Hedef: ${NutraFormatters.formatInt(targetWaterMl)} ml",
-            chartAccessibilityLabel = "Su geçmişi grafiği. ${activeDateLabel ?: "Bugün"}: ${activePoint?.waterMl ?: 0} ml. Dönem ortalaması: ${NutraFormatters.formatWaterLitres(averageWaterMl)}. Hedef: $targetWaterMl ml.",
+            chartAccessibilityLabel = "Su geçmişi grafiği. ${scrubbedDateLabel ?: "${selectedRange.title} ortalaması"}: $displayedWaterMl ml. Hedef: $targetWaterMl ml.",
             onScrub = onScrub,
         )
 
@@ -955,17 +935,15 @@ private fun BarChartCanvas(
 
 @Composable
 private fun MacroSplitComparisonCard(
-    activeDay: DailyAnalyticsPoint?,
+    averageProteinGrams: Float,
+    averageCarbsGrams: Float,
+    averageFatGrams: Float,
     goals: MacroGoals,
 ) {
     val colors = NutraTheme.colors
-    val proteinG = activeDay?.proteinGrams ?: 0f
-    val carbsG = activeDay?.carbsGrams ?: 0f
-    val fatG = activeDay?.fatGrams ?: 0f
-
-    val proteinKcal = proteinG * 4f
-    val carbsKcal = carbsG * 4f
-    val fatKcal = fatG * 9f
+    val proteinKcal = averageProteinGrams * 4f
+    val carbsKcal = averageCarbsGrams * 4f
+    val fatKcal = averageFatGrams * 9f
     val totalActualKcal = proteinKcal + carbsKcal + fatKcal
 
     val actualP = if (totalActualKcal > 0f) proteinKcal / totalActualKcal else 0f
@@ -994,10 +972,10 @@ private fun MacroSplitComparisonCard(
                     color = colors.textPrimary,
                 )
                 Text(
-                    text = if (activeDay != null && totalActualKcal > 0f) {
-                        "${NutraFormatters.formatShortDate(activeDay.dateIso)} · Hedef oranlarla karşılaştırma"
+                    text = if (totalActualKcal > 0f) {
+                        "Hedef oranlarla karşılaştırma"
                     } else {
-                        "Seçili gün için makro verisi bekleniyor"
+                        "Seçili dönem için makro verisi bekleniyor"
                     },
                     style = NutraTheme.typography.caption,
                     color = colors.textSecondary,
@@ -1069,8 +1047,6 @@ private fun MacroSplitComparisonCard(
             MacroSplitColumn(
                 label = "Protein",
                 dotColor = colors.protein,
-                grams = proteinG.roundToInt(),
-                targetGrams = goals.proteinGrams,
                 actualPercent = (actualP * 100f).roundToInt(),
                 targetPercent = (targetP * 100f).roundToInt(),
                 modifier = Modifier.weight(1f),
@@ -1078,8 +1054,6 @@ private fun MacroSplitComparisonCard(
             MacroSplitColumn(
                 label = "Karb.",
                 dotColor = colors.carbs,
-                grams = carbsG.roundToInt(),
-                targetGrams = goals.carbsGrams,
                 actualPercent = (actualC * 100f).roundToInt(),
                 targetPercent = (targetC * 100f).roundToInt(),
                 modifier = Modifier.weight(1f),
@@ -1087,8 +1061,6 @@ private fun MacroSplitComparisonCard(
             MacroSplitColumn(
                 label = "Yağ",
                 dotColor = colors.fat,
-                grams = fatG.roundToInt(),
-                targetGrams = goals.fatGrams,
                 actualPercent = (actualF * 100f).roundToInt(),
                 targetPercent = (targetF * 100f).roundToInt(),
                 modifier = Modifier.weight(1f),
@@ -1101,8 +1073,6 @@ private fun MacroSplitComparisonCard(
 private fun MacroSplitColumn(
     label: String,
     dotColor: Color,
-    grams: Int,
-    targetGrams: Int,
     actualPercent: Int,
     targetPercent: Int,
     modifier: Modifier = Modifier,
@@ -1130,28 +1100,21 @@ private fun MacroSplitColumn(
             style = NutraTheme.typography.numberMedium,
             color = colors.textPrimary,
         )
-        Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
-            Text(
-                text = "${NutraFormatters.formatInt(grams)} / ${NutraFormatters.formatInt(targetGrams)} g",
-                style = NutraTheme.typography.caption,
-                color = colors.textSecondary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = "Hedef %$targetPercent",
-                style = NutraTheme.typography.caption,
-                color = colors.textTertiary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
+        Text(
+            text = "Hedef %$targetPercent",
+            style = NutraTheme.typography.caption,
+            color = colors.textTertiary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
 @Composable
 private fun WeightTrendBezierCard(
     points: List<WeightTrendPoint>,
+    hasAnyWeightHistory: Boolean,
+    selectedRange: AnalyticsRangeOption,
     scrubbedIndex: Int?,
     profile: AnalyticsProfileSlice,
     onScrub: (Int?) -> Unit,
@@ -1175,7 +1138,7 @@ private fun WeightTrendBezierCard(
                     color = colors.textPrimary,
                 )
                 Text(
-                    text = "Tüm kayıtlar · Hedef ${NutraFormatters.formatKg(profile.targetWeightKg)} kg",
+                    text = "Hedef ${NutraFormatters.formatKg(profile.targetWeightKg)} kg",
                     style = NutraTheme.typography.caption,
                     color = colors.textSecondary,
                 )
@@ -1193,12 +1156,16 @@ private fun WeightTrendBezierCard(
         if (points.isEmpty()) {
             NutraEmptyState(
                 icon = NutraIcons.MonitorWeight,
-                title = "Henüz kilo kaydı yok",
-                message = "Günlük tartını eklediğinde dalgalanmaları yumuşatan 7 günlük trend eğrisi çizilir.",
+                title = if (hasAnyWeightHistory) "Bu dönemde kilo kaydı yok" else "Henüz kilo kaydı yok",
+                message = if (hasAnyWeightHistory) {
+                    "Son ${selectedRange.days} günde tartı girilmemiş. Yeni bir kayıt ekleyebilir veya dönemi genişletebilirsin."
+                } else {
+                    "Günlük tartını eklediğinde dalgalanmaları yumuşatan 7 günlük trend eğrisi çizilir."
+                },
                 modifier = Modifier.padding(top = 18.dp),
                 action = {
                     NutraButton(
-                        text = "İlk kiloyu ekle",
+                        text = if (hasAnyWeightHistory) "Kilo ekle" else "İlk kiloyu ekle",
                         onClick = onAddWeightClick,
                         style = NutraButtonStyle.Primary,
                         size = NutraButtonSize.Medium,
@@ -1239,8 +1206,8 @@ private fun WeightTrendBezierCard(
         }
 
         val activePoint = scrubbedIndex?.let { points.getOrNull(it) } ?: points.last()
-        val firstEma = points.first().emaTrendKg
-        val deltaFromStart = activePoint.emaTrendKg - firstEma
+        val firstRawWeight = points.first().rawWeightKg
+        val deltaFromStart = activePoint.rawWeightKg - firstRawWeight
         val deltaSign = if (deltaFromStart >= 0.05f) "+" else ""
         val deltaColor = when (profile.goalType) {
             GoalType.LOSE_WEIGHT -> when {
@@ -1264,15 +1231,15 @@ private fun WeightTrendBezierCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = 18.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 Text(
-                    text = "${NutraFormatters.formatShortDate(activePoint.dateIso)} · Trend",
+                    text = NutraFormatters.formatShortDate(activePoint.dateIso),
                     style = NutraTheme.typography.caption,
                     color = if (scrubbedIndex != null) colors.accent else colors.textSecondary,
                 )
@@ -1280,7 +1247,7 @@ private fun WeightTrendBezierCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(
-                        text = "${NutraFormatters.formatKg(activePoint.emaTrendKg)} kg",
+                        text = "${NutraFormatters.formatKg(activePoint.rawWeightKg)} kg",
                         style = NutraTheme.typography.numberLarge,
                         color = colors.textPrimary,
                         modifier = Modifier.alignByBaseline(),
@@ -1294,27 +1261,14 @@ private fun WeightTrendBezierCard(
                 }
             }
 
-            Column(
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Text(
-                    text = "Tartı: ${NutraFormatters.formatKg(activePoint.rawWeightKg)} kg",
-                    style = NutraTheme.typography.caption,
-                    color = colors.textSecondary,
+            if (scrubbedIndex != null) {
+                NutraButton(
+                    text = "Son kayıt",
+                    onClick = { onScrub(null) },
+                    style = NutraButtonStyle.Secondary,
+                    size = NutraButtonSize.Small,
+                    leadingIcon = Icons.Rounded.Refresh,
                 )
-                if (scrubbedIndex != null) {
-                    Text(
-                        text = "Son kayıt",
-                        style = NutraTheme.typography.labelSmall,
-                        color = colors.onAccentSoft,
-                        modifier = Modifier
-                            .clip(NutraTheme.shapes.pill)
-                            .background(colors.accentSoft)
-                            .clickable(role = Role.Button) { onScrub(null) }
-                            .padding(horizontal = 8.dp, vertical = 2.dp),
-                    )
-                }
             }
         }
 

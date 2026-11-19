@@ -7,6 +7,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nutra.app.core.datastore.UserPreferencesDataStore
 import com.nutra.app.core.designsystem.NutraSnackbarTone
+import com.nutra.app.core.notification.WaterReminderScheduleCalculator
+import com.nutra.app.core.notification.WaterReminderScheduler
 import com.nutra.app.domain.model.ActivityLevel
 import com.nutra.app.domain.model.AppResult
 import com.nutra.app.domain.model.BiologicalSex
@@ -14,6 +16,7 @@ import com.nutra.app.domain.model.GoalType
 import com.nutra.app.domain.model.MacroGoals
 import com.nutra.app.domain.model.ThemePreference
 import com.nutra.app.domain.model.UserProfile
+import com.nutra.app.domain.model.WaterReminderSettings
 import com.nutra.app.domain.repository.NutritionRepository
 import com.nutra.app.domain.usecase.MacroGoalBounds
 import com.nutra.app.domain.usecase.NutritionCalculatorUseCase
@@ -55,6 +58,7 @@ class ProfileViewModel @Inject constructor(
     private val preferencesDataStore: UserPreferencesDataStore,
     private val nutritionRepository: NutritionRepository,
     private val calculatorUseCase: NutritionCalculatorUseCase,
+    private val waterReminderScheduler: WaterReminderScheduler,
 ) : ViewModel() {
 
     private val profileGoalBounds = MacroGoalBounds()
@@ -308,6 +312,21 @@ class ProfileViewModel @Inject constructor(
         }
     }
 
+    fun updateWaterReminder(settings: WaterReminderSettings) {
+        viewModelScope.launch {
+            val previous = preferencesDataStore.getSnapshot().waterReminder
+            val sanitized = WaterReminderScheduleCalculator.sanitize(settings)
+            preferencesDataStore.updateWaterReminder(sanitized)
+            waterReminderScheduler.sync(sanitized)
+            val message = when {
+                !sanitized.enabled -> "Su hatırlatıcı kapatıldı"
+                !previous.enabled -> "Su hatırlatıcı açıldı"
+                else -> "Su hatırlatıcı güncellendi"
+            }
+            emitFeedback(message)
+        }
+    }
+
     fun saveGeminiConfig(apiKey: String, model: String) {
         viewModelScope.launch {
             preferencesDataStore.updateGeminiConfig(apiKey, model)
@@ -378,6 +397,7 @@ class ProfileViewModel @Inject constructor(
                     calorieScalingBaseline = null
                     lastCalorieScaledGoals = null
                     previousGoalsBeforeRecalc = null
+                    waterReminderScheduler.sync(preferencesDataStore.getSnapshot().waterReminder)
                     emitFeedback("Yedek başarıyla geri yüklendi", NutraSnackbarTone.Success)
                 }
                 is AppResult.Error -> {

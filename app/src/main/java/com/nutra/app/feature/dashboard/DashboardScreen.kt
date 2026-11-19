@@ -1052,7 +1052,7 @@ private fun MealCard(
 
                     Text(
                         text = if (hasItems) {
-                            "P ${mealSummary.totalProtein.roundToInt()}g · K ${mealSummary.totalCarbs.roundToInt()}g · Y ${mealSummary.totalFat.roundToInt()}g"
+                            "${mealSummary.items.size} besin"
                         } else {
                             "Henüz eklenmedi"
                         },

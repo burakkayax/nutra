@@ -6,6 +6,7 @@ import com.nutra.app.core.network.GeminiAiService
 import com.nutra.app.core.network.OpenFoodFactsService
 import com.nutra.app.domain.model.AppResult
 import com.nutra.app.domain.model.ComboFoodEntry
+import com.nutra.app.domain.model.DailyAnalyticsPoint
 import com.nutra.app.domain.model.DailyNutritionSummary
 import com.nutra.app.domain.model.FoodCategory
 import com.nutra.app.domain.model.FoodItem
@@ -15,9 +16,13 @@ import com.nutra.app.domain.model.MealSummary
 import com.nutra.app.domain.model.MealType
 import com.nutra.app.domain.model.ServingUnit
 import com.nutra.app.domain.model.SmartComboSuggestion
+import com.nutra.app.domain.model.WeightTrendPoint
 import com.nutra.app.domain.usecase.ContextualMealRankerAndComboEngine
 import com.nutra.app.domain.usecase.TurkishTextNormalizer
+import com.nutra.app.feature.analytics.AnalyticsRangeOption
 import com.nutra.app.feature.analytics.AnalyticsUiState
+import com.nutra.app.feature.analytics.filterWeightTrendForRange
+import com.nutra.app.feature.analytics.summarizeAnalyticsRange
 import com.nutra.app.feature.dashboard.DashboardUiState
 import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
@@ -249,5 +254,44 @@ class NutraOptimizationTest {
         val analytics = AnalyticsUiState()
         assertNull(analytics.activeDayPoint)
         assertNull(analytics.activeWaterDayPoint)
+    }
+
+    @Test
+    fun analyticsRangeSummary_averagesLoggedDaysForCaloriesWaterAndMacros() {
+        val points = listOf(
+            DailyAnalyticsPoint("2026-11-17", calories = 2000, targetCalories = 2200, proteinGrams = 150f, carbsGrams = 200f, fatGrams = 60f, waterMl = 2400),
+            DailyAnalyticsPoint("2026-11-18", calories = 0, targetCalories = 2200, proteinGrams = 0f, carbsGrams = 0f, fatGrams = 0f, waterMl = 0),
+            DailyAnalyticsPoint("2026-11-19", calories = 2301, targetCalories = 2200, proteinGrams = 170f, carbsGrams = 240f, fatGrams = 80f, waterMl = 2601),
+        )
+
+        val summary = summarizeAnalyticsRange(points)
+
+        assertEquals(2151, summary.averageCalories)
+        assertEquals(2501, summary.averageWaterMl)
+        assertEquals(160f, summary.averageProteinGrams, 0.01f)
+        assertEquals(220f, summary.averageCarbsGrams, 0.01f)
+        assertEquals(70f, summary.averageFatGrams, 0.01f)
+    }
+
+    @Test
+    fun filterWeightTrendForRange_scopesPointsToSelectedDaysWhileKeepingLatestRecordedWeight() {
+        val endDate = LocalDate.of(2026, 11, 19)
+        val allPoints = listOf(
+            WeightTrendPoint("2026-10-25", rawWeightKg = 80.0f, emaTrendKg = 80.0f),
+            WeightTrendPoint("2026-11-08", rawWeightKg = 79.2f, emaTrendKg = 79.8f),
+            WeightTrendPoint("2026-11-14", rawWeightKg = 78.8f, emaTrendKg = 79.5f),
+            WeightTrendPoint("2026-11-19", rawWeightKg = 78.4f, emaTrendKg = 79.2f),
+        )
+
+        val last7 = filterWeightTrendForRange(allPoints, AnalyticsRangeOption.DAYS_7, endDate)
+        assertEquals(listOf("2026-11-14", "2026-11-19"), last7.pointsInRange.map { it.dateIso })
+        assertEquals(78.4f, last7.latestRecordedWeightKg!!, 0.001f)
+        assertTrue(last7.hasAnyHistory)
+
+        val last14 = filterWeightTrendForRange(allPoints, AnalyticsRangeOption.DAYS_14, endDate)
+        assertEquals(listOf("2026-11-08", "2026-11-14", "2026-11-19"), last14.pointsInRange.map { it.dateIso })
+
+        val last30 = filterWeightTrendForRange(allPoints, AnalyticsRangeOption.DAYS_30, endDate)
+        assertEquals(4, last30.pointsInRange.size)
     }
 }

@@ -11,12 +11,14 @@ import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.nutra.app.core.notification.WaterReminderScheduleCalculator
 import com.nutra.app.domain.model.ActivityLevel
 import com.nutra.app.domain.model.BiologicalSex
 import com.nutra.app.domain.model.GoalType
 import com.nutra.app.domain.model.MacroGoals
 import com.nutra.app.domain.model.ThemePreference
 import com.nutra.app.domain.model.UserProfile
+import com.nutra.app.domain.model.WaterReminderSettings
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -62,6 +64,14 @@ class UserPreferencesDataStore @Inject constructor(
         val USE_DYNAMIC_COLOR = booleanPreferencesKey("use_dynamic_color")
         val GEMINI_API_KEY = stringPreferencesKey("gemini_api_key")
         val GEMINI_MODEL = stringPreferencesKey("gemini_model")
+
+        val WATER_REMINDER_ENABLED = booleanPreferencesKey("water_reminder_enabled")
+        val WATER_REMINDER_INTERVAL_MINUTES = intPreferencesKey("water_reminder_interval_minutes")
+        val WATER_REMINDER_START_HOUR = intPreferencesKey("water_reminder_start_hour")
+        val WATER_REMINDER_START_MINUTE = intPreferencesKey("water_reminder_start_minute")
+        val WATER_REMINDER_END_HOUR = intPreferencesKey("water_reminder_end_hour")
+        val WATER_REMINDER_END_MINUTE = intPreferencesKey("water_reminder_end_minute")
+        val WATER_REMINDER_STOP_ON_GOAL = booleanPreferencesKey("water_reminder_stop_on_goal")
     }
 
     private companion object {
@@ -105,6 +115,18 @@ class UserPreferencesDataStore @Inject constructor(
             waterMl = prefs[Keys.GOAL_WATER_ML] ?: 2500,
         )
 
+        val waterReminder = WaterReminderScheduleCalculator.sanitize(
+            WaterReminderSettings(
+                enabled = prefs[Keys.WATER_REMINDER_ENABLED] ?: false,
+                intervalMinutes = prefs[Keys.WATER_REMINDER_INTERVAL_MINUTES] ?: 120,
+                startHour = prefs[Keys.WATER_REMINDER_START_HOUR] ?: 9,
+                startMinute = prefs[Keys.WATER_REMINDER_START_MINUTE] ?: 0,
+                endHour = prefs[Keys.WATER_REMINDER_END_HOUR] ?: 22,
+                endMinute = prefs[Keys.WATER_REMINDER_END_MINUTE] ?: 0,
+                stopWhenGoalReached = prefs[Keys.WATER_REMINDER_STOP_ON_GOAL] ?: true,
+            ),
+        )
+
         return UserProfile(
             sex = sex,
             age = prefs[Keys.AGE] ?: 28,
@@ -119,6 +141,7 @@ class UserPreferencesDataStore @Inject constructor(
             useDynamicColor = prefs[Keys.USE_DYNAMIC_COLOR] ?: false,
             geminiApiKey = prefs[Keys.GEMINI_API_KEY] ?: "",
             geminiModel = prefs[Keys.GEMINI_MODEL] ?: "gemini-2.5-flash",
+            waterReminder = waterReminder,
         )
     }
 
@@ -237,6 +260,14 @@ class UserPreferencesDataStore @Inject constructor(
             prefs[Keys.USE_DYNAMIC_COLOR] = profile.useDynamicColor
             prefs[Keys.GEMINI_API_KEY] = profile.geminiApiKey.trim()
             prefs[Keys.GEMINI_MODEL] = profile.geminiModel.trim().ifEmpty { "gemini-2.5-flash" }
+            val safeReminder = WaterReminderScheduleCalculator.sanitize(profile.waterReminder)
+            prefs[Keys.WATER_REMINDER_ENABLED] = safeReminder.enabled
+            prefs[Keys.WATER_REMINDER_INTERVAL_MINUTES] = safeReminder.intervalMinutes
+            prefs[Keys.WATER_REMINDER_START_HOUR] = safeReminder.startHour
+            prefs[Keys.WATER_REMINDER_START_MINUTE] = safeReminder.startMinute
+            prefs[Keys.WATER_REMINDER_END_HOUR] = safeReminder.endHour
+            prefs[Keys.WATER_REMINDER_END_MINUTE] = safeReminder.endMinute
+            prefs[Keys.WATER_REMINDER_STOP_ON_GOAL] = safeReminder.stopWhenGoalReached
         }
         applySystemNightMode(profile.themePreference)
     }
@@ -245,6 +276,19 @@ class UserPreferencesDataStore @Inject constructor(
         context.nutraDataStore.edit { prefs ->
             prefs[Keys.GEMINI_API_KEY] = apiKey.trim()
             prefs[Keys.GEMINI_MODEL] = model.trim().ifEmpty { "gemini-2.5-flash" }
+        }
+    }
+
+    suspend fun updateWaterReminder(settings: WaterReminderSettings) {
+        val safe = WaterReminderScheduleCalculator.sanitize(settings)
+        context.nutraDataStore.edit { prefs ->
+            prefs[Keys.WATER_REMINDER_ENABLED] = safe.enabled
+            prefs[Keys.WATER_REMINDER_INTERVAL_MINUTES] = safe.intervalMinutes
+            prefs[Keys.WATER_REMINDER_START_HOUR] = safe.startHour
+            prefs[Keys.WATER_REMINDER_START_MINUTE] = safe.startMinute
+            prefs[Keys.WATER_REMINDER_END_HOUR] = safe.endHour
+            prefs[Keys.WATER_REMINDER_END_MINUTE] = safe.endMinute
+            prefs[Keys.WATER_REMINDER_STOP_ON_GOAL] = safe.stopWhenGoalReached
         }
     }
 }

@@ -82,6 +82,7 @@ import com.nutra.app.core.designsystem.NutraSwitch
 import com.nutra.app.core.designsystem.NutraTextField
 import com.nutra.app.core.designsystem.NutraTheme
 import com.nutra.app.core.designsystem.rememberSkeletonPulseAlpha
+import com.nutra.app.core.notification.WaterReminderScheduleCalculator
 import com.nutra.app.domain.model.ThemePreference
 import kotlinx.coroutines.delay
 import java.time.LocalDate
@@ -113,6 +114,7 @@ fun ProfileScreen(
     contentPadding: PaddingValues = PaddingValues(0.dp),
     scrollToTopTrigger: Int = 0,
     onEditBodyProfile: () -> Unit = {},
+    onOpenWaterReminder: () -> Unit = {},
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val colors = NutraTheme.colors
@@ -315,7 +317,36 @@ fun ProfileScreen(
                 }
             }
 
-            // 3. Appearance preferences
+            // 3. Water reminder settings
+            item(key = "water_reminder") {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    NutraSectionHeader(title = "Hatırlatıcılar")
+
+                    NutraCard(contentPadding = PaddingValues(horizontal = NutraTheme.spacing.card, vertical = NutraTheme.spacing.sm)) {
+                        NutraListRow(
+                            title = "Su hatırlatıcı",
+                            subtitle = WaterReminderScheduleCalculator.formatProfileSummary(profile.waterReminder),
+                            leading = {
+                                NutraIconBadge(
+                                    icon = NutraIcons.WaterDrop,
+                                    tint = if (profile.waterReminder.enabled) colors.water else colors.textPrimary,
+                                    container = colors.surfaceMuted,
+                                )
+                            },
+                            trailing = {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                                    contentDescription = null,
+                                    tint = colors.textTertiary,
+                                )
+                            },
+                            onClick = onOpenWaterReminder,
+                        )
+                    }
+                }
+            }
+
+            // 4. Appearance preferences
             item(key = "appearance") {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     NutraSectionHeader(title = "Görünüm")

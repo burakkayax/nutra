@@ -339,6 +339,10 @@ class NutritionRepository @Inject constructor(
         }
     }
 
+    suspend fun getWaterMl(dateIso: String): Int = withContext(Dispatchers.IO) {
+        nutraDao.getWaterForDate(dateIso)?.waterMl ?: 0
+    }
+
     suspend fun addWaterMl(dateIso: String, deltaMl: Int) = withContext(Dispatchers.IO) {
         waterMutex.withLock {
             val current = nutraDao.getWaterForDate(dateIso)?.waterMl ?: 0

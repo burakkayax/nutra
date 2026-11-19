@@ -112,6 +112,7 @@ import com.nutra.app.feature.onboarding.OnboardingViewModel
 import com.nutra.app.feature.profile.EditBodyProfileScreen
 import com.nutra.app.feature.profile.ProfileScreen
 import com.nutra.app.feature.profile.ProfileViewModel
+import com.nutra.app.feature.profile.WaterReminderScreen
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -234,13 +235,19 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private enum class ProfileSubScreen {
+    NONE,
+    EDIT_BODY_PROFILE,
+    WATER_REMINDER,
+}
+
 @Composable
 fun NutraAppRoot(
     onboardingCompleted: Boolean,
     onReadyChanged: (Boolean) -> Unit = {},
 ) {
     var activeTab by rememberSaveable { mutableStateOf(PrimaryDestination.DASHBOARD) }
-    var isEditingBodyProfile by rememberSaveable { mutableStateOf(false) }
+    var profileSubScreen by rememberSaveable { mutableStateOf(ProfileSubScreen.NONE) }
 
     Crossfade(
         targetState = onboardingCompleted,
@@ -254,7 +261,7 @@ fun NutraAppRoot(
                 viewModel = onboardingViewModel,
                 onOnboardingFinished = {
                     activeTab = PrimaryDestination.DASHBOARD
-                    isEditingBodyProfile = false
+                    profileSubScreen = ProfileSubScreen.NONE
                 },
             )
         } else {
@@ -303,16 +310,18 @@ fun NutraAppRoot(
             val mountAnalytics = hasVisitedAnalytics || prewarmAnalytics || activeTab == PrimaryDestination.ANALYTICS
             val mountProfile = hasVisitedProfile || prewarmProfile || activeTab == PrimaryDestination.PROFILE
             val saveableStateHolder = rememberSaveableStateHolder()
-            val showEditBodyProfile = activeTab == PrimaryDestination.PROFILE && isEditingBodyProfile
+            val showEditBodyProfile = activeTab == PrimaryDestination.PROFILE && profileSubScreen == ProfileSubScreen.EDIT_BODY_PROFILE
+            val showWaterReminder = activeTab == PrimaryDestination.PROFILE && profileSubScreen == ProfileSubScreen.WATER_REMINDER
+            val hasProfileSubScreen = showEditBodyProfile || showWaterReminder
             var dashboardScrollTopTick by remember { mutableIntStateOf(0) }
             var analyticsScrollTopTick by remember { mutableIntStateOf(0) }
             var profileScrollTopTick by remember { mutableIntStateOf(0) }
 
-            BackHandler(enabled = showEditBodyProfile) {
-                isEditingBodyProfile = false
+            BackHandler(enabled = hasProfileSubScreen) {
+                profileSubScreen = ProfileSubScreen.NONE
             }
 
-            BackHandler(enabled = !showEditBodyProfile && activeTab != PrimaryDestination.DASHBOARD) {
+            BackHandler(enabled = !hasProfileSubScreen && activeTab != PrimaryDestination.DASHBOARD) {
                 activeTab = PrimaryDestination.DASHBOARD
             }
 
@@ -338,7 +347,7 @@ fun NutraAppRoot(
                         .fillMaxSize()
                         .windowInsetsPadding(contentInsets),
                 ) {
-                    TabSlotBox(isSelected = activeTab == PrimaryDestination.DASHBOARD && !showEditBodyProfile) {
+                    TabSlotBox(isSelected = activeTab == PrimaryDestination.DASHBOARD && !hasProfileSubScreen) {
                         saveableStateHolder.SaveableStateProvider(PrimaryDestination.DASHBOARD) {
                             DashboardScreen(
                                 viewModel = dashboardViewModel,
@@ -349,7 +358,7 @@ fun NutraAppRoot(
                     }
 
                     if (mountAnalytics) {
-                        TabSlotBox(isSelected = activeTab == PrimaryDestination.ANALYTICS && !showEditBodyProfile) {
+                        TabSlotBox(isSelected = activeTab == PrimaryDestination.ANALYTICS && !hasProfileSubScreen) {
                             saveableStateHolder.SaveableStateProvider(PrimaryDestination.ANALYTICS) {
                                 val analyticsViewModel: AnalyticsViewModel = viewModel()
                                 LaunchedEffect(activeTab) {
@@ -367,14 +376,15 @@ fun NutraAppRoot(
                     }
 
                     if (mountProfile) {
-                        TabSlotBox(isSelected = activeTab == PrimaryDestination.PROFILE && !showEditBodyProfile) {
+                        TabSlotBox(isSelected = activeTab == PrimaryDestination.PROFILE && !hasProfileSubScreen) {
                             saveableStateHolder.SaveableStateProvider(PrimaryDestination.PROFILE) {
                                 val profileViewModel: ProfileViewModel = viewModel()
                                 ProfileScreen(
                                     viewModel = profileViewModel,
                                     contentPadding = contentPadding,
                                     scrollToTopTrigger = profileScrollTopTick,
-                                    onEditBodyProfile = { isEditingBodyProfile = true },
+                                    onEditBodyProfile = { profileSubScreen = ProfileSubScreen.EDIT_BODY_PROFILE },
+                                    onOpenWaterReminder = { profileSubScreen = ProfileSubScreen.WATER_REMINDER },
                                 )
                             }
                         }
@@ -382,7 +392,7 @@ fun NutraAppRoot(
                 }
 
                 AnimatedVisibility(
-                    visible = !showEditBodyProfile,
+                    visible = !hasProfileSubScreen,
                     enter = fadeIn(tween(180)) + slideInVertically(tween(200)) { it / 2 },
                     exit = fadeOut(tween(120)) + slideOutVertically(tween(140)) { it / 2 },
                     modifier = Modifier
@@ -392,7 +402,7 @@ fun NutraAppRoot(
                     NutraBottomBar(
                         selectedTab = activeTab,
                         onSelectTab = { dest ->
-                            isEditingBodyProfile = false
+                            profileSubScreen = ProfileSubScreen.NONE
                             if (dest == activeTab) {
                                 when (dest) {
                                     PrimaryDestination.DASHBOARD -> dashboardScrollTopTick++
@@ -427,7 +437,7 @@ fun NutraAppRoot(
                     } else {
                         EditBodyProfileScreen(
                             profile = profileState.profile,
-                            onNavigateBack = { isEditingBodyProfile = false },
+                            onNavigateBack = { profileSubScreen = ProfileSubScreen.NONE },
                             onSave = { sex, age, heightCm, currentWeight, targetWeight, activity, goalType, recalculate ->
                                 profileViewModel.updateBodyProfile(
                                     sex = sex,
@@ -439,7 +449,38 @@ fun NutraAppRoot(
                                     goalType = goalType,
                                     recalculateGoals = recalculate,
                                 )
-                                isEditingBodyProfile = false
+                                profileSubScreen = ProfileSubScreen.NONE
+                            },
+                        )
+                    }
+                }
+
+                AnimatedVisibility(
+                    visible = showWaterReminder,
+                    enter = slideInHorizontally(tween(220)) { it / 4 } + fadeIn(tween(180)),
+                    exit = slideOutHorizontally(tween(180)) { it / 4 } + fadeOut(tween(140)),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .zIndex(3f)
+                        .background(NutraTheme.colors.background)
+                        .windowInsetsPadding(contentInsets),
+                ) {
+                    val profileViewModel: ProfileViewModel = viewModel()
+                    val profileState by profileViewModel.uiState.collectAsStateWithLifecycle()
+                    if (profileState.isLoading) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(NutraTheme.colors.background),
+                        )
+                    } else {
+                        WaterReminderScreen(
+                            initialSettings = profileState.profile.waterReminder,
+                            waterGoalMl = profileState.profile.goals.waterMl,
+                            onNavigateBack = { profileSubScreen = ProfileSubScreen.NONE },
+                            onSave = { updatedReminder ->
+                                profileViewModel.updateWaterReminder(updatedReminder)
+                                profileSubScreen = ProfileSubScreen.NONE
                             },
                         )
                     }

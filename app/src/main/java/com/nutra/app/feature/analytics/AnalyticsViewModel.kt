@@ -27,6 +27,7 @@ import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
+import kotlin.math.roundToInt
 
 enum class AnalyticsRangeOption(val days: Int, val title: String) {
     DAYS_7(7, "7 Gün"),
@@ -49,9 +50,14 @@ data class AnalyticsUiState(
     val dailyPoints: List<DailyAnalyticsPoint> = emptyList(),
     val averageCalories: Int = 0,
     val averageWaterMl: Int = 0,
+    val averageProteinGrams: Float = 0f,
+    val averageCarbsGrams: Float = 0f,
+    val averageFatGrams: Float = 0f,
     val scrubbedDayIndex: Int? = null,
     val scrubbedWaterIndex: Int? = null,
     val weightTrendPoints: List<WeightTrendPoint> = emptyList(),
+    val latestRecordedWeightKg: Float? = null,
+    val hasAnyWeightHistory: Boolean = false,
     val scrubbedWeightIndex: Int? = null,
     val profile: AnalyticsProfileSlice = AnalyticsProfileSlice(),
     val showAddWeightDialog: Boolean = false,
@@ -65,11 +71,69 @@ data class AnalyticsUiState(
         get() = scrubbedWaterIndex?.let { dailyPoints.getOrNull(it) } ?: dailyPoints.lastOrNull()
 }
 
-private data class AnalyticsRangeSummary(
+internal data class AnalyticsRangeSummary(
     val points: List<DailyAnalyticsPoint>,
     val averageCalories: Int,
     val averageWaterMl: Int,
+    val averageProteinGrams: Float,
+    val averageCarbsGrams: Float,
+    val averageFatGrams: Float,
 )
+
+internal data class WeightRangeSummary(
+    val pointsInRange: List<WeightTrendPoint>,
+    val latestRecordedWeightKg: Float?,
+    val hasAnyHistory: Boolean,
+)
+
+internal fun summarizeAnalyticsRange(points: List<DailyAnalyticsPoint>): AnalyticsRangeSummary {
+    var calSum = 0
+    var calCount = 0
+    var waterSum = 0
+    var waterCount = 0
+    var proteinSum = 0.0
+    var carbsSum = 0.0
+    var fatSum = 0.0
+    var macroDayCount = 0
+    for (pt in points) {
+        if (pt.calories > 0) {
+            calSum += pt.calories
+            calCount++
+        }
+        if (pt.waterMl > 0) {
+            waterSum += pt.waterMl
+            waterCount++
+        }
+        if (pt.proteinGrams > 0f || pt.carbsGrams > 0f || pt.fatGrams > 0f) {
+            proteinSum += pt.proteinGrams
+            carbsSum += pt.carbsGrams
+            fatSum += pt.fatGrams
+            macroDayCount++
+        }
+    }
+    return AnalyticsRangeSummary(
+        points = points,
+        averageCalories = if (calCount == 0) 0 else (calSum.toFloat() / calCount).roundToInt(),
+        averageWaterMl = if (waterCount == 0) 0 else (waterSum.toFloat() / waterCount).roundToInt(),
+        averageProteinGrams = if (macroDayCount == 0) 0f else (proteinSum / macroDayCount).toFloat(),
+        averageCarbsGrams = if (macroDayCount == 0) 0f else (carbsSum / macroDayCount).toFloat(),
+        averageFatGrams = if (macroDayCount == 0) 0f else (fatSum / macroDayCount).toFloat(),
+    )
+}
+
+internal fun filterWeightTrendForRange(
+    allTrendPoints: List<WeightTrendPoint>,
+    option: AnalyticsRangeOption,
+    endDate: LocalDate,
+): WeightRangeSummary {
+    val startIso = endDate.minusDays((option.days - 1).toLong()).toString()
+    val endIso = endDate.toString()
+    return WeightRangeSummary(
+        pointsInRange = allTrendPoints.filter { it.dateIso in startIso..endIso },
+        latestRecordedWeightKg = allTrendPoints.lastOrNull()?.rawWeightKg,
+        hasAnyHistory = allTrendPoints.isNotEmpty(),
+    )
+}
 
 private data class AnalyticsInteractionState(
     val scrubbedDayIndex: Int?,
@@ -102,33 +166,21 @@ class AnalyticsViewModel @Inject constructor(
     }.flatMapLatest { (option, end) ->
         val start = end.minusDays((option.days - 1).toLong())
         nutritionRepository.observeAnalyticsRange(start, end)
-            .map { points ->
-                var calSum = 0
-                var calCount = 0
-                var waterSum = 0
-                var waterCount = 0
-                for (pt in points) {
-                    if (pt.calories > 0) {
-                        calSum += pt.calories
-                        calCount++
-                    }
-                    if (pt.waterMl > 0) {
-                        waterSum += pt.waterMl
-                        waterCount++
-                    }
-                }
-                AnalyticsRangeSummary(
-                    points = points,
-                    averageCalories = if (calCount == 0) 0 else calSum / calCount,
-                    averageWaterMl = if (waterCount == 0) 0 else waterSum / waterCount,
-                )
-            }
+            .map(::summarizeAnalyticsRange)
             .flowOn(Dispatchers.Default)
     }
 
-    private val weightTrendPointsFlow = nutritionRepository.observeWeightEntries()
+    private val allWeightTrendPointsFlow = nutritionRepository.observeWeightEntries()
         .map { entries -> weightTrendCalculator.calculateTrend(entries) }
         .flowOn(Dispatchers.Default)
+
+    private val weightRangeSummaryFlow = combine(
+        allWeightTrendPointsFlow,
+        rangeFlow,
+        todayFlow,
+    ) { allPoints, option, end ->
+        filterWeightTrendForRange(allPoints, option, end)
+    }.flowOn(Dispatchers.Default)
 
     private val interactionStateFlow = combine(
         scrubbedDayIndexFlow,
@@ -161,20 +213,26 @@ class AnalyticsViewModel @Inject constructor(
     val uiState: StateFlow<AnalyticsUiState> = combine(
         rangeFlow,
         rangeSummaryFlow,
-        weightTrendPointsFlow,
+        weightRangeSummaryFlow,
         analyticsProfileFlow,
         interactionStateFlow,
-    ) { range, summary, trendPoints, profile, interaction ->
+    ) { range, summary, weightSummary, profile, interaction ->
         val points = summary.points
+        val trendPoints = weightSummary.pointsInRange
         AnalyticsUiState(
             isLoading = false,
             selectedRange = range,
             dailyPoints = points,
             averageCalories = summary.averageCalories,
             averageWaterMl = summary.averageWaterMl,
+            averageProteinGrams = summary.averageProteinGrams,
+            averageCarbsGrams = summary.averageCarbsGrams,
+            averageFatGrams = summary.averageFatGrams,
             scrubbedDayIndex = if (points.isEmpty()) null else interaction.scrubbedDayIndex?.coerceIn(0, points.lastIndex),
             scrubbedWaterIndex = if (points.isEmpty()) null else interaction.scrubbedWaterIndex?.coerceIn(0, points.lastIndex),
             weightTrendPoints = trendPoints,
+            latestRecordedWeightKg = weightSummary.latestRecordedWeightKg,
+            hasAnyWeightHistory = weightSummary.hasAnyHistory,
             scrubbedWeightIndex = if (trendPoints.isEmpty()) null else interaction.scrubbedWeightIndex?.coerceIn(0, trendPoints.lastIndex),
             profile = profile,
             showAddWeightDialog = interaction.showAddWeightDialog,
@@ -198,6 +256,7 @@ class AnalyticsViewModel @Inject constructor(
         rangeFlow.value = option
         scrubbedDayIndexFlow.value = null
         scrubbedWaterIndexFlow.value = null
+        scrubbedWeightIndexFlow.value = null
     }
 
     fun updateScrubbedDayIndex(index: Int?) {
