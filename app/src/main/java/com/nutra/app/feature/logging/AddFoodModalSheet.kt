@@ -299,7 +299,6 @@ fun AddFoodModalSheet(
                     if (selectedFood != null) {
                         PortionPickerContent(
                             food = selectedFood,
-                            onBack = onClosePortionPicker,
                             onToggleFavorite = { onToggleFavorite(selectedFood) },
                             onConfirm = { unitLabel, unitGrams, multiplier ->
                                 onConfirmLogFood(selectedFood, unitLabel, unitGrams, multiplier)
@@ -939,7 +938,6 @@ private fun CatalogFoodRow(
 @Composable
 private fun PortionPickerContent(
     food: FoodItem,
-    onBack: () -> Unit,
     onToggleFavorite: () -> Unit,
     onConfirm: (unitLabel: String, unitGrams: Float, multiplier: Float) -> Unit,
     modifier: Modifier = Modifier,
@@ -972,14 +970,16 @@ private fun PortionPickerContent(
     val liveCarbs = if (effectiveGrams > 0f) food.carbsForGrams(effectiveGrams) else 0f
     val liveFat = if (effectiveGrams > 0f) food.fatForGrams(effectiveGrams) else 0f
 
-    Column(modifier = modifier) {
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = NutraTheme.spacing.screen),
-            verticalArrangement = Arrangement.spacedBy(18.dp),
-        ) {
+    Column(
+        modifier = modifier
+            .verticalScroll(rememberScrollState())
+            .padding(
+                start = NutraTheme.spacing.screen,
+                end = NutraTheme.spacing.screen,
+                bottom = 24.dp,
+            ),
+        verticalArrangement = Arrangement.spacedBy(18.dp),
+    ) {
             // Food header + live calorie hero
             NutraCard(
                 color = sheetCardContainerColor(),
@@ -1257,19 +1257,6 @@ private fun PortionPickerContent(
                 )
             }
 
-            Spacer(Modifier.height(8.dp))
-        }
-
-        // Sticky footer
-        NutraDivider()
-        NutraBottomActionBar(includeNavigationInsets = false) {
-            NutraButton(
-                text = "Geri",
-                onClick = onBack,
-                style = NutraButtonStyle.Secondary,
-                size = NutraButtonSize.Medium,
-                modifier = Modifier.weight(0.32f),
-            )
             NutraButton(
                 text = if (isCustomGramValid) {
                     "Ekle · ${NutraFormatters.formatInt(liveCalories)} kcal"
@@ -1290,9 +1277,8 @@ private fun PortionPickerContent(
                 leadingIcon = if (isCustomGramValid) Icons.Rounded.Check else null,
                 enabled = isCustomGramValid,
                 hapticFeedback = HapticFeedbackType.Confirm,
-                modifier = Modifier.weight(0.68f),
+                modifier = Modifier.fillMaxWidth(),
             )
-        }
     }
 }
 

@@ -7,8 +7,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
@@ -29,13 +31,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.nutra.app.core.designsystem.NutraBottomActionBar
-import com.nutra.app.core.designsystem.NutraButton
-import com.nutra.app.core.designsystem.NutraButtonSize
-import com.nutra.app.core.designsystem.NutraButtonStyle
 import com.nutra.app.core.designsystem.NutraCard
 import com.nutra.app.core.designsystem.NutraContentMaxWidth
-import com.nutra.app.core.designsystem.NutraDialog
 import com.nutra.app.core.designsystem.NutraDivider
 import com.nutra.app.core.designsystem.NutraFormatters
 import com.nutra.app.core.designsystem.NutraIconButton
@@ -68,7 +65,7 @@ private enum class DailyGoalField(
 fun DailyGoalsScreen(
     profile: UserProfile,
     onNavigateBack: () -> Unit,
-    onSave: (MacroGoals) -> Unit,
+    onGoalsChange: (MacroGoals) -> Unit,
 ) {
     val colors = NutraTheme.colors
     val calculator = remember { NutritionCalculatorUseCase() }
@@ -84,7 +81,6 @@ fun DailyGoalsScreen(
     var calorieScalingBaseline by remember { mutableStateOf<MacroGoals?>(null) }
     var lastCalorieScaledGoals by remember { mutableStateOf<MacroGoals?>(null) }
     var activeGoalField by remember { mutableStateOf<DailyGoalField?>(null) }
-    var showDiscardDialog by remember { mutableStateOf(false) }
 
     val draftGoals = MacroGoals(
         calories = calories,
@@ -93,14 +89,15 @@ fun DailyGoalsScreen(
         fatGrams = fatGrams,
         waterMl = waterMl,
     )
-    val hasUnsavedChanges = draftGoals != initialGoals
 
     fun applyGoals(updated: MacroGoals) {
+        if (updated == draftGoals) return
         calories = updated.calories
         proteinGrams = updated.proteinGrams
         carbsGrams = updated.carbsGrams
         fatGrams = updated.fatGrams
         waterMl = updated.waterMl
+        onGoalsChange(updated)
     }
 
     fun applyCalorieTarget(targetCalories: Int) {
@@ -130,9 +127,11 @@ fun DailyGoalsScreen(
 
     fun updateWater(nextWaterMl: Int) {
         val clamped = nextWaterMl.coerceIn(bounds.minWaterMl, bounds.maxWaterMl)
+        if (clamped == waterMl) return
         waterMl = clamped
         calorieScalingBaseline = calorieScalingBaseline?.copy(waterMl = clamped)
         lastCalorieScaledGoals = lastCalorieScaledGoals?.copy(waterMl = clamped)
+        onGoalsChange(draftGoals.copy(waterMl = clamped))
     }
 
     fun recalculateFromProfile() {
@@ -149,15 +148,7 @@ fun DailyGoalsScreen(
         applyGoals(calculated)
     }
 
-    fun requestExit() {
-        if (hasUnsavedChanges) {
-            showDiscardDialog = true
-        } else {
-            onNavigateBack()
-        }
-    }
-
-    BackHandler(onBack = ::requestExit)
+    BackHandler(onBack = onNavigateBack)
 
     val proteinKcal = draftGoals.proteinGrams * 4f
     val carbsKcal = draftGoals.carbsGrams * 4f
@@ -190,7 +181,7 @@ fun DailyGoalsScreen(
                 NutraIconButton(
                     icon = Icons.AutoMirrored.Rounded.ArrowBack,
                     contentDescription = "Geri",
-                    onClick = ::requestExit,
+                    onClick = onNavigateBack,
                     size = 44.dp,
                     iconSize = 20.dp,
                 )
@@ -318,43 +309,10 @@ fun DailyGoalsScreen(
                         )
                     }
                 }
-            }
 
-            NutraDivider()
-            NutraBottomActionBar {
-                NutraButton(
-                    text = "Vazgeç",
-                    onClick = ::requestExit,
-                    style = NutraButtonStyle.Secondary,
-                    size = NutraButtonSize.Medium,
-                    modifier = Modifier.weight(0.38f),
-                )
-                NutraButton(
-                    text = "Kaydet",
-                    onClick = { onSave(draftGoals) },
-                    style = NutraButtonStyle.Primary,
-                    size = NutraButtonSize.Medium,
-                    hapticFeedback = HapticFeedbackType.Confirm,
-                    modifier = Modifier.weight(0.62f),
-                )
+                Spacer(Modifier.navigationBarsPadding())
             }
         }
-    }
-
-    if (showDiscardDialog) {
-        NutraDialog(
-            onDismissRequest = { showDiscardDialog = false },
-            title = "Değişikliklerden vazgeç?",
-            message = "Günlük hedef değişikliklerin kaydedilmedi. Çıkmak istediğine emin misin?",
-            confirmText = "Vazgeç ve çık",
-            onConfirm = {
-                showDiscardDialog = false
-                onNavigateBack()
-            },
-            dismissText = "Düzenlemeye dön",
-            onDismiss = { showDiscardDialog = false },
-            destructive = true,
-        )
     }
 
     val editingField = activeGoalField

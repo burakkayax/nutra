@@ -36,6 +36,7 @@ import java.io.InputStream
 import java.time.LocalDate
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import kotlin.math.abs
 
@@ -117,6 +118,7 @@ class ProfileViewModel @Inject constructor(
     private val pendingEditCount = AtomicInteger(0)
     private val pendingBodyEditCount = AtomicInteger(0)
     private val pendingWaterReminderEditCount = AtomicInteger(0)
+    private val pendingDailyGoalsTarget = AtomicReference<MacroGoals?>(null)
     private var latestOptimisticGoals: MacroGoals? = null
     private var calorieScalingBaseline: MacroGoals? = null
     private var lastCalorieScaledGoals: MacroGoals? = null
@@ -198,19 +200,22 @@ class ProfileViewModel @Inject constructor(
         )
     }
 
-    fun saveDailyGoals(goals: MacroGoals) {
+    fun updateDailyGoals(goals: MacroGoals) {
+        val safeGoals = MacroGoals(
+            calories = goals.calories.coerceIn(profileGoalBounds.minCalories, profileGoalBounds.maxCalories),
+            proteinGrams = goals.proteinGrams.coerceIn(profileGoalBounds.minProtein, profileGoalBounds.maxProtein),
+            carbsGrams = goals.carbsGrams.coerceIn(profileGoalBounds.minCarbs, profileGoalBounds.maxCarbs),
+            fatGrams = goals.fatGrams.coerceIn(profileGoalBounds.minFat, profileGoalBounds.maxFat),
+            waterMl = goals.waterMl.coerceIn(profileGoalBounds.minWaterMl, profileGoalBounds.maxWaterMl),
+        )
+        pendingGoalsFlow.value = safeGoals
+        pendingDailyGoalsTarget.set(safeGoals)
         launchGoalEdit {
             calorieScalingBaseline = null
             lastCalorieScaledGoals = null
-            val safeGoals = MacroGoals(
-                calories = goals.calories.coerceIn(profileGoalBounds.minCalories, profileGoalBounds.maxCalories),
-                proteinGrams = goals.proteinGrams.coerceIn(profileGoalBounds.minProtein, profileGoalBounds.maxProtein),
-                carbsGrams = goals.carbsGrams.coerceIn(profileGoalBounds.minCarbs, profileGoalBounds.maxCarbs),
-                fatGrams = goals.fatGrams.coerceIn(profileGoalBounds.minFat, profileGoalBounds.maxFat),
-                waterMl = goals.waterMl.coerceIn(profileGoalBounds.minWaterMl, profileGoalBounds.maxWaterMl),
-            )
-            persistGoalsLocked(safeGoals)
-            emitFeedback("Günlük hedefler güncellendi")
+            val target = pendingDailyGoalsTarget.getAndSet(null) ?: return@launchGoalEdit
+            latestOptimisticGoals = target
+            preferencesDataStore.updateGoals(target)
         }
     }
 
@@ -529,6 +534,7 @@ class ProfileViewModel @Inject constructor(
             waterReminderMutex.withLock {
                 when (val res = nutritionRepository.importBackupJson(rawJson)) {
                     is AppResult.Success -> {
+                        pendingDailyGoalsTarget.set(null)
                         latestOptimisticGoals = null
                         pendingGoalsFlow.value = null
                         pendingBodyProfileFlow.value = null

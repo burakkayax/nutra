@@ -524,9 +524,8 @@ fun NutraAppRoot(
                         DailyGoalsScreen(
                             profile = profileState.profile,
                             onNavigateBack = { profileSubScreen = ProfileSubScreen.NONE },
-                            onSave = { updatedGoals ->
-                                profileViewModel.saveDailyGoals(updatedGoals)
-                                profileSubScreen = ProfileSubScreen.NONE
+                            onGoalsChange = { updatedGoals ->
+                                profileViewModel.updateDailyGoals(updatedGoals)
                             },
                         )
                     }

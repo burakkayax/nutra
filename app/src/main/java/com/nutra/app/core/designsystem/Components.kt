@@ -68,6 +68,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SheetState
+import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -100,6 +101,9 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -122,6 +126,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -1591,6 +1596,37 @@ fun NutraSnackbarHost(
 // Overlays
 // ─────────────────────────────────────────────────────────────────────────────
 
+internal fun createModalSheetNestedScrollGuard(
+    isExpanded: () -> Boolean,
+): NestedScrollConnection = object : NestedScrollConnection {
+    override fun onPostScroll(
+        consumed: Offset,
+        available: Offset,
+        source: NestedScrollSource,
+    ): Offset {
+        if (available.y < 0f && isExpanded()) {
+            return Offset(0f, available.y)
+        }
+        if (available.y > 0f && source == NestedScrollSource.SideEffect) {
+            return Offset(0f, available.y)
+        }
+        return Offset.Zero
+    }
+
+    override suspend fun onPostFling(
+        consumed: Velocity,
+        available: Velocity,
+    ): Velocity {
+        if (available.y < 0f) {
+            return Velocity(0f, available.y)
+        }
+        if (available.y > 0f && consumed.y > 0f) {
+            return Velocity(0f, available.y)
+        }
+        return Velocity.Zero
+    }
+}
+
 /** Styled modal bottom sheet with a slim drag handle. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1601,6 +1637,11 @@ fun NutraModalSheet(
     contentWindowInsets: @Composable () -> WindowInsets = { BottomSheetDefaults.windowInsets },
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    val nestedScrollGuard = remember(sheetState) {
+        createModalSheetNestedScrollGuard(
+            isExpanded = { sheetState.currentValue == SheetValue.Expanded },
+        )
+    }
     ModalBottomSheet(
         onDismissRequest = onDismissRequest,
         modifier = modifier,
@@ -1620,7 +1661,14 @@ fun NutraModalSheet(
                     .background(NutraTheme.colors.textTertiary.copy(alpha = 0.4f)),
             )
         },
-        content = content,
+        content = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .nestedScroll(nestedScrollGuard),
+                content = content,
+            )
+        },
     )
 }
 

@@ -1,7 +1,11 @@
 package com.nutra.app
 
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.unit.Velocity
 import com.nutra.app.core.database.TurkishFoodSeedCatalog
 import com.nutra.app.core.designsystem.NutraFormatters
+import com.nutra.app.core.designsystem.createModalSheetNestedScrollGuard
 import com.nutra.app.core.network.GeminiAiService
 import com.nutra.app.domain.model.FoodCategory
 import com.nutra.app.domain.model.FoodItem
@@ -15,6 +19,7 @@ import com.nutra.app.domain.repository.NutraBackupPayload
 import com.nutra.app.domain.usecase.ContextualMealRankerAndComboEngine
 import com.nutra.app.domain.usecase.MacroGoalBounds
 import com.nutra.app.domain.usecase.NutritionCalculatorUseCase
+import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
@@ -196,5 +201,73 @@ class NutraAuditFixesTest {
         assertTrue(minScaled.proteinGrams in bounds.minProtein..bounds.maxProtein)
         assertTrue(minScaled.carbsGrams in bounds.minCarbs..bounds.maxCarbs)
         assertTrue(minScaled.fatGrams in bounds.minFat..bounds.maxFat)
+    }
+
+    @Test
+    fun modalSheetNestedScrollGuard_absorbsUpwardOverflowAndPreservesTopDismiss() = runTest {
+        var expanded = true
+        val guard = createModalSheetNestedScrollGuard(isExpanded = { expanded })
+
+        // Upward scroll/fling overflow when expanded is absorbed to prevent M3 settle oscillation
+        assertEquals(
+            Offset(0f, -120f),
+            guard.onPostScroll(
+                consumed = Offset(0f, -40f),
+                available = Offset(0f, -120f),
+                source = NestedScrollSource.UserInput,
+            ),
+        )
+        assertEquals(
+            Velocity(0f, -4800f),
+            guard.onPostFling(
+                consumed = Velocity(0f, -1200f),
+                available = Velocity(0f, -4800f),
+            ),
+        )
+
+        // Downward fling overflow from inner scroll hitting top is absorbed
+        assertEquals(
+            Offset(0f, 90f),
+            guard.onPostScroll(
+                consumed = Offset(0f, 200f),
+                available = Offset(0f, 90f),
+                source = NestedScrollSource.SideEffect,
+            ),
+        )
+        assertEquals(
+            Velocity(0f, 2600f),
+            guard.onPostFling(
+                consumed = Velocity(0f, 1400f),
+                available = Velocity(0f, 2600f),
+            ),
+        )
+
+        // Intentional pull-down and dismiss fling from top of list (consumed == 0) pass through to sheet
+        assertEquals(
+            Offset.Zero,
+            guard.onPostScroll(
+                consumed = Offset.Zero,
+                available = Offset(0f, 80f),
+                source = NestedScrollSource.UserInput,
+            ),
+        )
+        assertEquals(
+            Velocity.Zero,
+            guard.onPostFling(
+                consumed = Velocity.Zero,
+                available = Velocity(0f, 3200f),
+            ),
+        )
+
+        // Upward drag while sheet is not expanded passes through so user can pull sheet back up
+        expanded = false
+        assertEquals(
+            Offset.Zero,
+            guard.onPostScroll(
+                consumed = Offset.Zero,
+                available = Offset(0f, -60f),
+                source = NestedScrollSource.UserInput,
+            ),
+        )
     }
 }
