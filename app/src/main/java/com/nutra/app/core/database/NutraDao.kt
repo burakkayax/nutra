@@ -28,6 +28,21 @@ interface NutraDao {
     @Query("SELECT COUNT(*) FROM food_items")
     suspend fun getFoodCount(): Int
 
+    @Query("SELECT COUNT(*) FROM food_items WHERE isCustom = 0 AND catalogCode IS NOT NULL")
+    suspend fun countCatalogSeedFoods(): Int
+
+    @Query("SELECT * FROM food_items WHERE isCustom = 0 AND catalogCode IS NULL")
+    suspend fun getLegacySeedFoods(): List<FoodItemEntity>
+
+    @Query("SELECT * FROM food_items WHERE isCustom = 0 AND catalogCode IS NOT NULL")
+    suspend fun getCatalogSeedFoods(): List<FoodItemEntity>
+
+    @Query("DELETE FROM food_items WHERE isCustom = 0 AND catalogCode IS NULL")
+    suspend fun deleteLegacySeedFoods()
+
+    @Query("UPDATE meal_logs SET foodId = :newFoodId WHERE foodId = :oldFoodId")
+    suspend fun remapMealLogFoodId(oldFoodId: Long, newFoodId: Long?)
+
     @Query("SELECT * FROM food_items WHERE id = :foodId LIMIT 1")
     suspend fun findFoodById(foodId: Long): FoodItemEntity?
 

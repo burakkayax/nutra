@@ -122,6 +122,7 @@ import com.nutra.app.core.designsystem.rememberSkeletonPulseAlpha
 import com.nutra.app.domain.model.FoodCategory
 import com.nutra.app.domain.model.FoodItem
 import com.nutra.app.domain.model.MealType
+import com.nutra.app.domain.model.ServingUnitLabels
 import com.nutra.app.domain.model.SmartComboSuggestion
 import com.nutra.app.feature.dashboard.CustomFoodDraft
 import com.nutra.app.feature.dashboard.LoggingSheetUiState
@@ -147,11 +148,11 @@ private val AI_SAMPLE_PROMPTS = listOf(
 )
 
 private val SAMPLE_BARCODES = listOf(
-    "8690526011012" to "Ezine Beyaz Peynir (Tam Yağlı)",
-    "8690637012013" to "Süzme Yoğurt",
-    "8690504055105" to "Yulaf Ezmesi",
-    "8690572001017" to "Ton Balığı (Suda)",
-    "8690698011055" to "Sade Kefir (250ml)",
+    "8690526051222" to "Eti Burçak Yulaflı",
+    "8690559022374" to "Dardanel Aç Ye Mısırlı Ton Balığı",
+    "8690565018170" to "Pınar %1,5 Yarım Yağlı Uht Süt",
+    "8690504034032" to "Ülker Halley",
+    "8681630315010" to "Züber Noutos Fırınlanmış Nohut Cipsi",
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -834,9 +835,21 @@ private fun CatalogFoodRow(
         food.caloriesPer100g,
         food.defaultUnitGrams,
         food.defaultUnitLabel,
+        food.baseUnit,
     ) {
+        val unitSuffix = food.displayUnitSuffix
         val defaultCal = food.caloriesForGrams(food.defaultUnitGrams)
-        "${food.defaultUnitLabel} (${NutraFormatters.formatInt(food.defaultUnitGrams.roundToInt())} g) · ${NutraFormatters.formatInt(defaultCal)} kcal"
+        val roundedAmount = food.defaultUnitGrams.roundToInt()
+        val isRedundant100 = roundedAmount == 100 && (
+            food.defaultUnitLabel == ServingUnitLabels.BASE_100G ||
+                food.defaultUnitLabel == ServingUnitLabels.BASE_100ML ||
+                food.defaultUnitLabel.equals("100 $unitSuffix", ignoreCase = true)
+            )
+        if (isRedundant100) {
+            "100 $unitSuffix · ${NutraFormatters.formatInt(defaultCal)} kcal"
+        } else {
+            "${food.defaultUnitLabel} (${NutraFormatters.formatInt(roundedAmount)} $unitSuffix) · ${NutraFormatters.formatInt(defaultCal)} kcal"
+        }
     }
     val macroLine = remember(
         food.id,
@@ -933,15 +946,17 @@ private fun PortionPickerContent(
 ) {
     val haptic = LocalHapticFeedback.current
     val keyboardController = LocalSoftwareKeyboardController.current
-    val units = remember(food.id, food.defaultUnitLabel, food.defaultUnitGrams, food.alternateUnits) {
+    val unitSuffix = food.displayUnitSuffix
+    val units = remember(food.id, food.defaultUnitLabel, food.defaultUnitGrams, food.alternateUnits, food.baseUnit) {
         food.allUnits
     }
     var selectedUnitIndex by remember(food.id) { mutableIntStateOf(0) }
     var multiplier by remember(food.id) { mutableFloatStateOf(1f) }
     var customGramInput by remember(food.id) { mutableStateOf("") }
+    var detailsExpanded by remember(food.id) { mutableStateOf(false) }
 
     val selectedUnit = units.getOrElse(selectedUnitIndex) { units.first() }
-    val isRawGramMode = selectedUnit.label == "1 Gram"
+    val isRawGramMode = ServingUnitLabels.isRawUnitLabel(selectedUnit.label)
     val parsedCustomGrams = NutraFormatters.parseLocalizedFloat(customGramInput)
     val isCustomGramValid = !isRawGramMode || (parsedCustomGrams != null && parsedCustomGrams in 1f..3000f)
     val showRawGramError = isRawGramMode && customGramInput.isNotEmpty() && !isCustomGramValid
@@ -1054,7 +1069,7 @@ private fun PortionPickerContent(
                 ) {
                     units.forEachIndexed { idx, unit ->
                         val isSelected = idx == selectedUnitIndex
-                        val isRawUnit = unit.label == "1 Gram"
+                        val isRawUnit = ServingUnitLabels.isRawUnitLabel(unit.label)
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1078,7 +1093,11 @@ private fun PortionPickerContent(
                             )
 
                             Text(
-                                text = if (isRawUnit) "Özel gramaj" else unit.label,
+                                text = if (isRawUnit) {
+                                    if (food.isLiquid) "Özel hacim" else "Özel gramaj"
+                                } else {
+                                    unit.label
+                                },
                                 style = NutraTheme.typography.titleSmall,
                                 color = NutraTheme.colors.textPrimary,
                                 maxLines = 1,
@@ -1090,7 +1109,7 @@ private fun PortionPickerContent(
                                 text = if (isRawUnit) {
                                     "Serbest giriş"
                                 } else {
-                                    "${NutraFormatters.formatInt(unit.grams.roundToInt())} g · ${NutraFormatters.formatInt(food.caloriesForGrams(unit.grams))} kcal"
+                                    "${NutraFormatters.formatInt(unit.grams.roundToInt())} $unitSuffix · ${NutraFormatters.formatInt(food.caloriesForGrams(unit.grams))} kcal"
                                 },
                                 style = NutraTheme.typography.caption,
                                 color = if (isSelected) NutraTheme.colors.textPrimary else NutraTheme.colors.textSecondary,
@@ -1112,7 +1131,7 @@ private fun PortionPickerContent(
                     ) {
                         PORTION_GRAM_PRESETS.forEach { gramPreset ->
                             CompactMultiplierPill(
-                                text = "$gramPreset g",
+                                text = "$gramPreset $unitSuffix",
                                 selected = parsedCustomGrams?.roundToInt() == gramPreset,
                                 onClick = { customGramInput = gramPreset.toString() },
                                 modifier = Modifier.weight(1f),
@@ -1124,9 +1143,9 @@ private fun PortionPickerContent(
                         onValueChange = {
                             customGramInput = NutraFormatters.sanitizeNumericInput(it, allowDecimal = true)
                         },
-                        label = "Gramaj",
+                        label = if (food.isLiquid) "Hacim" else "Gramaj",
                         placeholder = "100",
-                        suffix = "g",
+                        suffix = unitSuffix,
                         isError = showRawGramError,
                         keyboardOptions = KeyboardOptions(
                             keyboardType = KeyboardType.Decimal,
@@ -1138,7 +1157,7 @@ private fun PortionPickerContent(
                     )
                     if (showRawGramError) {
                         Text(
-                            text = "1 – 3.000 g arası bir değer girin",
+                            text = "1 – 3.000 $unitSuffix arası bir değer girin",
                             style = NutraTheme.typography.caption,
                             color = NutraTheme.colors.dangerText,
                             modifier = Modifier.padding(start = 4.dp),
@@ -1158,7 +1177,7 @@ private fun PortionPickerContent(
                             color = NutraTheme.colors.textPrimary,
                         )
                         Text(
-                            text = "${NutraFormatters.formatInt(effectiveGrams.roundToInt())} g",
+                            text = "${NutraFormatters.formatInt(effectiveGrams.roundToInt())} $unitSuffix",
                             style = NutraTheme.typography.caption,
                             color = NutraTheme.colors.textSecondary,
                         )
@@ -1208,7 +1227,7 @@ private fun PortionPickerContent(
                                     overflow = TextOverflow.Ellipsis,
                                 )
                                 Text(
-                                    text = "Toplam ${NutraFormatters.formatInt(effectiveGrams.roundToInt())} g",
+                                    text = "Toplam ${NutraFormatters.formatInt(effectiveGrams.roundToInt())} $unitSuffix",
                                     style = NutraTheme.typography.caption,
                                     color = NutraTheme.colors.textTertiary,
                                 )
@@ -1223,6 +1242,19 @@ private fun PortionPickerContent(
                         }
                     }
                 }
+            }
+
+            if (food.hasExtendedDetails) {
+                ExtendedNutritionDetailsCard(
+                    food = food,
+                    effectiveAmount = effectiveGrams,
+                    isAmountValid = isCustomGramValid && effectiveGrams > 0f,
+                    expanded = detailsExpanded,
+                    onToggleExpanded = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        detailsExpanded = !detailsExpanded
+                    },
+                )
             }
 
             Spacer(Modifier.height(8.dp))
@@ -1241,12 +1273,14 @@ private fun PortionPickerContent(
             NutraButton(
                 text = if (isCustomGramValid) {
                     "Ekle · ${NutraFormatters.formatInt(liveCalories)} kcal"
+                } else if (food.isLiquid) {
+                    "Hacim girin"
                 } else {
                     "Gramaj girin"
                 },
                 onClick = {
                     if (isRawGramMode) {
-                        onConfirm("1 Gram", 1f, effectiveGrams)
+                        onConfirm(ServingUnitLabels.rawUnitFor(food.baseUnit), 1f, effectiveGrams)
                     } else {
                         onConfirm(selectedUnit.label, selectedUnit.grams, multiplier)
                     }
@@ -1258,6 +1292,148 @@ private fun PortionPickerContent(
                 hapticFeedback = HapticFeedbackType.Confirm,
                 modifier = Modifier.weight(0.68f),
             )
+        }
+    }
+}
+
+@Composable
+private fun ExtendedNutritionDetailsCard(
+    food: FoodItem,
+    effectiveAmount: Float,
+    isAmountValid: Boolean,
+    expanded: Boolean,
+    onToggleExpanded: () -> Unit,
+) {
+    val arrowRotationState = animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        animationSpec = tween(180),
+        label = "extendedNutritionChevron",
+    )
+
+    val rows = remember(food, effectiveAmount, isAmountValid) {
+        buildList {
+            fun addIfPresent(label: String, per100: Float?, unit: String) {
+                if (per100 == null) return
+                val formatted = if (isAmountValid) {
+                    val scaled = food.scaledNutrient(per100, effectiveAmount) ?: 0f
+                    "${NutraFormatters.formatMacroGrams(scaled)} $unit"
+                } else {
+                    "—"
+                }
+                add(label to formatted)
+            }
+            addIfPresent("Lif", food.fiberPer100g, "g")
+            addIfPresent("Şeker", food.sugarPer100g, "g")
+            addIfPresent("Doymuş yağ", food.saturatedFatPer100g, "g")
+            addIfPresent("Tuz", food.saltPer100g, "g")
+            addIfPresent("Sodyum", food.sodiumMgPer100g, "mg")
+            addIfPresent("Kalsiyum", food.calciumMgPer100g, "mg")
+            addIfPresent("Potasyum", food.potassiumMgPer100g, "mg")
+            addIfPresent("Demir", food.ironMgPer100g, "mg")
+            addIfPresent("C vitamini", food.vitaminCMgPer100g, "mg")
+        }
+    }
+
+    if (rows.isEmpty()) return
+
+    val previewLine = remember(rows) {
+        rows.take(3).joinToString(" · ") { (label, value) -> "$label $value" }
+    }
+
+    NutraCard(
+        color = sheetCardContainerColor(),
+        shape = NutraTheme.shapes.md,
+        contentPadding = PaddingValues(0.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(
+                    role = Role.Button,
+                    onClickLabel = if (expanded) "Besin detaylarını gizle" else "Besin detaylarını göster",
+                    onClick = onToggleExpanded,
+                )
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = "Besin detayları",
+                    style = NutraTheme.typography.titleSmall,
+                    color = NutraTheme.colors.textPrimary,
+                )
+                if (!expanded) {
+                    Text(
+                        text = previewLine,
+                        style = NutraTheme.typography.caption,
+                        color = NutraTheme.colors.textSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            Icon(
+                imageVector = Icons.Rounded.KeyboardArrowDown,
+                contentDescription = null,
+                tint = NutraTheme.colors.textSecondary,
+                modifier = Modifier
+                    .size(20.dp)
+                    .graphicsLayer { rotationZ = arrowRotationState.value },
+            )
+        }
+
+        AnimatedVisibility(
+            visible = expanded,
+            enter = expandVertically(tween(200)) + fadeIn(tween(160)),
+            exit = shrinkVertically(tween(160)) + fadeOut(tween(120)),
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                NutraDivider(startIndent = 16.dp, endIndent = 16.dp)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    rows.chunked(2).forEach { pair ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        ) {
+                            pair.forEach { (label, value) ->
+                                Row(
+                                    modifier = Modifier.weight(1f),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        text = label,
+                                        style = NutraTheme.typography.caption,
+                                        color = NutraTheme.colors.textSecondary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    Text(
+                                        text = value,
+                                        style = NutraTheme.typography.labelSmall,
+                                        color = NutraTheme.colors.textPrimary,
+                                        maxLines = 1,
+                                    )
+                                }
+                            }
+                            if (pair.size == 1) {
+                                Spacer(modifier = Modifier.weight(1f))
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -1642,7 +1818,7 @@ private fun BarcodeLookupTab(
             value = state.barcodeInput,
             onValueChange = { onBarcodeChange(it.filter { ch -> ch.isDigit() }) },
             label = "EAN-13 / UPC barkod",
-            placeholder = "8690526011012",
+            placeholder = "8690526051222",
             trailing = if (state.barcodeInput.isNotEmpty()) {
                 {
                     NutraIconButton(

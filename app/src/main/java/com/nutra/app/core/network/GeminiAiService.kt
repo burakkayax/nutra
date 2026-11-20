@@ -418,7 +418,7 @@ class GeminiAiService @Inject constructor(
             if (matchedFood != null) {
                 val totalGrams = (explicitGrams ?: (matchedFood.defaultUnitGrams * quantity)).coerceIn(1f, 5000f)
                 val unitDescription = if (explicitGrams != null) {
-                    "${explicitGrams.roundToInt()} g"
+                    "${explicitGrams.roundToInt()} ${matchedFood.displayUnitSuffix}"
                 } else if (quantity == 1f) {
                     matchedFood.defaultUnitLabel
                 } else {
@@ -482,15 +482,31 @@ class GeminiAiService @Inject constructor(
             val normName = food.normalizedName.ifBlank { TurkishTextNormalizer.normalize(food.name) }
             val normSub = food.normalizedSearchText.ifBlank { TurkishTextNormalizer.normalize(food.subtitle) }
             var score = 0
-            if (normName == query) score += 100
+            if (normName == query) score += 120
             if (normName.contains(query)) score += 60
+            else if (normSub.contains(query)) score += 45
+            var nameTokenHits = 0
             for (j in tokens.indices) {
                 val token = tokens[j]
-                if (containsWholeWord(normName, token)) score += 30
-                else if (normName.contains(token)) score += 18
-                else if (normSub.contains(token)) score += 6
+                if (containsWholeWord(normName, token)) {
+                    score += 30
+                    nameTokenHits++
+                } else if (normName.contains(token)) {
+                    score += 18
+                    nameTokenHits++
+                } else if (containsWholeWord(normSub, token)) {
+                    score += 12
+                } else if (normSub.contains(token)) {
+                    score += 6
+                }
             }
-            if (score > bestScore) {
+            if (score > 0 && food.brand == null) {
+                score += 8
+            }
+            if (score > 0 && nameTokenHits == tokens.size) {
+                score += 10
+            }
+            if (score > bestScore || (score == bestScore && bestFood != null && food.name.length < bestFood.name.length)) {
                 bestScore = score
                 bestFood = food
             }
@@ -503,9 +519,9 @@ class GeminiAiService @Inject constructor(
         if (wordLen == 0 || wordLen > text.length) return false
         var idx = text.indexOf(word)
         while (idx >= 0) {
-            val leftOk = idx == 0 || text[idx - 1] == ' '
+            val leftOk = idx == 0 || !text[idx - 1].isLetterOrDigit()
             val end = idx + wordLen
-            val rightOk = end == text.length || text[end] == ' '
+            val rightOk = end == text.length || !text[end].isLetterOrDigit()
             if (leftOk && rightOk) return true
             idx = text.indexOf(word, idx + 1)
         }

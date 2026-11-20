@@ -109,6 +109,7 @@ import com.nutra.app.core.designsystem.rememberSkeletonPulseAlpha
 import com.nutra.app.domain.model.MealLogItem
 import com.nutra.app.domain.model.MealSummary
 import com.nutra.app.domain.model.MealType
+import com.nutra.app.domain.model.ServingUnitLabels
 import com.nutra.app.feature.logging.AddFoodModalSheet
 import kotlinx.coroutines.delay
 import java.time.LocalDate
@@ -1366,7 +1367,9 @@ private fun EditLoggedFoodPortionDialog(
 ) {
     val haptic = LocalHapticFeedback.current
     val colors = NutraTheme.colors
-    val isRawGramMode = item.unitLabel == "1 Gram"
+    val unitSuffix = ServingUnitLabels.normalizedBaseUnit(item.baseUnit)
+    val isLiquid = unitSuffix == "ml"
+    val isRawGramMode = ServingUnitLabels.isRawUnitLabel(item.unitLabel)
     var multiplier by remember(item) {
         mutableFloatStateOf(
             if (isRawGramMode) item.totalGrams.coerceIn(1f, 3000f) else item.multiplier.coerceIn(0.25f, 20f),
@@ -1389,7 +1392,7 @@ private fun EditLoggedFoodPortionDialog(
         (item.totalGrams * ratio).roundToInt()
     }
     val valueLabel = if (isRawGramMode) {
-        "${NutraFormatters.formatInt(multiplier.roundToInt())} g"
+        "${NutraFormatters.formatInt(multiplier.roundToInt())} $unitSuffix"
     } else {
         "${NutraFormatters.formatMultiplier(multiplier)}x"
     }
@@ -1399,9 +1402,9 @@ private fun EditLoggedFoodPortionDialog(
         onDismissRequest = onDismiss,
         title = item.foodName,
         message = if (isRawGramMode) {
-            "Gramaj · ${NutraFormatters.formatInt(previewGrams)} g"
+            "${if (isLiquid) "Hacim" else "Gramaj"} · ${NutraFormatters.formatInt(previewGrams)} $unitSuffix"
         } else {
-            "${item.unitLabel} · ${NutraFormatters.formatInt(previewGrams)} g"
+            "${item.unitLabel} · ${NutraFormatters.formatInt(previewGrams)} $unitSuffix"
         },
         confirmText = null,
         dismissText = null,
@@ -1435,7 +1438,7 @@ private fun EditLoggedFoodPortionDialog(
                 presets.forEach { preset ->
                     val isSelected = multiplier == preset
                     val label = if (isRawGramMode) {
-                        "${preset.toInt()} g"
+                        "${preset.toInt()} $unitSuffix"
                     } else {
                         "${NutraFormatters.formatMultiplier(preset)}x"
                     }
@@ -1483,7 +1486,7 @@ private fun EditLoggedFoodPortionDialog(
             ) {
                 NutraStepperButton(
                     icon = NutraIcons.Remove,
-                    contentDescription = if (isRawGramMode) "10 g azalt" else "Porsiyon azalt",
+                    contentDescription = if (isRawGramMode) "10 $unitSuffix azalt" else "Porsiyon azalt",
                     onClick = {
                         multiplier = if (isRawGramMode) {
                             (multiplier - 10f).coerceAtLeast(1f)
@@ -1500,7 +1503,11 @@ private fun EditLoggedFoodPortionDialog(
                         .border(1.dp, colors.divider, NutraTheme.shapes.pill)
                         .clickable(
                             role = Role.Button,
-                            onClickLabel = if (isRawGramMode) "Gramaj yaz" else "Porsiyon çarpanı yaz",
+                            onClickLabel = if (isRawGramMode) {
+                                if (isLiquid) "Hacim yaz" else "Gramaj yaz"
+                            } else {
+                                "Porsiyon çarpanı yaz"
+                            },
                         ) {
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             showManualInputDialog = true
@@ -1523,7 +1530,7 @@ private fun EditLoggedFoodPortionDialog(
                 }
                 NutraStepperButton(
                     icon = Icons.Rounded.Add,
-                    contentDescription = if (isRawGramMode) "10 g artır" else "Porsiyon artır",
+                    contentDescription = if (isRawGramMode) "10 $unitSuffix artır" else "Porsiyon artır",
                     onClick = {
                         multiplier = if (isRawGramMode) {
                             (multiplier + 10f).coerceAtMost(3000f)
@@ -1562,10 +1569,10 @@ private fun EditLoggedFoodPortionDialog(
     if (showManualInputDialog) {
         if (isRawGramMode) {
             NutraNumericInputDialog(
-                title = "Gramaj",
+                title = if (isLiquid) "Hacim" else "Gramaj",
                 initialValue = multiplier.roundToInt().toString(),
-                unit = "g",
-                rangeHint = "1 – 3.000 g",
+                unit = unitSuffix,
+                rangeHint = "1 – 3.000 $unitSuffix",
                 minValue = 1.0,
                 maxValue = 3000.0,
                 allowDecimal = true,

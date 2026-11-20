@@ -1,5 +1,6 @@
 package com.nutra.app.domain.repository
 
+import android.content.Context
 import androidx.room.withTransaction
 import com.nutra.app.core.database.DailyMealTotalsTuple
 import com.nutra.app.core.database.FoodItemEntity
@@ -19,9 +20,11 @@ import com.nutra.app.domain.model.FoodItem
 import com.nutra.app.domain.model.MealLogItem
 import com.nutra.app.domain.model.MealSummary
 import com.nutra.app.domain.model.MealType
+import com.nutra.app.domain.model.ServingUnitLabels
 import com.nutra.app.domain.model.UserProfile
 import com.nutra.app.domain.model.WeightEntry
 import com.nutra.app.domain.usecase.TurkishTextNormalizer
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -76,6 +79,7 @@ private fun isValidBackupIsoDate(dateIso: String): Boolean =
 
 @Singleton
 class NutritionRepository @Inject constructor(
+    @ApplicationContext private val appContext: Context,
     private val database: NutraDatabase,
     private val nutraDao: NutraDao,
     private val preferencesDataStore: UserPreferencesDataStore,
@@ -109,8 +113,63 @@ class NutritionRepository @Inject constructor(
         if (catalogVerified) return@withContext
         seedMutex.withLock {
             if (!catalogVerified) {
-                if (nutraDao.getFoodCount() == 0) {
-                    nutraDao.insertFoods(TurkishFoodSeedCatalog.toEntities())
+                val catalogSeedCount = nutraDao.countCatalogSeedFoods()
+                val legacySeeds = nutraDao.getLegacySeedFoods()
+                if (catalogSeedCount < TurkishFoodSeedCatalog.EXPECTED_CATALOG_SIZE || legacySeeds.isNotEmpty()) {
+                    val catalogEntities = TurkishFoodSeedCatalog.toEntities(appContext)
+                    database.withTransaction {
+                        val existingCatalogByCode = nutraDao.getCatalogSeedFoods()
+                            .mapNotNull { entity -> entity.catalogCode?.let { it to entity } }
+                            .toMap()
+
+                        if (legacySeeds.isEmpty() && existingCatalogByCode.isEmpty()) {
+                            nutraDao.insertFoods(catalogEntities)
+                        } else {
+                            val legacyFavNormNames = HashSet<String>()
+                            val legacyFavCodes = HashSet<String>()
+                            for (legacy in legacySeeds) {
+                                if (legacy.isFavorite) {
+                                    val norm = TurkishTextNormalizer.normalize(legacy.name)
+                                    legacyFavNormNames.add(norm)
+                                    TurkishFoodSeedCatalog.LEGACY_NAME_TO_CATALOG_CODE[norm]?.let {
+                                        legacyFavCodes.add(it)
+                                    }
+                                }
+                            }
+                            val preserveLegacyFavs = legacySeeds.isNotEmpty()
+                            val missingEntities = catalogEntities.mapNotNull { candidate ->
+                                val code = candidate.catalogCode ?: return@mapNotNull null
+                                if (existingCatalogByCode.containsKey(code)) {
+                                    null
+                                } else if (preserveLegacyFavs) {
+                                    val normName = TurkishTextNormalizer.normalize(candidate.name)
+                                    val wasFav = code in legacyFavCodes || normName in legacyFavNormNames
+                                    candidate.copy(isFavorite = wasFav)
+                                } else {
+                                    candidate
+                                }
+                            }
+                            if (missingEntities.isNotEmpty()) {
+                                nutraDao.insertFoods(missingEntities)
+                            }
+                            if (legacySeeds.isNotEmpty()) {
+                                val updatedCatalog = nutraDao.getCatalogSeedFoods()
+                                val idByCode = updatedCatalog
+                                    .mapNotNull { e -> e.catalogCode?.let { it to e.id } }
+                                    .toMap()
+                                val idByNormName = updatedCatalog
+                                    .associate { TurkishTextNormalizer.normalize(it.name) to it.id }
+
+                                for (legacy in legacySeeds) {
+                                    val legacyNorm = TurkishTextNormalizer.normalize(legacy.name)
+                                    val targetCode = TurkishFoodSeedCatalog.LEGACY_NAME_TO_CATALOG_CODE[legacyNorm]
+                                    val targetId = targetCode?.let { idByCode[it] } ?: idByNormName[legacyNorm]
+                                    nutraDao.remapMealLogFoodId(legacy.id, targetId)
+                                }
+                                nutraDao.deleteLegacySeedFoods()
+                            }
+                        }
+                    }
                 }
                 catalogVerified = true
             }
@@ -302,13 +361,13 @@ class NutritionRepository @Inject constructor(
         unitGrams: Float,
         multiplier: Float,
     ): MealLogItem {
-        val isRawGramMode = unitLabel == "1 Gram"
-        val safeMultiplier = if (isRawGramMode) {
+        val isRawUnitMode = ServingUnitLabels.isRawUnitLabel(unitLabel)
+        val safeMultiplier = if (isRawUnitMode) {
             multiplier.coerceIn(1f, 3000f)
         } else {
             multiplier.coerceIn(0.1f, 50f)
         }
-        val totalGrams = if (isRawGramMode) {
+        val totalGrams = if (isRawUnitMode) {
             safeMultiplier
         } else {
             (unitGrams * safeMultiplier).coerceAtLeast(1f)
@@ -326,6 +385,7 @@ class NutritionRepository @Inject constructor(
             carbsGrams = food.carbsForGrams(totalGrams),
             fatGrams = food.fatForGrams(totalGrams),
             timestampMillis = System.currentTimeMillis(),
+            baseUnit = food.displayUnitSuffix,
         )
     }
 
@@ -349,6 +409,7 @@ class NutritionRepository @Inject constructor(
                 carbsGrams = entry.carbsGrams,
                 fatGrams = entry.fatGrams,
                 timestampMillis = baseTime + idx,
+                baseUnit = ServingUnitLabels.normalizedBaseUnit(entry.baseUnit),
             )
         }
         nutraDao.insertMealLogs(entities)
@@ -362,8 +423,8 @@ class NutritionRepository @Inject constructor(
         logItem: MealLogItem,
         newMultiplier: Float,
     ) = withContext(Dispatchers.IO) {
-        val isRawGramMode = logItem.unitLabel == "1 Gram"
-        val safeNewMult = if (isRawGramMode) {
+        val isRawUnitMode = ServingUnitLabels.isRawUnitLabel(logItem.unitLabel)
+        val safeNewMult = if (isRawUnitMode) {
             newMultiplier.coerceIn(1f, 3000f)
         } else {
             newMultiplier.coerceIn(0.25f, 20f)
@@ -372,7 +433,7 @@ class NutritionRepository @Inject constructor(
         val sourceFood = logItem.foodId?.let { nutraDao.findFoodById(it)?.toDomain() }
 
         val updated = if (sourceFood != null) {
-            val newTotalGrams = if (isRawGramMode) {
+            val newTotalGrams = if (isRawUnitMode) {
                 safeNewMult
             } else {
                 val unitGrams = (logItem.totalGrams / safeOldMult).coerceAtLeast(1f)
@@ -388,7 +449,7 @@ class NutritionRepository @Inject constructor(
             )
         } else {
             val ratio = safeNewMult / safeOldMult
-            val newTotalGrams = if (isRawGramMode) {
+            val newTotalGrams = if (isRawUnitMode) {
                 safeNewMult
             } else {
                 (logItem.totalGrams * ratio).coerceAtLeast(1f)
@@ -567,6 +628,9 @@ class NutritionRepository @Inject constructor(
                     nutraDao.clearSeedFavorites()
                     val existingFoods = nutraDao.getAllFoodsSnapshot()
                     val existingById = existingFoods.associateBy { it.id }
+                    val existingSeedByCode = existingFoods
+                        .filter { !it.isCustom && !it.catalogCode.isNullOrBlank() }
+                        .associateBy { it.catalogCode!! }
                     val existingByBarcode = existingFoods
                         .filter { !it.barcode.isNullOrBlank() }
                         .associateBy { it.barcode!! }
@@ -581,14 +645,25 @@ class NutritionRepository @Inject constructor(
                     val nameToTargetId = existingFoods
                         .associate { TurkishTextNormalizer.normalize(it.name) to it.id }
                         .toMutableMap()
+                    for ((legacyNorm, targetCode) in TurkishFoodSeedCatalog.LEGACY_NAME_TO_CATALOG_CODE) {
+                        val targetEntity = existingSeedByCode[targetCode] ?: continue
+                        nameToTargetId.putIfAbsent(legacyNorm, targetEntity.id)
+                    }
                     val importedFoodIdMap = HashMap<Long, Long>()
 
                     for (item in payload.customFoods) {
                         val normName = TurkishTextNormalizer.normalize(item.name)
                         if (normName.isBlank()) continue
-                        val normSearch = TurkishTextNormalizer.normalize("${item.name} ${item.subtitle} ${item.category.title}")
+                        val normSearch = TurkishTextNormalizer.normalize("${item.name} ${item.brand.orEmpty()} ${item.subtitle} ${item.category.title}")
+                        val codeMatch = item.catalogCode?.takeIf { it.isNotBlank() }?.let { existingSeedByCode[it] }
+                            ?: if (!item.isCustom) {
+                                TurkishFoodSeedCatalog.LEGACY_NAME_TO_CATALOG_CODE[normName]?.let { existingSeedByCode[it] }
+                            } else {
+                                null
+                            }
                         val barcodeMatch = item.barcode?.takeIf { it.isNotBlank() }?.let { existingByBarcode[it] }
-                        val match = barcodeMatch
+                        val match = codeMatch
+                            ?: barcodeMatch
                             ?: (if (!item.isCustom) existingSeedByName[normName] else null)
                             ?: existingCustomByName[normName]
                             ?: existingSeedByName[normName]

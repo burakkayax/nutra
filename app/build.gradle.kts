@@ -44,6 +44,12 @@ android {
     buildFeatures {
         compose = true
     }
+
+    sourceSets {
+        getByName("test") {
+            resources.directories.add("src/main/assets")
+        }
+    }
 }
 
 kotlin {

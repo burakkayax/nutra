@@ -157,8 +157,10 @@ class NutraPerformanceAndStabilityTest {
         val baseCatalog = TurkishFoodSeedCatalog.initialFoods.mapIndexed { idx, f ->
             f.copy(
                 id = idx + 1L,
-                normalizedName = TurkishTextNormalizer.normalize(f.name),
-                normalizedSearchText = TurkishTextNormalizer.normalize("${f.name} ${f.subtitle} ${f.category.title}"),
+                normalizedName = f.normalizedName.ifBlank { TurkishTextNormalizer.normalize(f.name) },
+                normalizedSearchText = f.normalizedSearchText.ifBlank {
+                    TurkishTextNormalizer.normalize("${f.name} ${f.subtitle} ${f.category.title}")
+                },
             )
         }
         val largeCatalog = List(1500) { i ->
@@ -172,16 +174,18 @@ class NutraPerformanceAndStabilityTest {
         }
 
         val engine = ContextualMealRankerAndComboEngine()
+        val egg = baseCatalog.first { it.name.contains("Haşlanmış Yumurta") }
+        val cheese = baseCatalog.first { it.name.contains("Ezine") }
         val history = listOf(
-            MealLogItem(1L, "2026-11-15", MealType.BREAKFAST, 1L, baseCatalog[0].name, "1 Adet", 2f, 100f, 155, 12.6f, 1.1f, 10.6f, 1000L),
-            MealLogItem(2L, "2026-11-15", MealType.BREAKFAST, 2L, baseCatalog[1].name, "1 Dilim", 1f, 30f, 87, 5.2f, 0.5f, 7.0f, 1001L),
-            MealLogItem(3L, "2026-11-16", MealType.BREAKFAST, 1L, baseCatalog[0].name, "1 Adet", 2f, 100f, 155, 12.6f, 1.1f, 10.6f, 2000L),
-            MealLogItem(4L, "2026-11-16", MealType.BREAKFAST, 2L, baseCatalog[1].name, "1 Dilim", 1f, 30f, 87, 5.2f, 0.5f, 7.0f, 2001L),
+            MealLogItem(1L, "2026-11-15", MealType.BREAKFAST, egg.id, egg.name, "1 Adet", 2f, 100f, 155, 12.6f, 1.1f, 10.6f, 1000L),
+            MealLogItem(2L, "2026-11-15", MealType.BREAKFAST, cheese.id, cheese.name, "1 Dilim", 1f, 30f, 87, 5.2f, 0.5f, 7.0f, 1001L),
+            MealLogItem(3L, "2026-11-16", MealType.BREAKFAST, egg.id, egg.name, "1 Adet", 2f, 100f, 155, 12.6f, 1.1f, 10.6f, 2000L),
+            MealLogItem(4L, "2026-11-16", MealType.BREAKFAST, cheese.id, cheese.name, "1 Dilim", 1f, 30f, 87, 5.2f, 0.5f, 7.0f, 2001L),
         )
         val stats = engine.prepareMealUsageStats(history, MealType.BREAKFAST)
         val ranked = engine.rankFoodsWithStats(largeCatalog, stats, MealType.BREAKFAST, "haslanmis yumurta", FoodCategory.ALL)
         assertTrue(ranked.isNotEmpty())
-        assertEquals(baseCatalog[0].id, ranked.first().id)
+        assertEquals(egg.id, ranked.first().id)
 
         val combos = engine.buildSmartComboSuggestions(MealType.BREAKFAST, emptyList(), history, largeCatalog)
         assertTrue(combos.isNotEmpty())

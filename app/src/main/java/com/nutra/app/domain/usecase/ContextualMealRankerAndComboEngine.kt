@@ -133,8 +133,13 @@ class ContextualMealRankerAndComboEngine @Inject constructor() {
                 val normName = food.normalizedName.ifBlank {
                     TurkishTextNormalizer.normalize(food.name)
                 }
-                if (normName.startsWith(normQuery)) {
-                    score += 35.0
+                when {
+                    normName == normQuery -> score += 60.0
+                    normName.startsWith(normQuery) -> score += 35.0
+                    TurkishTextNormalizer.matchesNormalizedTokens(normName, queryTokens) -> score += 18.0
+                }
+                if (food.brand == null && !food.isCustom) {
+                    score += 4.0
                 }
             }
             scored.add(ScoredFood(food, score))
@@ -276,19 +281,24 @@ class ContextualMealRankerAndComboEngine @Inject constructor() {
 
         if (suggestions.size >= 2) return suggestions.take(2)
 
-        // 2. Contextual Companion Pairing (single-pass keyword match over pre-normalized food names)
+        // 2. Contextual Companion Pairing (prefer exact normalized name matches over substring matches)
         val blueprintSpecs = BLUEPRINTS_BY_MEAL[mealType].orEmpty()
 
         val keywordsNeeded = HashSet<String>(8)
         for (spec in blueprintSpecs) keywordsNeeded.addAll(spec.third)
-        val matchedByKeyword = HashMap<String, FoodItem>(keywordsNeeded.size)
+        val exactMatchedByKeyword = HashMap<String, FoodItem>(keywordsNeeded.size)
+        val partialMatchedByKeyword = HashMap<String, FoodItem>(keywordsNeeded.size)
         for (i in catalogFoods.indices) {
-            if (matchedByKeyword.size == keywordsNeeded.size) break
+            if (exactMatchedByKeyword.size == keywordsNeeded.size) break
             val food = catalogFoods[i]
             val normName = food.normalizedName.ifBlank { cachedNorm(food.name) }
             for (kw in keywordsNeeded) {
-                if (!matchedByKeyword.containsKey(kw) && normName.contains(kw)) {
-                    matchedByKeyword[kw] = food
+                if (!exactMatchedByKeyword.containsKey(kw)) {
+                    if (normName == kw) {
+                        exactMatchedByKeyword[kw] = food
+                    } else if (!partialMatchedByKeyword.containsKey(kw) && normName.contains(kw)) {
+                        partialMatchedByKeyword[kw] = food
+                    }
                 }
             }
         }
@@ -296,7 +306,7 @@ class ContextualMealRankerAndComboEngine @Inject constructor() {
         for ((idx, blueprint) in blueprintSpecs.withIndex()) {
             if (suggestions.size >= 2) break
             val validFoods = blueprint.third.mapNotNull { kw ->
-                val food = matchedByKeyword[kw] ?: return@mapNotNull null
+                val food = exactMatchedByKeyword[kw] ?: partialMatchedByKeyword[kw] ?: return@mapNotNull null
                 val normName = food.normalizedName.ifBlank { cachedNorm(food.name) }
                 if (normName in currentFoodNames) null else food
             }
@@ -313,6 +323,7 @@ class ContextualMealRankerAndComboEngine @Inject constructor() {
                         proteinGrams = food.proteinForGrams(grams),
                         carbsGrams = food.carbsForGrams(grams),
                         fatGrams = food.fatForGrams(grams),
+                        baseUnit = food.displayUnitSuffix,
                     )
                 }
                 val alreadySuggestedSameTitle = suggestions.any { it.title == blueprint.first }
@@ -339,43 +350,48 @@ class ContextualMealRankerAndComboEngine @Inject constructor() {
                 Triple(
                     "Klasik Dengeli Kahvaltı Kombini",
                     "Birlikte sık tüketilen yüksek proteinli kahvaltı üçlüsü",
-                    listOf("haslanmis yumurta", "ezine beyaz peynir", "tam bugday ekmegi"),
+                    listOf("haslanmis yumurta", "ezine peyniri", "ekmek tam bugday unlu"),
                 ),
                 Triple(
                     "Yulaf & Yoğurt Enerji Kasesi",
                     "Pratik sabah kombinasyonu",
-                    listOf("yulaf ezmesi", "suzme yogurt", "ceviz ici"),
+                    listOf("yulaf ezmesi", "yogurt suzme burdur", "ceviz"),
                 ),
             ),
             MealType.LUNCH to listOf(
                 Triple(
                     "Izgara Tavuk & Bulgur Menü",
                     "Öğle öğününde sıkça beraber tercih edilen dengeli tabak",
-                    listOf("izgara tavuk gogsu", "bulgur pilavi", "ayran"),
+                    listOf("tavuk gogus derisiz izgara", "bulgur pilavi", "ayran"),
                 ),
                 Triple(
-                    "Mercimek Çorbası & Mevsim Salata",
+                    "Mercimek Çorbası & Çoban Salata",
                     "Hafif ve doyurucu öğle ikilisi",
-                    listOf("mercimek corbasi", "coban salata"),
+                    listOf("mercimek corbasi", "coban salatasi"),
                 ),
             ),
             MealType.DINNER to listOf(
                 Triple(
-                    "Izgara Köfte & Piyaz / Salata",
+                    "Izgara Köfte & Salata Menü",
                     "Akşam öğününde sıkça birlikte tüketilen klasik kombin",
-                    listOf("izgara kofte", "coban salata", "ayran"),
+                    listOf("izgara kofte", "coban salatasi", "ayran"),
                 ),
                 Triple(
-                    "Zeytinyağlı Ev Yemeği & Yoğurt",
-                    "Dengeli akşam yemeği ikilisi",
-                    listOf("kuru fasulye", "pirinc pilavi", "suzme yogurt"),
+                    "Ev Yemeği & Yoğurt Kombini",
+                    "Dengeli akşam yemeği üçlüsü",
+                    listOf("kuru fasulye etli", "pirinc pilavi sivi yagli", "yogurt tam yagli"),
                 ),
             ),
             MealType.SNACK to listOf(
                 Triple(
-                    "Meyve & Çiğ Badem Ara Öğünü",
+                    "Elma & Badem Ara Öğünü",
                     "Kan şekerini dengeleyen sık tüketilen ikili",
-                    listOf("yesil elma", "cig badem"),
+                    listOf("elma", "badem"),
+                ),
+                Triple(
+                    "Muz & Kefir Ara Öğünü",
+                    "Pratik ve ferah ara öğün ikilisi",
+                    listOf("muz", "kefir"),
                 ),
             ),
         )

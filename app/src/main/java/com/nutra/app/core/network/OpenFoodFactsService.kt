@@ -56,7 +56,7 @@ class OpenFoodFactsService @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: IOException) {
-            AppResult.Error("Barkod sorgulanırken internet bağlantısı kurulamadı. Yerel barkodları (örn. 8690526011012) çevrimdışı kullanabilirsiniz.", e)
+            AppResult.Error("Barkod sorgulanırken internet bağlantısı kurulamadı. Yerel katalogdaki 100+ barkodu (örn. 8690526051222) çevrimdışı kullanabilirsiniz.", e)
         } catch (e: Exception) {
             AppResult.Error("Barkod verisi işlenirken hata oluştu. Lütfen tekrar deneyin.", e)
         }

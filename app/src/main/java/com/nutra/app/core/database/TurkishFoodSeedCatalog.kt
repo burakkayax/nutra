@@ -1,605 +1,216 @@
 package com.nutra.app.core.database
 
+import android.content.Context
 import com.nutra.app.domain.model.FoodCategory
 import com.nutra.app.domain.model.FoodItem
 import com.nutra.app.domain.model.MealType
 import com.nutra.app.domain.model.ServingUnit
+import com.nutra.app.domain.model.ServingUnitLabels
 import com.nutra.app.domain.usecase.TurkishTextNormalizer
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import java.io.InputStream
+
+@Serializable
+internal data class SeedCatalogPayloadDto(
+    val catalogVersion: Int = 2,
+    val foods: List<SeedFoodDto> = emptyList(),
+)
+
+@Serializable
+internal data class SeedServingDto(
+    val l: String,
+    val g: Float,
+)
+
+@Serializable
+internal data class SeedFoodDto(
+    val code: String,
+    val name: String,
+    val subtitle: String,
+    val category: String,
+    val baseUnit: String = "g",
+    val kcal: Int,
+    val protein: Float,
+    val carbs: Float,
+    val fat: Float,
+    val defaultUnitLabel: String,
+    val defaultUnitGrams: Float,
+    val alternateUnits: List<SeedServingDto> = emptyList(),
+    val preferredMeals: List<String> = emptyList(),
+    val brand: String? = null,
+    val barcode: String? = null,
+    val preparationState: String? = null,
+    val isFavorite: Boolean = false,
+    val searchKeywords: String = "",
+    val saturatedFat: Float? = null,
+    val sugar: Float? = null,
+    val fiber: Float? = null,
+    val salt: Float? = null,
+    val sodiumMg: Float? = null,
+    val calciumMg: Float? = null,
+    val potassiumMg: Float? = null,
+    val ironMg: Float? = null,
+    val vitaminCMg: Float? = null,
+)
+
+private data class SeedCatalogRecord(
+    val item: FoodItem,
+    val normalizedSearchText: String,
+)
 
 object TurkishFoodSeedCatalog {
 
-    val initialFoods: List<FoodItem>
-        get() = buildInitialFoods()
+    const val CATALOG_ASSET_NAME: String = "turkish_food_catalog.json"
+    const val EXPECTED_CATALOG_SIZE: Int = 621
 
-    private fun buildInitialFoods(): List<FoodItem> = listOf(
-        // --- KAHVALTILIK ---
-        FoodItem(
-            name = "Haşlanmış Yumurta",
-            subtitle = "Yüksek kaliteli tam protein kaynağı",
-            category = FoodCategory.BREAKFAST,
-            caloriesPer100g = 155,
-            proteinPer100g = 12.6f,
-            carbsPer100g = 1.1f,
-            fatPer100g = 10.6f,
-            defaultUnitLabel = "1 Adet (Orta)",
-            defaultUnitGrams = 50f,
-            alternateUnits = listOf(
-                ServingUnit("1 Adet (Büyük)", 60f),
-                ServingUnit("2 Adet (Orta)", 100f),
-                ServingUnit("Yumurta Beyazı (1 Adet)", 33f),
-            ),
-            preferredMealTypes = setOf(MealType.BREAKFAST),
-            isFavorite = true,
-        ),
-        FoodItem(
-            name = "Ezine Beyaz Peynir",
-            subtitle = "Tam yağlı klasik koyun/inek peyniri",
-            category = FoodCategory.BREAKFAST,
-            caloriesPer100g = 289,
-            proteinPer100g = 17.5f,
-            carbsPer100g = 1.8f,
-            fatPer100g = 23.5f,
-            defaultUnitLabel = "1 Dilim (Kibrit Kutusu)",
-            defaultUnitGrams = 30f,
-            alternateUnits = listOf(
-                ServingUnit("2 Dilim", 60f),
-                ServingUnit("İnce Dilim", 20f),
-            ),
-            preferredMealTypes = setOf(MealType.BREAKFAST),
-            barcode = "8690526011012",
-            isFavorite = true,
-        ),
-        FoodItem(
-            name = "Tam Buğday Ekmeği",
-            subtitle = "Lifli kompleks karbonhidrat",
-            category = FoodCategory.BREAKFAST,
-            caloriesPer100g = 247,
-            proteinPer100g = 10.5f,
-            carbsPer100g = 43.0f,
-            fatPer100g = 3.2f,
-            defaultUnitLabel = "1 İnce Dilim",
-            defaultUnitGrams = 25f,
-            alternateUnits = listOf(
-                ServingUnit("1 Kalın Dilim", 40f),
-                ServingUnit("2 İnce Dilim", 50f),
-            ),
-            preferredMealTypes = setOf(MealType.BREAKFAST, MealType.LUNCH),
-            barcode = "8690777101012",
-            isFavorite = true,
-        ),
-        FoodItem(
-            name = "Siyah Zeytin",
-            subtitle = "Doğal salamura sofralık zeytin",
-            category = FoodCategory.BREAKFAST,
-            caloriesPer100g = 205,
-            proteinPer100g = 1.6f,
-            carbsPer100g = 3.8f,
-            fatPer100g = 20.0f,
-            defaultUnitLabel = "5 Adet",
-            defaultUnitGrams = 20f,
-            alternateUnits = listOf(
-                ServingUnit("8 Adet", 32f),
-                ServingUnit("10 Adet", 40f),
-            ),
-            preferredMealTypes = setOf(MealType.BREAKFAST),
-        ),
-        FoodItem(
-            name = "Yulaf Ezmesi",
-            subtitle = "Yüksek beta-glukan ve lif kaynağı",
-            category = FoodCategory.BREAKFAST,
-            caloriesPer100g = 372,
-            proteinPer100g = 13.5f,
-            carbsPer100g = 58.7f,
-            fatPer100g = 7.0f,
-            defaultUnitLabel = "4 Yemek Kaşığı",
-            defaultUnitGrams = 40f,
-            alternateUnits = listOf(
-                ServingUnit("1 Su Bardağı", 80f),
-                ServingUnit("1 Yemek Kaşığı", 10f),
-            ),
-            preferredMealTypes = setOf(MealType.BREAKFAST, MealType.SNACK),
-            barcode = "8690504055105",
-            isFavorite = true,
-        ),
-        FoodItem(
-            name = "Menemen",
-            subtitle = "Domates, biber ve yumurtalı sıcak kahvaltı",
-            category = FoodCategory.BREAKFAST,
-            caloriesPer100g = 118,
-            proteinPer100g = 6.8f,
-            carbsPer100g = 4.2f,
-            fatPer100g = 8.4f,
-            defaultUnitLabel = "1 Porsiyon (Orta Sahan)",
-            defaultUnitGrams = 220f,
-            alternateUnits = listOf(
-                ServingUnit("Yarım Porsiyon", 110f),
-            ),
-            preferredMealTypes = setOf(MealType.BREAKFAST),
-        ),
-        FoodItem(
-            name = "Taze Kaşar Peyniri",
-            subtitle = "Tam yağlı kaşar peyniri",
-            category = FoodCategory.BREAKFAST,
-            caloriesPer100g = 353,
-            proteinPer100g = 25.0f,
-            carbsPer100g = 1.4f,
-            fatPer100g = 27.5f,
-            defaultUnitLabel = "1 İnce Dilim",
-            defaultUnitGrams = 20f,
-            alternateUnits = listOf(
-                ServingUnit("2 İnce Dilim", 40f),
-                ServingUnit("1 Kibrit Kutusu", 30f),
-            ),
-            preferredMealTypes = setOf(MealType.BREAKFAST),
-        ),
-        FoodItem(
-            name = "Kahvaltılık Lor Peyniri",
-            subtitle = "Düşük yağlı, yüksek proteinli lor",
-            category = FoodCategory.BREAKFAST,
-            caloriesPer100g = 112,
-            proteinPer100g = 16.5f,
-            carbsPer100g = 2.5f,
-            fatPer100g = 3.8f,
-            defaultUnitLabel = "3 Yemek Kaşığı",
-            defaultUnitGrams = 60f,
-            alternateUnits = listOf(
-                ServingUnit("1 Yemek Kaşığı", 20f),
-                ServingUnit("1 Kase (Küçük)", 100f),
-            ),
-            preferredMealTypes = setOf(MealType.BREAKFAST),
-        ),
-        FoodItem(
-            name = "Susamlı Simit",
-            subtitle = "Geleneksel fırın/sokak simidi",
-            category = FoodCategory.BREAKFAST,
-            caloriesPer100g = 324,
-            proteinPer100g = 10.2f,
-            carbsPer100g = 56.5f,
-            fatPer100g = 6.8f,
-            defaultUnitLabel = "Yarım Simit",
-            defaultUnitGrams = 55f,
-            alternateUnits = listOf(
-                ServingUnit("1 Tam Simit", 110f),
-                ServingUnit("Çeyrek Simit", 28f),
-            ),
-            preferredMealTypes = setOf(MealType.BREAKFAST, MealType.SNACK),
-        ),
-        FoodItem(
-            name = "Avokado",
-            subtitle = "Sağlıklı tekli doymamış yağ kaynağı",
-            category = FoodCategory.BREAKFAST,
-            caloriesPer100g = 160,
-            proteinPer100g = 2.0f,
-            carbsPer100g = 8.5f,
-            fatPer100g = 14.7f,
-            defaultUnitLabel = "Yarım Adet",
-            defaultUnitGrams = 70f,
-            alternateUnits = listOf(
-                ServingUnit("1 Tam Adet", 140f),
-                ServingUnit("Çeyrek Adet", 35f),
-            ),
-            preferredMealTypes = setOf(MealType.BREAKFAST, MealType.LUNCH),
-        ),
+    private val catalogJson = Json {
+        ignoreUnknownKeys = true
+        coerceInputValues = true
+    }
 
-        // --- ÇORBALAR ---
-        FoodItem(
-            name = "Mercimek Çorbası",
-            subtitle = "Geleneksel kırmızı mercimek çorbası",
-            category = FoodCategory.SOUP,
-            caloriesPer100g = 68,
-            proteinPer100g = 4.2f,
-            carbsPer100g = 9.4f,
-            fatPer100g = 1.6f,
-            defaultUnitLabel = "1 Kase",
-            defaultUnitGrams = 250f,
-            alternateUnits = listOf(
-                ServingUnit("Yarım Kase", 125f),
-                ServingUnit("1 Kepçe", 100f),
-            ),
-            preferredMealTypes = setOf(MealType.LUNCH, MealType.DINNER),
-            isFavorite = true,
-        ),
-        FoodItem(
-            name = "Ezogelin Çorbası",
-            subtitle = "Mercimek, bulgur ve pirinçli çorba",
-            category = FoodCategory.SOUP,
-            caloriesPer100g = 72,
-            proteinPer100g = 3.8f,
-            carbsPer100g = 10.5f,
-            fatPer100g = 1.7f,
-            defaultUnitLabel = "1 Kase",
-            defaultUnitGrams = 250f,
-            alternateUnits = listOf(
-                ServingUnit("Yarım Kase", 125f),
-                ServingUnit("1 Kepçe", 100f),
-            ),
-            preferredMealTypes = setOf(MealType.LUNCH, MealType.DINNER),
-        ),
-        FoodItem(
-            name = "Yayla Çorbası",
-            subtitle = "Yoğurtlu, naneli ve pirinçli çorba",
-            category = FoodCategory.SOUP,
-            caloriesPer100g = 58,
-            proteinPer100g = 2.8f,
-            carbsPer100g = 7.2f,
-            fatPer100g = 1.9f,
-            defaultUnitLabel = "1 Kase",
-            defaultUnitGrams = 250f,
-            alternateUnits = listOf(ServingUnit("Yarım Kase", 125f)),
-            preferredMealTypes = setOf(MealType.LUNCH, MealType.DINNER),
-        ),
-        FoodItem(
-            name = "Tavuk Suyu Çorbası",
-            subtitle = "Didiklenmiş tavuk etli şifa çorbası",
-            category = FoodCategory.SOUP,
-            caloriesPer100g = 64,
-            proteinPer100g = 5.4f,
-            carbsPer100g = 5.8f,
-            fatPer100g = 2.1f,
-            defaultUnitLabel = "1 Kase",
-            defaultUnitGrams = 250f,
-            alternateUnits = listOf(ServingUnit("Yarım Kase", 125f)),
-            preferredMealTypes = setOf(MealType.LUNCH, MealType.DINNER),
-        ),
+    private val CATEGORY_BY_NAME: Map<String, FoodCategory> = FoodCategory.entries.associateBy { it.name }
+    private val MEAL_BY_NAME: Map<String, MealType> = MealType.entries.associateBy { it.name }
 
-        // --- ET & TAVUK & BALIK ---
-        FoodItem(
-            name = "Izgara Tavuk Göğsü",
-            subtitle = "Derisiz, yağsız yüksek protein kaynağı",
-            category = FoodCategory.MEAT_POULTRY,
-            caloriesPer100g = 165,
-            proteinPer100g = 31.0f,
-            carbsPer100g = 0.0f,
-            fatPer100g = 3.6f,
-            defaultUnitLabel = "1 Porsiyon (Orta Fileto)",
-            defaultUnitGrams = 150f,
-            alternateUnits = listOf(
-                ServingUnit("Büyük Porsiyon", 200f),
-                ServingUnit("Küçük Fileto", 100f),
-            ),
-            preferredMealTypes = setOf(MealType.LUNCH, MealType.DINNER),
-            isFavorite = true,
-        ),
-        FoodItem(
-            name = "Izgara Köfte",
-            subtitle = "Dana kıymadan klasik kasap/anne köftesi",
-            category = FoodCategory.MEAT_POULTRY,
-            caloriesPer100g = 242,
-            proteinPer100g = 20.4f,
-            carbsPer100g = 4.5f,
-            fatPer100g = 15.8f,
-            defaultUnitLabel = "1 Porsiyon (5 Adet)",
-            defaultUnitGrams = 150f,
-            alternateUnits = listOf(
-                ServingUnit("1 Adet Köfte", 30f),
-                ServingUnit("3 Adet Köfte", 90f),
-            ),
-            preferredMealTypes = setOf(MealType.LUNCH, MealType.DINNER),
-            isFavorite = true,
-        ),
-        FoodItem(
-            name = "Izgara Somon Fileto",
-            subtitle = "Omega-3 ve kaliteli protein deposu",
-            category = FoodCategory.MEAT_POULTRY,
-            caloriesPer100g = 208,
-            proteinPer100g = 20.4f,
-            carbsPer100g = 0.0f,
-            fatPer100g = 13.4f,
-            defaultUnitLabel = "1 Fileto Dilim",
-            defaultUnitGrams = 180f,
-            alternateUnits = listOf(ServingUnit("Küçük Dilim", 120f)),
-            preferredMealTypes = setOf(MealType.LUNCH, MealType.DINNER),
-        ),
-        FoodItem(
-            name = "Dana Bonfile / Antrikot (Izgara)",
-            subtitle = "Demir ve B12 açısından zengin kırmızı et",
-            category = FoodCategory.MEAT_POULTRY,
-            caloriesPer100g = 218,
-            proteinPer100g = 27.5f,
-            carbsPer100g = 0.0f,
-            fatPer100g = 11.5f,
-            defaultUnitLabel = "1 Porsiyon",
-            defaultUnitGrams = 160f,
-            alternateUnits = listOf(ServingUnit("Büyük Porsiyon", 220f)),
-            preferredMealTypes = setOf(MealType.DINNER),
-        ),
-        FoodItem(
-            name = "Ton Balığı (Suda / Süzülmüş)",
-            subtitle = "Salata ve öğünler için pratik balık proteini",
-            category = FoodCategory.MEAT_POULTRY,
-            caloriesPer100g = 116,
-            proteinPer100g = 25.5f,
-            carbsPer100g = 0.0f,
-            fatPer100g = 1.0f,
-            defaultUnitLabel = "1 Konserve (Süzülmüş)",
-            defaultUnitGrams = 110f,
-            alternateUnits = listOf(ServingUnit("Küçük Konserve", 80f)),
-            preferredMealTypes = setOf(MealType.LUNCH, MealType.DINNER),
-            barcode = "8690572001017",
-        ),
-
-        // --- EV YEMEKLERİ ---
-        FoodItem(
-            name = "Bulgur Pilavı",
-            subtitle = "Domatesli, düşük glisemik indeksli bulgur",
-            category = FoodCategory.HOME_COOKED,
-            caloriesPer100g = 132,
-            proteinPer100g = 3.8f,
-            carbsPer100g = 23.5f,
-            fatPer100g = 2.6f,
-            defaultUnitLabel = "1 Porsiyon (6 Yemek Kaşığı)",
-            defaultUnitGrams = 150f,
-            alternateUnits = listOf(
-                ServingUnit("3 Yemek Kaşığı (Yarım)", 75f),
-                ServingUnit("1 Yemek Kaşığı", 25f),
-            ),
-            preferredMealTypes = setOf(MealType.LUNCH, MealType.DINNER),
-            isFavorite = true,
-        ),
-        FoodItem(
-            name = "Tereyağlı Pirinç Pilavı",
-            subtitle = "Klasik tane tane şehriyeli pirinç pilavı",
-            category = FoodCategory.HOME_COOKED,
-            caloriesPer100g = 162,
-            proteinPer100g = 3.1f,
-            carbsPer100g = 28.4f,
-            fatPer100g = 3.9f,
-            defaultUnitLabel = "1 Porsiyon (6 Yemek Kaşığı)",
-            defaultUnitGrams = 150f,
-            alternateUnits = listOf(
-                ServingUnit("3 Yemek Kaşığı", 75f),
-                ServingUnit("1 Yemek Kaşığı", 25f),
-            ),
-            preferredMealTypes = setOf(MealType.LUNCH, MealType.DINNER),
-        ),
-        FoodItem(
-            name = "Etli Kuru Fasulye",
-            subtitle = "Geleneksel tencere yemeği, lif ve bitkisel protein",
-            category = FoodCategory.HOME_COOKED,
-            caloriesPer100g = 138,
-            proteinPer100g = 8.6f,
-            carbsPer100g = 15.2f,
-            fatPer100g = 4.6f,
-            defaultUnitLabel = "1 Tabak (Porsiyon)",
-            defaultUnitGrams = 220f,
-            alternateUnits = listOf(ServingUnit("Yarım Porsiyon", 110f)),
-            preferredMealTypes = setOf(MealType.LUNCH, MealType.DINNER),
-        ),
-        FoodItem(
-            name = "Etli Nohut Yemeği",
-            subtitle = "Kuşbaşı etli klasik nohut yemeği",
-            category = FoodCategory.HOME_COOKED,
-            caloriesPer100g = 145,
-            proteinPer100g = 8.9f,
-            carbsPer100g = 16.4f,
-            fatPer100g = 4.8f,
-            defaultUnitLabel = "1 Tabak (Porsiyon)",
-            defaultUnitGrams = 220f,
-            alternateUnits = listOf(ServingUnit("Yarım Porsiyon", 110f)),
-            preferredMealTypes = setOf(MealType.LUNCH, MealType.DINNER),
-        ),
-        FoodItem(
-            name = "Zeytinyağlı Taze Fasulye",
-            subtitle = "Domatesli ve sızma zeytinyağlı hafif sebze yemeği",
-            category = FoodCategory.HOME_COOKED,
-            caloriesPer100g = 74,
-            proteinPer100g = 1.9f,
-            carbsPer100g = 6.8f,
-            fatPer100g = 4.2f,
-            defaultUnitLabel = "1 Porsiyon",
-            defaultUnitGrams = 200f,
-            alternateUnits = listOf(ServingUnit("Yarım Porsiyon", 100f)),
-            preferredMealTypes = setOf(MealType.LUNCH, MealType.DINNER),
-        ),
-        FoodItem(
-            name = "Karnıyarık",
-            subtitle = "Fırınlanmış patlıcan ve kıymalı harç",
-            category = FoodCategory.HOME_COOKED,
-            caloriesPer100g = 135,
-            proteinPer100g = 7.2f,
-            carbsPer100g = 6.5f,
-            fatPer100g = 8.8f,
-            defaultUnitLabel = "1 Adet (Orta Boy)",
-            defaultUnitGrams = 200f,
-            alternateUnits = listOf(ServingUnit("2 Adet", 400f)),
-            preferredMealTypes = setOf(MealType.DINNER),
-        ),
-        FoodItem(
-            name = "Kayseri Mantısı (Yoğurtlu)",
-            subtitle = "Sarımsaklı yoğurt ve soslu ev mantısı",
-            category = FoodCategory.HOME_COOKED,
-            caloriesPer100g = 195,
-            proteinPer100g = 8.4f,
-            carbsPer100g = 26.5f,
-            fatPer100g = 6.1f,
-            defaultUnitLabel = "1 Tabak (Porsiyon)",
-            defaultUnitGrams = 240f,
-            alternateUnits = listOf(ServingUnit("Yarım Porsiyon", 120f)),
-            preferredMealTypes = setOf(MealType.LUNCH, MealType.DINNER),
-        ),
-
-        // --- SALATA, YOĞURT & MEZE ---
-        FoodItem(
-            name = "Süzme Yoğurt",
-            subtitle = "Kıvamlı, yüksek proteinli doğal yoğurt",
-            category = FoodCategory.SALAD_MEZE,
-            caloriesPer100g = 115,
-            proteinPer100g = 8.5f,
-            carbsPer100g = 4.2f,
-            fatPer100g = 7.0f,
-            defaultUnitLabel = "1 Kase (4 Yemek Kaşığı)",
-            defaultUnitGrams = 120f,
-            alternateUnits = listOf(
-                ServingUnit("2 Yemek Kaşığı", 60f),
-                ServingUnit("1 Yemek Kaşığı", 30f),
-            ),
-            preferredMealTypes = setOf(MealType.BREAKFAST, MealType.LUNCH, MealType.DINNER, MealType.SNACK),
-            barcode = "8690637012013",
-            isFavorite = true,
-        ),
-        FoodItem(
-            name = "Çoban Salata",
-            subtitle = "Domates, salatalık, biber, soğan ve sızma zeytinyağı",
-            category = FoodCategory.SALAD_MEZE,
-            caloriesPer100g = 52,
-            proteinPer100g = 1.1f,
-            carbsPer100g = 4.5f,
-            fatPer100g = 3.4f,
-            defaultUnitLabel = "1 Kase (Orta)",
-            defaultUnitGrams = 200f,
-            alternateUnits = listOf(ServingUnit("Büyük Salata Kasesi", 320f)),
-            preferredMealTypes = setOf(MealType.LUNCH, MealType.DINNER),
-            isFavorite = true,
-        ),
-        FoodItem(
-            name = "Humus",
-            subtitle = "Nohut ve tahinli Akdeniz mezesi",
-            category = FoodCategory.SALAD_MEZE,
-            caloriesPer100g = 177,
-            proteinPer100g = 7.8f,
-            carbsPer100g = 14.5f,
-            fatPer100g = 9.8f,
-            defaultUnitLabel = "3 Yemek Kaşığı",
-            defaultUnitGrams = 90f,
-            alternateUnits = listOf(ServingUnit("1 Yemek Kaşığı", 30f)),
-            preferredMealTypes = setOf(MealType.LUNCH, MealType.DINNER, MealType.SNACK),
-        ),
-
-        // --- MEYVE & KURUYEMİŞ ---
-        FoodItem(
-            name = "Yeşil Elma",
-            subtitle = "Düşük glisemik indeksli ferah ara öğün",
-            category = FoodCategory.FRUIT_NUTS,
-            caloriesPer100g = 52,
-            proteinPer100g = 0.3f,
-            carbsPer100g = 13.8f,
-            fatPer100g = 0.2f,
-            defaultUnitLabel = "1 Orta Boy",
-            defaultUnitGrams = 150f,
-            alternateUnits = listOf(ServingUnit("Küçük Boy", 110f)),
-            preferredMealTypes = setOf(MealType.SNACK),
-        ),
-        FoodItem(
-            name = "Muz (Yerli)",
-            subtitle = "Potasyum ve hızlı enerji kaynağı",
-            category = FoodCategory.FRUIT_NUTS,
-            caloriesPer100g = 89,
-            proteinPer100g = 1.1f,
-            carbsPer100g = 22.8f,
-            fatPer100g = 0.3f,
-            defaultUnitLabel = "1 Orta Boy",
-            defaultUnitGrams = 115f,
-            alternateUnits = listOf(ServingUnit("Büyük Boy", 145f)),
-            preferredMealTypes = setOf(MealType.BREAKFAST, MealType.SNACK),
-            isFavorite = true,
-        ),
-        FoodItem(
-            name = "Çiğ Badem",
-            subtitle = "Kavrulmamış E vitamini ve sağlıklı yağ kaynağı",
-            category = FoodCategory.FRUIT_NUTS,
-            caloriesPer100g = 579,
-            proteinPer100g = 21.2f,
-            carbsPer100g = 21.6f,
-            fatPer100g = 49.9f,
-            defaultUnitLabel = "1 Avuç (20 Adet)",
-            defaultUnitGrams = 25f,
-            alternateUnits = listOf(
-                ServingUnit("10 Adet", 12f),
-                ServingUnit("30 Adet", 36f),
-            ),
-            preferredMealTypes = setOf(MealType.SNACK),
-            barcode = "8690804011024",
-            isFavorite = true,
-        ),
-        FoodItem(
-            name = "Ceviz İçi",
-            subtitle = "Bitkisel Omega-3 (ALA) deposu",
-            category = FoodCategory.FRUIT_NUTS,
-            caloriesPer100g = 654,
-            proteinPer100g = 15.2f,
-            carbsPer100g = 13.7f,
-            fatPer100g = 65.2f,
-            defaultUnitLabel = "3 Tam Ceviz İçi",
-            defaultUnitGrams = 18f,
-            alternateUnits = listOf(
-                ServingUnit("5 Tam Ceviz İçi", 30f),
-                ServingUnit("1 Tam Ceviz İçi", 6f),
-            ),
-            preferredMealTypes = setOf(MealType.BREAKFAST, MealType.SNACK),
-        ),
-        FoodItem(
-            name = "Şekersiz Yer Fıstığı Ezmesi",
-            subtitle = "%100 doğal kavrulmuş yer fıstığı ezmesi",
-            category = FoodCategory.FRUIT_NUTS,
-            caloriesPer100g = 588,
-            proteinPer100g = 25.8f,
-            carbsPer100g = 19.6f,
-            fatPer100g = 50.4f,
-            defaultUnitLabel = "1 Tatlı Kaşığı (Dolu)",
-            defaultUnitGrams = 15f,
-            alternateUnits = listOf(ServingUnit("1 Yemek Kaşığı", 28f)),
-            preferredMealTypes = setOf(MealType.BREAKFAST, MealType.SNACK),
-        ),
-
-        // --- İÇECEKLER ---
-        FoodItem(
-            name = "Ayran",
-            subtitle = "Doğal fermente yoğurt içeceği",
-            category = FoodCategory.DRINKS,
-            caloriesPer100g = 37,
-            proteinPer100g = 2.0f,
-            carbsPer100g = 2.8f,
-            fatPer100g = 1.9f,
-            defaultUnitLabel = "1 Bardak / Paket (200ml)",
-            defaultUnitGrams = 200f,
-            alternateUnits = listOf(ServingUnit("Büyük Ayran (300ml)", 300f)),
-            preferredMealTypes = setOf(MealType.LUNCH, MealType.DINNER),
-            barcode = "8690637001017",
-        ),
-        FoodItem(
-            name = "Sade Kefir",
-            subtitle = "Probiyotik açısından zengin fermente süt ürünü",
-            category = FoodCategory.DRINKS,
-            caloriesPer100g = 52,
-            proteinPer100g = 3.3f,
-            carbsPer100g = 4.1f,
-            fatPer100g = 2.5f,
-            defaultUnitLabel = "1 Su Bardağı (250ml)",
-            defaultUnitGrams = 250f,
-            alternateUnits = listOf(ServingUnit("Küçük Şişe (200ml)", 200f)),
-            preferredMealTypes = setOf(MealType.SNACK, MealType.DINNER),
-            barcode = "8690698011055",
-        ),
-        FoodItem(
-            name = "Whey Protein Shake (Su ile)",
-            subtitle = "Antrenman sonrası hızlı emilimli izole/konsantre whey",
-            category = FoodCategory.DRINKS,
-            caloriesPer100g = 390,
-            proteinPer100g = 78.0f,
-            carbsPer100g = 7.0f,
-            fatPer100g = 5.5f,
-            defaultUnitLabel = "1 Ölçek (Scoop)",
-            defaultUnitGrams = 30f,
-            alternateUnits = listOf(ServingUnit("1.5 Ölçek", 45f)),
-            preferredMealTypes = setOf(MealType.SNACK, MealType.BREAKFAST),
-        ),
-        FoodItem(
-            name = "Sütlü Latte (Şekersiz)",
-            subtitle = "Espresso ve buharda ısıtılmış süt",
-            category = FoodCategory.DRINKS,
-            caloriesPer100g = 43,
-            proteinPer100g = 2.5f,
-            carbsPer100g = 3.7f,
-            fatPer100g = 2.1f,
-            defaultUnitLabel = "1 Orta Boy (300ml)",
-            defaultUnitGrams = 300f,
-            alternateUnits = listOf(ServingUnit("Küçük Boy (220ml)", 220f)),
-            preferredMealTypes = setOf(MealType.BREAKFAST, MealType.SNACK),
-        ),
+    /**
+     * Maps normalized names from the legacy 38-item starter seed to stable catalog codes (`TRxxxx`)
+     * so existing v3 installs preserve favorites and historical meal log links on upgrade.
+     */
+    val LEGACY_NAME_TO_CATALOG_CODE: Map<String, String> = mapOf(
+        "haslanmis yumurta" to "TR0460",
+        "ezine beyaz peynir" to "TR0850",
+        "tam bugday ekmegi" to "TR0122",
+        "siyah zeytin" to "TR0332",
+        "yulaf ezmesi" to "TR0531",
+        "menemen" to "TR0600",
+        "taze kasar peyniri" to "TR0849",
+        "kahvaltilik lor peyniri" to "TR0467",
+        "susamli simit" to "TR0120",
+        "avokado" to "TR0341",
+        "mercimek corbasi" to "TR0678",
+        "ezogelin corbasi" to "TR0673",
+        "yayla corbasi" to "TR0683",
+        "tavuk suyu corbasi" to "TR0682",
+        "izgara tavuk gogsu" to "TR0186",
+        "izgara kofte" to "TR0582",
+        "izgara somon fileto" to "TR0183",
+        "dana bonfile antrikot izgara" to "TR0828",
+        "ton baligi suda suzulmus" to "TR0001",
+        "bulgur pilavi" to "TR0562",
+        "tereyagli pirinc pilavi" to "TR0619",
+        "etli kuru fasulye" to "TR0593",
+        "etli nohut yemegi" to "TR0605",
+        "zeytinyagli taze fasulye" to "TR0630",
+        "karniyarik" to "TR0587",
+        "kayseri mantisi yogurtlu" to "TR0599",
+        "suzme yogurt" to "TR0853",
+        "coban salata" to "TR0565",
+        "humus" to "TR0575",
+        "yesil elma" to "TR0344",
+        "muz yerli" to "TR0361",
+        "cig badem" to "TR0320",
+        "ceviz ici" to "TR0322",
+        "sekersiz yer fistigi ezmesi" to "TR0326",
+        "ayran" to "TR0459",
+        "sade kefir" to "TR0464",
     )
 
-    fun toEntities(): List<FoodItemEntity> = buildInitialFoods().map { item ->
-        val normText = TurkishTextNormalizer.normalize("${item.name} ${item.subtitle} ${item.category.title}")
-        FoodItemEntity.fromDomain(item, normText)
+    @Volatile
+    private var cachedRecords: List<SeedCatalogRecord>? = null
+
+    val initialFoods: List<FoodItem>
+        get() = loadRecords(context = null).map { it.item }
+
+    fun loadFoods(context: Context? = null): List<FoodItem> =
+        loadRecords(context).map { it.item }
+
+    fun toEntities(context: Context? = null): List<FoodItemEntity> =
+        loadRecords(context).map { record ->
+            FoodItemEntity.fromDomain(record.item, record.normalizedSearchText)
+        }
+
+    private fun loadRecords(context: Context?): List<SeedCatalogRecord> {
+        cachedRecords?.let { return it }
+        synchronized(this) {
+            cachedRecords?.let { return it }
+            val rawJson = openCatalogStream(context)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+                ?: error("Besin kataloğu asset dosyası bulunamadı: $CATALOG_ASSET_NAME")
+            val payload = catalogJson.decodeFromString<SeedCatalogPayloadDto>(rawJson)
+            val parsed = payload.foods.map(::toRecord)
+            cachedRecords = parsed
+            return parsed
+        }
+    }
+
+    private fun openCatalogStream(context: Context?): InputStream? {
+        if (context != null) {
+            runCatching { context.assets.open(CATALOG_ASSET_NAME) }.getOrNull()?.let { return it }
+        }
+        val classLoader = TurkishFoodSeedCatalog::class.java.classLoader
+        return classLoader?.getResourceAsStream(CATALOG_ASSET_NAME)
+            ?: TurkishFoodSeedCatalog::class.java.getResourceAsStream("/$CATALOG_ASSET_NAME")
+    }
+
+    private fun toRecord(dto: SeedFoodDto): SeedCatalogRecord {
+        val category = CATEGORY_BY_NAME[dto.category] ?: FoodCategory.HOME_COOKED
+        val baseUnit = ServingUnitLabels.normalizedBaseUnit(dto.baseUnit)
+        val preferredMeals = dto.preferredMeals.mapNotNull { MEAL_BY_NAME[it] }.toSet()
+        val alternates = dto.alternateUnits.map { ServingUnit(label = it.l, grams = it.g) }
+        val normalizedName = TurkishTextNormalizer.normalize(dto.name)
+        val searchParts = buildString(128) {
+            append(dto.name)
+            if (!dto.brand.isNullOrBlank()) {
+                append(' ')
+                append(dto.brand)
+            }
+            if (dto.subtitle.isNotBlank()) {
+                append(' ')
+                append(dto.subtitle)
+            }
+            append(' ')
+            append(category.title)
+            if (dto.searchKeywords.isNotBlank()) {
+                append(' ')
+                append(dto.searchKeywords)
+            }
+            if (dto.code.isNotBlank()) {
+                append(' ')
+                append(dto.code)
+            }
+        }
+        val normalizedSearch = TurkishTextNormalizer.normalize(searchParts)
+
+        val item = FoodItem(
+            name = dto.name,
+            subtitle = dto.subtitle,
+            category = category,
+            caloriesPer100g = dto.kcal.coerceAtLeast(0),
+            proteinPer100g = dto.protein.coerceAtLeast(0f),
+            carbsPer100g = dto.carbs.coerceAtLeast(0f),
+            fatPer100g = dto.fat.coerceAtLeast(0f),
+            defaultUnitLabel = dto.defaultUnitLabel,
+            defaultUnitGrams = dto.defaultUnitGrams.coerceAtLeast(1f),
+            alternateUnits = alternates,
+            preferredMealTypes = preferredMeals,
+            barcode = dto.barcode?.takeIf { it.isNotBlank() },
+            isFavorite = dto.isFavorite,
+            isCustom = false,
+            catalogCode = dto.code.takeIf { it.isNotBlank() },
+            brand = dto.brand?.takeIf { it.isNotBlank() },
+            baseUnit = baseUnit,
+            saturatedFatPer100g = dto.saturatedFat,
+            sugarPer100g = dto.sugar,
+            fiberPer100g = dto.fiber,
+            saltPer100g = dto.salt,
+            sodiumMgPer100g = dto.sodiumMg,
+            calciumMgPer100g = dto.calciumMg,
+            potassiumMgPer100g = dto.potassiumMg,
+            ironMgPer100g = dto.ironMg,
+            vitaminCMgPer100g = dto.vitaminCMg,
+            preparationState = dto.preparationState?.takeIf { it.isNotBlank() },
+            normalizedName = normalizedName,
+            normalizedSearchText = normalizedSearch,
+        )
+        return SeedCatalogRecord(item = item, normalizedSearchText = normalizedSearch)
     }
 }

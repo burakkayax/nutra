@@ -84,13 +84,14 @@ class NutraAuditFixesTest {
         val aiService = GeminiAiService(OkHttpClient())
         val catalog = TurkishFoodSeedCatalog.initialFoods
 
+        val bulgur = catalog.first { it.name.equals("Bulgur Pilavı", ignoreCase = true) }
         val decimalItems = aiService.parseWithOnDeviceNlu(
             text = "1,5 porsiyon bulgur pilavı",
             catalogFoods = catalog,
         )
         assertEquals(1, decimalItems.size)
         assertTrue(decimalItems.first().name.contains("Bulgur"))
-        assertEquals(225f, decimalItems.first().baseGrams, 0.5f)
+        assertEquals(bulgur.defaultUnitGrams * 1.5f, decimalItems.first().baseGrams, 0.5f)
 
         val connectedItems = aiService.parseWithOnDeviceNlu(
             text = "2 haşlanmış yumurta VE 150g ızgara tavuk göğsü artı 1 muz",

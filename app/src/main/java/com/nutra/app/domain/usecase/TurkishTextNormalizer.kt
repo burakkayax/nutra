@@ -3,11 +3,22 @@ package com.nutra.app.domain.usecase
 object TurkishTextNormalizer {
     fun normalize(input: String): String {
         if (input.isBlank()) return ""
-        val sb = StringBuilder(input.length)
+        val len = input.length
+        val sb = StringBuilder(len)
         var prevSpace = true
-        for (i in 0 until input.length) {
+        for (i in 0 until len) {
             val ch = input[i]
-            if (ch.isWhitespace()) {
+            // Collapse apostrophes inside brand/food names (e.g. "Lay's" / "Lay’s" -> "lays")
+            if (ch == '\'' || ch == '’' || ch == '‘' || ch == '`') {
+                continue
+            }
+            val isDecimalComma = ch == ',' && i > 0 && i + 1 < len &&
+                input[i - 1].isDigit() && input[i + 1].isDigit()
+            val isSeparator = ch.isWhitespace() ||
+                (ch == ',' && !isDecimalComma) ||
+                ch == ';' || ch == '(' || ch == ')' || ch == '[' || ch == ']' ||
+                ch == '/' || ch == '-' || ch == '–' || ch == '—' || ch == '&' || ch == '·'
+            if (isSeparator) {
                 if (!prevSpace) {
                     sb.append(' ')
                     prevSpace = true

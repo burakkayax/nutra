@@ -41,6 +41,26 @@ object AppModule {
         }
     }
 
+    val MIGRATION_3_4 = object : Migration(3, 4) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE `food_items` ADD COLUMN `catalogCode` TEXT")
+            db.execSQL("ALTER TABLE `food_items` ADD COLUMN `brand` TEXT")
+            db.execSQL("ALTER TABLE `food_items` ADD COLUMN `baseUnit` TEXT NOT NULL DEFAULT 'g'")
+            db.execSQL("ALTER TABLE `food_items` ADD COLUMN `saturatedFatPer100g` REAL")
+            db.execSQL("ALTER TABLE `food_items` ADD COLUMN `sugarPer100g` REAL")
+            db.execSQL("ALTER TABLE `food_items` ADD COLUMN `fiberPer100g` REAL")
+            db.execSQL("ALTER TABLE `food_items` ADD COLUMN `saltPer100g` REAL")
+            db.execSQL("ALTER TABLE `food_items` ADD COLUMN `sodiumMgPer100g` REAL")
+            db.execSQL("ALTER TABLE `food_items` ADD COLUMN `calciumMgPer100g` REAL")
+            db.execSQL("ALTER TABLE `food_items` ADD COLUMN `potassiumMgPer100g` REAL")
+            db.execSQL("ALTER TABLE `food_items` ADD COLUMN `ironMgPer100g` REAL")
+            db.execSQL("ALTER TABLE `food_items` ADD COLUMN `vitaminCMgPer100g` REAL")
+            db.execSQL("ALTER TABLE `food_items` ADD COLUMN `preparationState` TEXT")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_food_items_catalogCode` ON `food_items` (`catalogCode`)")
+            db.execSQL("ALTER TABLE `meal_logs` ADD COLUMN `baseUnit` TEXT NOT NULL DEFAULT 'g'")
+        }
+    }
+
     @Provides
     @Singleton
     fun provideNutraDatabase(
@@ -50,12 +70,12 @@ object AppModule {
         NutraDatabase::class.java,
         "nutra_database.db",
     )
-        .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
         .addCallback(
             object : RoomDatabase.Callback() {
                 override fun onCreate(db: SupportSQLiteDatabase) {
                     super.onCreate(db)
-                    val entities = TurkishFoodSeedCatalog.toEntities()
+                    val entities = TurkishFoodSeedCatalog.toEntities(context)
                     db.beginTransactionNonExclusive()
                     try {
                         for (entity in entities) {

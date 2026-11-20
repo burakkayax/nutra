@@ -7,6 +7,7 @@
 }
 -keep,includedescriptorclasses class com.nutra.app.domain.model.**$$serializer { *; }
 -keep,includedescriptorclasses class com.nutra.app.domain.repository.NutraBackupPayload$$serializer { *; }
+-keep,includedescriptorclasses class com.nutra.app.core.database.**$$serializer { *; }
 -keep,includedescriptorclasses class com.nutra.app.core.network.**$$serializer { *; }
 
 -dontwarn com.google.errorprone.annotations.**

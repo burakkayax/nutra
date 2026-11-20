@@ -74,14 +74,37 @@ enum class MealType(
 
 enum class FoodCategory(val title: String) {
     ALL("Tümü"),
-    BREAKFAST("Kahvaltılık"),
+    BREAKFAST("Kahvaltılık & Süt"),
     SOUP("Çorbalar"),
     HOME_COOKED("Ev Yemekleri"),
-    MEAT_POULTRY("Et & Tavuk"),
+    MEAT_POULTRY("Et, Tavuk & Balık"),
     SALAD_MEZE("Salata & Meze"),
+    VEGETABLES("Sebzeler"),
     FRUIT_NUTS("Meyve & Kuruyemiş"),
+    GRAINS_BAKERY("Ekmek & Tahıl"),
+    SNACKS_SWEETS("Atıştırmalık & Tatlı"),
+    OILS_SAUCES("Yağ & Soslar"),
     DRINKS("İçecekler"),
     CUSTOM("Özel"),
+}
+
+object ServingUnitLabels {
+    const val RAW_GRAM = "1 Gram"
+    const val RAW_ML = "1 ml"
+    const val BASE_100G = "100 Gram"
+    const val BASE_100ML = "100 ml"
+
+    fun normalizedBaseUnit(baseUnit: String?): String =
+        if (baseUnit.equals("ml", ignoreCase = true)) "ml" else "g"
+
+    fun rawUnitFor(baseUnit: String?): String =
+        if (normalizedBaseUnit(baseUnit) == "ml") RAW_ML else RAW_GRAM
+
+    fun base100UnitFor(baseUnit: String?): String =
+        if (normalizedBaseUnit(baseUnit) == "ml") BASE_100ML else BASE_100G
+
+    fun isRawUnitLabel(unitLabel: String): Boolean =
+        unitLabel == RAW_GRAM || unitLabel == RAW_ML
 }
 
 @Immutable
@@ -109,14 +132,44 @@ data class FoodItem(
     val barcode: String? = null,
     val isFavorite: Boolean = false,
     val isCustom: Boolean = false,
+    val catalogCode: String? = null,
+    val brand: String? = null,
+    val baseUnit: String = "g",
+    val saturatedFatPer100g: Float? = null,
+    val sugarPer100g: Float? = null,
+    val fiberPer100g: Float? = null,
+    val saltPer100g: Float? = null,
+    val sodiumMgPer100g: Float? = null,
+    val calciumMgPer100g: Float? = null,
+    val potassiumMgPer100g: Float? = null,
+    val ironMgPer100g: Float? = null,
+    val vitaminCMgPer100g: Float? = null,
+    val preparationState: String? = null,
     @Transient val normalizedName: String = "",
     @Transient val normalizedSearchText: String = "",
 ) {
+    val isLiquid: Boolean
+        get() = baseUnit.equals("ml", ignoreCase = true)
+
+    val displayUnitSuffix: String
+        get() = ServingUnitLabels.normalizedBaseUnit(baseUnit)
+
+    val hasExtendedDetails: Boolean
+        get() = saturatedFatPer100g != null ||
+            sugarPer100g != null ||
+            fiberPer100g != null ||
+            saltPer100g != null ||
+            sodiumMgPer100g != null ||
+            calciumMgPer100g != null ||
+            potassiumMgPer100g != null ||
+            ironMgPer100g != null ||
+            vitaminCMgPer100g != null
+
     val allUnits: List<ServingUnit>
         get() {
             val base = ServingUnit(defaultUnitLabel, defaultUnitGrams)
-            val gram100 = ServingUnit("100 Gram", 100f)
-            val gram1 = ServingUnit("1 Gram", 1f)
+            val base100 = ServingUnit(ServingUnitLabels.base100UnitFor(baseUnit), 100f)
+            val raw1 = ServingUnit(ServingUnitLabels.rawUnitFor(baseUnit), 1f)
             return buildList {
                 add(base)
                 alternateUnits.forEach { unit ->
@@ -124,8 +177,10 @@ data class FoodItem(
                         add(unit)
                     }
                 }
-                if (none { it.grams == 100f }) add(gram100)
-                if (none { it.grams == 1f }) add(gram1)
+                if (none { it.grams == 100f && (it.label == base100.label || it.label.equals("100 g", ignoreCase = true) || it.label.equals("100 ml", ignoreCase = true)) }) {
+                    if (none { it.grams == 100f }) add(base100)
+                }
+                if (none { ServingUnitLabels.isRawUnitLabel(it.label) }) add(raw1)
             }
         }
 
@@ -140,6 +195,9 @@ data class FoodItem(
 
     fun fatForGrams(grams: Float): Float =
         ((fatPer100g * grams) / 100f * 10f).roundToInt() / 10f
+
+    fun scaledNutrient(per100: Float?, amount: Float): Float? =
+        per100?.let { ((it * amount) / 100f * 10f).roundToInt() / 10f }
 }
 
 @Immutable
@@ -158,12 +216,16 @@ data class MealLogItem(
     val carbsGrams: Float,
     val fatGrams: Float,
     val timestampMillis: Long,
+    val baseUnit: String = "g",
 ) {
     @Transient
-    val formattedQuantity: String = if (unitLabel == "1 Gram") {
-        "${totalGrams.roundToInt()} g"
-    } else {
-        "${NutraFormatters.formatMultiplier(multiplier)}x $unitLabel (${totalGrams.roundToInt()} g)"
+    val formattedQuantity: String = run {
+        val unitSuffix = ServingUnitLabels.normalizedBaseUnit(baseUnit)
+        if (ServingUnitLabels.isRawUnitLabel(unitLabel)) {
+            "${totalGrams.roundToInt()} $unitSuffix"
+        } else {
+            "${NutraFormatters.formatMultiplier(multiplier)}x $unitLabel (${totalGrams.roundToInt()} $unitSuffix)"
+        }
     }
 }
 
@@ -278,6 +340,7 @@ data class ComboFoodEntry(
     val proteinGrams: Float,
     val carbsGrams: Float,
     val fatGrams: Float,
+    val baseUnit: String = "g",
 )
 
 @Immutable
