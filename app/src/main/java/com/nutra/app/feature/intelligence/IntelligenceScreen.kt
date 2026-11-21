@@ -62,7 +62,6 @@ import com.nutra.app.core.designsystem.NutraDivider
 import com.nutra.app.core.designsystem.NutraDot
 import com.nutra.app.core.designsystem.NutraEmptyState
 import com.nutra.app.core.designsystem.NutraFormatters
-import com.nutra.app.core.designsystem.NutraIconBadge
 import com.nutra.app.core.designsystem.NutraIconButton
 import com.nutra.app.core.designsystem.NutraIcons
 import com.nutra.app.core.designsystem.NutraLinearProgress
@@ -100,35 +99,16 @@ fun DashboardIntelligenceCard(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                NutraIconBadge(
-                    icon = NutraIcons.AutoAwesome,
-                    tint = colors.onAccentSoft,
-                    container = colors.accentSoft,
-                    size = 36.dp,
-                    iconSize = 18.dp,
-                )
-                Text(
-                    text = "Nutra Intelligence",
-                    style = NutraTheme.typography.titleSmall,
-                    color = colors.textPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-                NutraBadge(
-                    text = cardState.maturity.title,
-                    color = colors.textSecondary,
-                    container = colors.surfaceMuted,
-                )
-            }
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
-                text = "${cardState.mealType.title} · ~${NutraFormatters.formatInt(cardState.targetCalories)} kcal · ${NutraFormatters.formatInt(cardState.targetProteinGrams.roundToInt())} g protein",
+                text = "Nutra Intelligence",
+                style = NutraTheme.typography.titleSmall,
+                color = colors.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = "Size özel öğün önerisi",
                 style = NutraTheme.typography.caption,
                 color = colors.textSecondary,
                 maxLines = 1,
@@ -143,8 +123,8 @@ fun DashboardIntelligenceCard(
                     .clip(NutraTheme.shapes.md)
                     .background(colors.surfaceMuted)
                     .clickable(onClick = onOpenStudio)
-                    .padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -152,32 +132,45 @@ fun DashboardIntelligenceCard(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = topRec.title,
-                        style = NutraTheme.typography.label,
-                        color = colors.textPrimary,
+                        text = cardState.mealType.title,
+                        style = NutraTheme.typography.labelSmall,
+                        color = colors.accent,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f).padding(end = 8.dp),
                     )
                     Text(
-                        text = "${NutraFormatters.formatInt(topRec.totalCalories)} kcal",
-                        style = NutraTheme.typography.numberSmall,
-                        color = colors.accent,
+                        text = "${NutraFormatters.formatInt(topRec.totalCalories)} kcal · ${NutraFormatters.formatInt(topRec.totalProtein.roundToInt())} g protein",
+                        style = NutraTheme.typography.caption,
+                        color = colors.textSecondary,
+                        maxLines = 1,
                     )
                 }
-                Text(
-                    text = "P ${NutraFormatters.formatMacroGrams(topRec.totalProtein)}g · K ${NutraFormatters.formatMacroGrams(topRec.totalCarbs)}g · Y ${NutraFormatters.formatMacroGrams(topRec.totalFat)}g",
-                    style = NutraTheme.typography.caption,
-                    color = colors.textSecondary,
-                )
-                topRec.reasons.firstOrNull()?.let { reason ->
-                    Text(
-                        text = reason,
-                        style = NutraTheme.typography.bodySmall,
-                        color = colors.textSecondary,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+
+                NutraDivider()
+
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    topRec.items.forEach { portion ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = portion.food.name,
+                                style = NutraTheme.typography.body,
+                                color = colors.textPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f).padding(end = 12.dp),
+                            )
+                            Text(
+                                text = "${portion.totalGrams.roundToInt()} ${portion.food.displayUnitSuffix}",
+                                style = NutraTheme.typography.caption,
+                                color = colors.textSecondary,
+                                maxLines = 1,
+                            )
+                        }
+                    }
                 }
             }
         } else {
@@ -188,36 +181,14 @@ fun DashboardIntelligenceCard(
             )
         }
 
-        Row(
+        NutraButton(
+            text = if (topRec != null) "Önerileri gör" else "Öğün dengele",
+            onClick = if (topRec != null) onOpenStudio else onOpenBalancer,
+            style = NutraButtonStyle.Secondary,
+            size = NutraButtonSize.Small,
+            trailingIcon = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            NutraButton(
-                text = "Önerileri gör",
-                onClick = onOpenStudio,
-                style = NutraButtonStyle.Primary,
-                size = NutraButtonSize.Small,
-                trailingIcon = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                modifier = Modifier.weight(1f),
-            )
-            if (topRec != null) {
-                NutraButton(
-                    text = "Hızlı ekle",
-                    onClick = { onQuickLogTopRecommendation(topRec) },
-                    style = NutraButtonStyle.Secondary,
-                    size = NutraButtonSize.Small,
-                    leadingIcon = Icons.Rounded.Add,
-                    hapticFeedback = HapticFeedbackType.Confirm,
-                )
-            } else {
-                NutraButton(
-                    text = "Öğün dengele",
-                    onClick = onOpenBalancer,
-                    style = NutraButtonStyle.Secondary,
-                    size = NutraButtonSize.Small,
-                )
-            }
-        }
+        )
     }
 }
 

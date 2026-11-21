@@ -213,18 +213,6 @@ fun AnalyticsScreen(
                             }
                         }
 
-                        val analysis = metabolismAnalysis
-                        if (analysis != null) {
-                            item(key = "adaptive_metabolism") {
-                                MetabolismSummaryCard(
-                                    analysis = analysis,
-                                    onOpenDetail = onOpenMetabolismDetail,
-                                    onApproveProposal = viewModel::approveCalorieProposal,
-                                    onDismissProposal = viewModel::dismissCalorieProposal,
-                                )
-                            }
-                        }
-
                         item(key = "calorie_chart") {
                             HapticScrubbingCalorieChartCard(
                                 points = uiState.dailyPoints,
@@ -246,6 +234,18 @@ fun AnalyticsScreen(
                                 averageFatGrams = uiState.averageFatGrams,
                                 goals = uiState.profile.goals,
                             )
+                        }
+
+                        val analysis = metabolismAnalysis
+                        if (analysis != null) {
+                            item(key = "adaptive_metabolism") {
+                                MetabolismSummaryCard(
+                                    analysis = analysis,
+                                    onOpenDetail = onOpenMetabolismDetail,
+                                    onApproveProposal = viewModel::approveCalorieProposal,
+                                    onDismissProposal = viewModel::dismissCalorieProposal,
+                                )
+                            }
                         }
 
                         item(key = "weight_trend") {

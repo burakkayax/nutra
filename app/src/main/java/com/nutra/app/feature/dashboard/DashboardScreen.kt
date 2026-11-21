@@ -245,6 +245,12 @@ fun DashboardScreen(
                 }
             }
 
+            item(key = "meals_header", contentType = "meals_header") {
+                Box(modifier = Modifier.padding(bottom = NutraTheme.spacing.md)) {
+                    NutraSectionHeader(title = "Öğünler")
+                }
+            }
+
             if (intelligenceCardStateFlow != null) {
                 item(key = "nutra_intelligence_card", contentType = "nutra_intelligence_card") {
                     DashboardIntelligenceCardSlot(
@@ -252,12 +258,6 @@ fun DashboardScreen(
                         onOpenIntelligenceStudio = onOpenIntelligenceStudio,
                         onQuickLogIntelligenceRecommendation = onQuickLogIntelligenceRecommendation,
                     )
-                }
-            }
-
-            item(key = "meals_header", contentType = "meals_header") {
-                Box(modifier = Modifier.padding(bottom = NutraTheme.spacing.md)) {
-                    NutraSectionHeader(title = "Öğünler")
                 }
             }
 
@@ -407,7 +407,7 @@ private fun DashboardIntelligenceCardSlot(
 ) {
     val cardState by cardStateFlow.collectAsStateWithLifecycle()
     val resolved = cardState ?: return
-    Box(modifier = Modifier.padding(bottom = NutraTheme.spacing.xl)) {
+    Box(modifier = Modifier.padding(bottom = NutraTheme.spacing.md)) {
         DashboardIntelligenceCard(
             cardState = resolved,
             onOpenStudio = {

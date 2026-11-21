@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
@@ -22,6 +23,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -55,9 +57,7 @@ import com.nutra.app.core.designsystem.NutraContentMaxWidth
 import com.nutra.app.core.designsystem.NutraDivider
 import com.nutra.app.core.designsystem.NutraDot
 import com.nutra.app.core.designsystem.NutraFormatters
-import com.nutra.app.core.designsystem.NutraIconBadge
 import com.nutra.app.core.designsystem.NutraIconButton
-import com.nutra.app.core.designsystem.NutraIcons
 import com.nutra.app.core.designsystem.NutraLinearProgress
 import com.nutra.app.core.designsystem.NutraSnackbarHost
 import com.nutra.app.core.designsystem.NutraSnackbarTone
@@ -107,117 +107,115 @@ fun MetabolismSummaryCard(
     }
 
     NutraCard(
+        onClick = onOpenDetail,
         modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                NutraIconBadge(
-                    icon = NutraIcons.InsightsRounded,
-                    tint = colors.onAccentSoft,
-                    container = colors.accentSoft,
-                    size = 38.dp,
-                    iconSize = 19.dp,
-                )
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    Text(
-                        text = "Adaptif Metabolizma",
-                        style = NutraTheme.typography.titleSmall,
-                        color = colors.textPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = "Tahmini günlük enerji harcaması",
-                        style = NutraTheme.typography.caption,
-                        color = colors.textSecondary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-            NutraBadge(
-                text = analysis.dataQuality.level.title,
-                color = badgeColors.first,
-                container = badgeColors.second,
-            )
-        }
-
-        // Key metrics row
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        text = NutraFormatters.formatInt(analysis.estimatedTdeeKcal),
-                        style = NutraTheme.typography.numberLarge,
-                        color = colors.textPrimary,
-                        modifier = Modifier.alignByBaseline(),
-                    )
-                    Text(
-                        text = "± ${NutraFormatters.formatInt(analysis.uncertaintyKcal)} kcal",
-                        style = NutraTheme.typography.bodySmall,
-                        color = colors.textSecondary,
-                        modifier = Modifier.alignByBaseline(),
-                    )
-                }
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
                 Text(
-                    text = "Başlangıç formülü: ${NutraFormatters.formatInt(analysis.priorTdeeKcal)} kcal · Güven %${analysis.confidenceScore}",
+                    text = "Adaptif Metabolizma",
+                    style = NutraTheme.typography.titleMedium,
+                    color = colors.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = "Tahmini günlük enerji harcaması",
                     style = NutraTheme.typography.caption,
-                    color = colors.textTertiary,
+                    color = colors.textSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                NutraBadge(
+                    text = analysis.dataQuality.level.title,
+                    color = badgeColors.first,
+                    container = badgeColors.second,
+                )
+                Icon(
+                    imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                    contentDescription = "Detaylı metabolizma analizi",
+                    tint = colors.textTertiary,
+                    modifier = Modifier.size(20.dp),
                 )
             }
         }
 
-        // Quick 3-stat strip
+        // Hero TDEE value
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(NutraTheme.shapes.sm)
-                .background(colors.surfaceMuted)
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            CompactStatColumn(
-                label = "Trend kilo",
-                value = "${NutraFormatters.formatKg(analysis.currentTrendWeightKg)} kg",
-            )
-            val rateSign = if (analysis.weeklyWeightChangeKg > 0.04f) "+" else ""
-            CompactStatColumn(
-                label = "Haftalık hız",
-                value = "$rateSign${NutraFormatters.formatKg(analysis.weeklyWeightChangeKg)} kg",
-            )
-            CompactStatColumn(
-                label = "Ort. alım",
-                value = analysis.averageDailyIntakeLast28Kcal?.let { "${NutraFormatters.formatInt(it)} kcal" } ?: "—",
-            )
-        }
-
-        // Guardrail notice if adolescent / special health mode
-        analysis.guardrailNotice?.let { notice ->
             Text(
-                text = notice,
-                style = NutraTheme.typography.bodySmall,
+                text = NutraFormatters.formatInt(analysis.estimatedTdeeKcal),
+                style = NutraTheme.typography.numberLarge,
+                color = colors.textPrimary,
+                modifier = Modifier.alignByBaseline(),
+            )
+            Text(
+                text = "± ${NutraFormatters.formatInt(analysis.uncertaintyKcal)} kcal/gün",
+                style = NutraTheme.typography.body,
                 color = colors.textSecondary,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(NutraTheme.shapes.sm)
-                    .background(colors.surfaceMuted)
-                    .padding(12.dp),
+                modifier = Modifier.alignByBaseline(),
             )
         }
 
-        // Optional non-intrusive calorie proposal preview
+        NutraDivider()
+
+        // Two essential sub-metrics: Weekly rate & Average intake
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            val rateSign = if (analysis.weeklyWeightChangeKg > 0.04f) "+" else ""
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = "Haftalık hız",
+                    style = NutraTheme.typography.caption,
+                    color = colors.textSecondary,
+                    maxLines = 1,
+                )
+                Text(
+                    text = "$rateSign${NutraFormatters.formatKg(analysis.weeklyWeightChangeKg)} kg/hafta",
+                    style = NutraTheme.typography.numberSmall,
+                    color = colors.textPrimary,
+                    maxLines = 1,
+                )
+            }
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = "Ort. alım",
+                    style = NutraTheme.typography.caption,
+                    color = colors.textSecondary,
+                    maxLines = 1,
+                )
+                Text(
+                    text = analysis.averageDailyIntakeLast28Kcal?.let { "${NutraFormatters.formatInt(it)} kcal/gün" } ?: "—",
+                    style = NutraTheme.typography.numberSmall,
+                    color = colors.textPrimary,
+                    maxLines = 1,
+                )
+            }
+        }
+
+        // Optional compact calorie proposal banner
         val proposal = analysis.calorieProposal
         if (proposal != null) {
             Column(
@@ -232,13 +230,6 @@ fun MetabolismSummaryCard(
                     text = "${proposal.title}: ${NutraFormatters.formatInt(proposal.currentGoals.calories)} → ${NutraFormatters.formatInt(proposal.proposedGoals.calories)} kcal",
                     style = NutraTheme.typography.labelSmall,
                     color = colors.onAccentSoft,
-                )
-                Text(
-                    text = proposal.rationale,
-                    style = NutraTheme.typography.caption,
-                    color = colors.onAccentSoft,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     NutraButton(
@@ -258,22 +249,7 @@ fun MetabolismSummaryCard(
                     )
                 }
             }
-        } else {
-            Text(
-                text = analysis.targetEta?.summaryText ?: analysis.plainSummary,
-                style = NutraTheme.typography.bodySmall,
-                color = colors.textSecondary,
-            )
         }
-
-        NutraButton(
-            text = "Detaylı metabolizma analizi",
-            onClick = onOpenDetail,
-            style = NutraButtonStyle.Secondary,
-            size = NutraButtonSize.Small,
-            trailingIcon = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-            modifier = Modifier.fillMaxWidth(),
-        )
     }
 }
 

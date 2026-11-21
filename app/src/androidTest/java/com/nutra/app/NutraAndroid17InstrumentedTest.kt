@@ -339,10 +339,10 @@ class NutraAndroid17InstrumentedTest {
         composeRule.onNodeWithText("7 Gün").performClick()
         composeRule.waitForIdle()
 
-        if (composeRule.onAllNodesWithText("Detaylı metabolizma analizi").fetchSemanticsNodes().isNotEmpty()) {
-            composeRule.onNodeWithText("Detaylı metabolizma analizi").performScrollTo().performClick()
+        if (composeRule.onAllNodesWithText("Adaptif Metabolizma").fetchSemanticsNodes().isNotEmpty()) {
+            composeRule.onNodeWithText("Adaptif Metabolizma").performScrollTo().performClick()
             composeRule.waitForIdle()
-            composeRule.onNodeWithText("Adaptif Metabolizma").assertIsDisplayed()
+            composeRule.onNodeWithText("TDEE, kilo projeksiyonu ve plato analizi").assertIsDisplayed()
             composeRule.onNodeWithContentDescription("Geri").performClick()
             composeRule.waitForIdle()
         }
