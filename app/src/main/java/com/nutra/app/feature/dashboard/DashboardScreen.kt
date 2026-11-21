@@ -416,12 +416,6 @@ private fun DashboardIntelligenceCardSlot(
                     IntelligenceStudioTab.RECOMMENDATIONS,
                 )
             },
-            onOpenBalancer = {
-                onOpenIntelligenceStudio(
-                    resolved.mealType,
-                    IntelligenceStudioTab.PORTION_BALANCER,
-                )
-            },
             onQuickLogTopRecommendation = onQuickLogIntelligenceRecommendation,
         )
     }

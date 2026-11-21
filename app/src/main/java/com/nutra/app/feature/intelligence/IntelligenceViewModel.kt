@@ -5,25 +5,20 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nutra.app.core.datastore.UserPreferencesDataStore
 import com.nutra.app.core.designsystem.NutraFormatters
-import com.nutra.app.domain.intelligence.CustomPortionOptimizationResult
-import com.nutra.app.domain.intelligence.FoodCulinaryClassifier
 import com.nutra.app.domain.intelligence.HabitMaturity
 import com.nutra.app.domain.intelligence.IntelligenceReport
 import com.nutra.app.domain.intelligence.MealRecommendation
 import com.nutra.app.domain.intelligence.MealRecommendationEngine
 import com.nutra.app.domain.intelligence.MicronutrientType
 import com.nutra.app.domain.intelligence.NutrientSignalStatus
-import com.nutra.app.domain.intelligence.PortionOptimizer
 import com.nutra.app.domain.intelligence.RecommendedFoodPortion
 import com.nutra.app.domain.model.ComboFoodEntry
 import com.nutra.app.domain.model.DailyNutritionSummary
 import com.nutra.app.domain.model.FoodFeedbackRecord
-import com.nutra.app.domain.model.FoodItem
 import com.nutra.app.domain.model.MealLogItem
 import com.nutra.app.domain.model.MealType
 import com.nutra.app.domain.model.UserProfile
 import com.nutra.app.domain.repository.NutritionRepository
-import com.nutra.app.domain.usecase.TurkishTextNormalizer
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -45,11 +40,9 @@ import java.time.LocalTime
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
-import kotlin.math.roundToInt
 
 enum class IntelligenceStudioTab(val title: String) {
     RECOMMENDATIONS("Öneriler"),
-    PORTION_BALANCER("Öğün Dengele"),
 }
 
 @Immutable
@@ -70,19 +63,8 @@ data class IntelligenceUiState(
     val activeTab: IntelligenceStudioTab = IntelligenceStudioTab.RECOMMENDATIONS,
     val report: IntelligenceReport? = null,
     val portionOverrides: Map<String, Map<Long, Float>> = emptyMap(),
-    val builderQuery: String = "",
-    val builderCatalogMatches: List<FoodItem> = emptyList(),
-    val builderSelectedFoods: List<FoodItem> = emptyList(),
-    val builderOptimized: CustomPortionOptimizationResult? = null,
-    val builderGramOverrides: Map<Long, Float> = emptyMap(),
     val feedbackMessage: String? = null,
     val feedbackEventId: Long = 0L,
-)
-
-private data class BuilderInternalState(
-    val query: String = "",
-    val selectedFoods: List<FoodItem> = emptyList(),
-    val gramOverrides: Map<Long, Float> = emptyMap(),
 )
 
 private data class StudioControlState(
@@ -114,13 +96,10 @@ class IntelligenceViewModel @Inject constructor(
     private val nutritionRepository: NutritionRepository,
     private val preferencesDataStore: UserPreferencesDataStore,
     private val recommendationEngine: MealRecommendationEngine,
-    private val classifier: FoodCulinaryClassifier,
-    private val portionOptimizer: PortionOptimizer,
 ) : ViewModel() {
 
     private val selectedDateFlow = MutableStateFlow(LocalDate.now())
     private val studioControlFlow = MutableStateFlow(StudioControlState())
-    private val builderStateFlow = MutableStateFlow(BuilderInternalState())
     private val feedbackSeq = AtomicLong(0L)
     private val isLoggingGuard = AtomicBoolean(false)
 
@@ -138,7 +117,7 @@ class IntelligenceViewModel @Inject constructor(
         }
     }
 
-    // Shared catalog & feedback flows eliminate duplicate Room queries across report + builder pipelines
+    // Shared catalog & feedback flows eliminate duplicate Room queries
     private val sharedCatalogFlow = nutritionRepository.observeAllFoods()
         .stateIn(
             scope = viewModelScope,
@@ -153,7 +132,7 @@ class IntelligenceViewModel @Inject constructor(
             replay = 1,
         )
 
-    // Single shared computation of recommendations (previously executed twice per emission!)
+    // Single shared computation of recommendations
     private val sharedReportFlow = combine(
         preferencesDataStore.userProfileFlow,
         dateScopedDataFlow,
@@ -191,8 +170,8 @@ class IntelligenceViewModel @Inject constructor(
         )
 
     /**
-     * Compact, isolated slice for DashboardScreen so typing in the Portion Balancer or editing
-     * studio tabs never recomposes NutraAppRoot or DashboardScreen.
+     * Compact, isolated slice for DashboardScreen so editing studio portions never recomposes
+     * NutraAppRoot or DashboardScreen.
      */
     val dashboardCardState: StateFlow<DashboardIntelligenceCardState?> = sharedReportFlow
         .map { snap ->
@@ -212,54 +191,6 @@ class IntelligenceViewModel @Inject constructor(
             started = SharingStarted.WhileSubscribed(30_000),
             initialValue = null,
         )
-
-    private val builderComputedFlow = combine(
-        sharedCatalogFlow.filterNotNull(),
-        sharedReportFlow,
-        builderStateFlow,
-    ) { catalog, reportSnap, builder ->
-        val report = reportSnap.report
-        val matches = if (builder.query.isBlank()) {
-            // Surface practical, preference-safe ready-to-eat Turkish foods for quick picking
-            val classified = classifier.classifyCatalog(catalog)
-            val feedbackByKey = reportSnap.feedback.associateBy { it.foodKey }
-            classified
-                .asSequence()
-                .filter { cf ->
-                    !cf.food.isCustom &&
-                        cf.food.caloriesPer100g > 10 &&
-                        classifier.isAllowedByPreferences(cf, reportSnap.profile.dietaryProfile, feedbackByKey)
-                }
-                .map { it.food }
-                .take(18)
-                .toList()
-        } else {
-            val normQ = TurkishTextNormalizer.normalize(builder.query)
-            val tokens = TurkishTextNormalizer.tokenizeNormalized(normQ)
-            catalog.filter { food ->
-                val text = food.normalizedSearchText.ifBlank {
-                    TurkishTextNormalizer.normalize("${food.name} ${food.subtitle}")
-                }
-                TurkishTextNormalizer.matchesNormalizedTokens(text, tokens)
-            }.take(24)
-        }
-
-        val optimized = if (builder.selectedFoods.isNotEmpty()) {
-            val baseOpt = recommendationEngine.optimizeCustomCombo(
-                selectedFoods = builder.selectedFoods,
-                budget = report.budget,
-                usualGramsByFoodId = report.eatingProfile.usualGramsByFoodId,
-            )
-            if (builder.gramOverrides.isEmpty()) {
-                baseOpt
-            } else {
-                applyBuilderGramOverrides(baseOpt, builder.gramOverrides, report.budget)
-            }
-        } else {
-            null
-        }
-        Triple(matches, builder, optimized)
-    }.flowOn(Dispatchers.Default)
 
     private val resolvedReportFlow = combine(
         sharedReportFlow,
@@ -297,8 +228,7 @@ class IntelligenceViewModel @Inject constructor(
     val uiState: StateFlow<IntelligenceUiState> = combine(
         resolvedReportFlow,
         studioControlFlow,
-        builderComputedFlow,
-    ) { reportSnap, control, (matches, builder, optimized) ->
+    ) { reportSnap, control ->
         IntelligenceUiState(
             isLoading = false,
             selectedDateIso = reportSnap.dateIso,
@@ -306,11 +236,6 @@ class IntelligenceViewModel @Inject constructor(
             activeTab = control.activeTab,
             report = reportSnap.report,
             portionOverrides = control.portionOverrides,
-            builderQuery = builder.query,
-            builderCatalogMatches = matches,
-            builderSelectedFoods = builder.selectedFoods,
-            builderOptimized = optimized,
-            builderGramOverrides = builder.gramOverrides,
             feedbackMessage = control.feedbackMessage,
             feedbackEventId = control.feedbackEventId,
         )
@@ -342,11 +267,6 @@ class IntelligenceViewModel @Inject constructor(
                 portionOverrides = emptyMap(),
             )
         }
-        builderStateFlow.update { it.copy(gramOverrides = emptyMap()) }
-    }
-
-    fun selectTab(tab: IntelligenceStudioTab) {
-        studioControlFlow.update { it.copy(activeTab = tab) }
     }
 
     fun refreshAlternatives() {
@@ -427,85 +347,6 @@ class IntelligenceViewModel @Inject constructor(
         }
     }
 
-    // --- Custom Portion Balancer ("Öğün Dengele") ---
-    fun updateBuilderQuery(query: String) {
-        builderStateFlow.update { it.copy(query = query) }
-    }
-
-    fun toggleBuilderFood(food: FoodItem) {
-        builderStateFlow.update { state ->
-            val exists = state.selectedFoods.any { it.id == food.id }
-            val nextList = if (exists) {
-                state.selectedFoods.filterNot { it.id == food.id }
-            } else if (state.selectedFoods.size < 4) {
-                state.selectedFoods + food
-            } else {
-                state.selectedFoods
-            }
-            state.copy(
-                selectedFoods = nextList,
-                gramOverrides = emptyMap(),
-                query = if (!exists) "" else state.query,
-            )
-        }
-    }
-
-    fun loadRecommendationIntoBalancer(recommendation: MealRecommendation) {
-        val foods = recommendation.items.map { it.food }.take(4)
-        builderStateFlow.update {
-            it.copy(
-                selectedFoods = foods,
-                gramOverrides = emptyMap(),
-                query = "",
-            )
-        }
-        studioControlFlow.update { it.copy(activeTab = IntelligenceStudioTab.PORTION_BALANCER) }
-    }
-
-    fun adjustBuilderItemGrams(portion: RecommendedFoodPortion, deltaGrams: Float) {
-        builderStateFlow.update { state ->
-            val next = state.gramOverrides.toMutableMap()
-            val current = next[portion.food.id] ?: portion.totalGrams
-            next[portion.food.id] = (current + deltaGrams).coerceIn(portion.minGrams, portion.maxGrams)
-            state.copy(gramOverrides = next)
-        }
-    }
-
-    fun reoptimizeBuilderPortions() {
-        builderStateFlow.update { it.copy(gramOverrides = emptyMap()) }
-        emitFeedback("Porsiyonlar hedefine göre yeniden dengelendi")
-    }
-
-    fun clearBuilderSelection() {
-        builderStateFlow.update { BuilderInternalState() }
-    }
-
-    fun logBuilderCombo(onLogged: (MealType, String) -> Unit = { _, _ -> }) {
-        val opt = uiState.value.builderOptimized ?: return
-        if (opt.items.isEmpty()) return
-        if (!isLoggingGuard.compareAndSet(false, true)) return
-        val mealType = uiState.value.selectedMealType
-        val dateIso = selectedDateFlow.value.toString()
-        viewModelScope.launch {
-            try {
-                nutritionRepository.logComboItemsToMeal(
-                    dateIso = dateIso,
-                    mealType = mealType,
-                    entries = opt.items.map { it.toComboEntry() },
-                )
-                nutritionRepository.recordRecommendationAccepted(
-                    opt.items.map { Triple(it.feedbackKey, it.food.id.takeIf { id -> id > 0L }, it.food.name) },
-                )
-                builderStateFlow.update { BuilderInternalState() }
-                val msg = "Dengelenmiş ${NutraFormatters.lowercaseTr(mealType.title)} eklendi (${NutraFormatters.formatInt(opt.totalCalories)} kcal)"
-                emitFeedback(msg)
-                onLogged(mealType, msg)
-            } finally {
-                isLoggingGuard.set(false)
-            }
-        }
-    }
-
     fun clearFeedback() {
         studioControlFlow.update { it.copy(feedbackMessage = null) }
     }
@@ -513,33 +354,5 @@ class IntelligenceViewModel @Inject constructor(
     private fun emitFeedback(message: String) {
         val id = feedbackSeq.incrementAndGet()
         studioControlFlow.update { it.copy(feedbackMessage = message, feedbackEventId = id) }
-    }
-
-    private fun applyBuilderGramOverrides(
-        base: CustomPortionOptimizationResult,
-        overrides: Map<Long, Float>,
-        budget: com.nutra.app.domain.intelligence.MealBudget,
-    ): CustomPortionOptimizationResult {
-        val adjusted = base.items.map { item ->
-            val g = overrides[item.food.id] ?: return@map item
-            portionOptimizer.buildPortionWithGrams(
-                classified = classifier.classifySingle(item.food),
-                grams = g,
-                preferHouseholdSnap = false,
-            )
-        }
-        val cal = adjusted.sumOf { it.calories }
-        val p = (adjusted.sumOf { it.proteinGrams.toDouble() } * 10.0).roundToInt() / 10f
-        val c = (adjusted.sumOf { it.carbsGrams.toDouble() } * 10.0).roundToInt() / 10f
-        val f = (adjusted.sumOf { it.fatGrams.toDouble() } * 10.0).roundToInt() / 10f
-        val fit = portionOptimizer.computeFitScore(cal, p, c, f, budget)
-        return base.copy(
-            items = adjusted,
-            totalCalories = cal,
-            totalProtein = p,
-            totalCarbs = c,
-            totalFat = f,
-            fitScore = fit,
-        )
     }
 }

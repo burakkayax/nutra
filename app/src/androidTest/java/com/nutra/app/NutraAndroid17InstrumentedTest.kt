@@ -322,9 +322,6 @@ class NutraAndroid17InstrumentedTest {
             composeRule.onNodeWithText("Önerileri gör").performScrollTo().performClick()
             composeRule.waitForIdle()
             composeRule.onNodeWithText("Nutra Intelligence").assertIsDisplayed()
-            composeRule.onNodeWithText("Öğün Dengele").performClick()
-            composeRule.waitForIdle()
-            composeRule.onNodeWithText("Kendi öğününü hedefe göre dengele").assertIsDisplayed()
             composeRule.onNodeWithContentDescription("Geri").performClick()
             composeRule.waitForIdle()
         }
