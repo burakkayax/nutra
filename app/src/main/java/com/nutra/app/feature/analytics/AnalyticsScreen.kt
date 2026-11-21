@@ -107,7 +107,10 @@ import com.nutra.app.core.designsystem.NutraSnackbarHost
 import com.nutra.app.core.designsystem.NutraSnackbarTone
 import com.nutra.app.core.designsystem.NutraStackedRatioBar
 import com.nutra.app.core.designsystem.NutraStepperButton
+import com.nutra.app.core.designsystem.NutraStickyHeaderTopReservedPadding
+import com.nutra.app.core.designsystem.NutraStickyScreenHeader
 import com.nutra.app.core.designsystem.NutraTheme
+import com.nutra.app.core.designsystem.rememberHeaderCollapseFraction
 import com.nutra.app.core.designsystem.rememberSkeletonPulseAlpha
 import com.nutra.app.domain.model.DailyAnalyticsPoint
 import com.nutra.app.domain.model.GoalType
@@ -147,6 +150,7 @@ fun AnalyticsScreen(
     }
 
     val listState = rememberLazyListState()
+    val headerCollapseFraction = rememberHeaderCollapseFraction(listState)
     var lastAnimatedCalorieRange by rememberSaveable { mutableStateOf<AnalyticsRangeOption?>(null) }
     var lastAnimatedWaterRange by rememberSaveable { mutableStateOf<AnalyticsRangeOption?>(null) }
     val onRevealCalorieRange = remember { { range: AnalyticsRangeOption -> lastAnimatedCalorieRange = range } }
@@ -192,25 +196,18 @@ fun AnalyticsScreen(
                         contentPadding = PaddingValues(
                             start = contentPadding.calculateStartPadding(layoutDirection) + NutraTheme.spacing.screen,
                             end = contentPadding.calculateEndPadding(layoutDirection) + NutraTheme.spacing.screen,
-                            top = contentPadding.calculateTopPadding() + 28.dp,
+                            top = contentPadding.calculateTopPadding() + NutraStickyHeaderTopReservedPadding,
                             bottom = contentPadding.calculateBottomPadding() + 16.dp,
                         ),
                         verticalArrangement = Arrangement.spacedBy(20.dp),
                     ) {
                         item(key = "header") {
-                            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                                NutraScreenHeader(
-                                    title = "İlerleme",
-                                    eyebrow = "Beslenme ve kilo özeti",
-                                )
-
-                                NutraSegmentedControl(
-                                    items = AnalyticsRangeOption.entries,
-                                    selectedItem = uiState.selectedRange,
-                                    onItemSelected = viewModel::selectRange,
-                                    labelProvider = { it.title },
-                                )
-                            }
+                            NutraSegmentedControl(
+                                items = AnalyticsRangeOption.entries,
+                                selectedItem = uiState.selectedRange,
+                                onItemSelected = viewModel::selectRange,
+                                labelProvider = { it.title },
+                            )
                         }
 
                         item(key = "calorie_chart") {
@@ -275,6 +272,17 @@ fun AnalyticsScreen(
                             )
                         }
                     }
+
+                    NutraStickyScreenHeader(
+                        title = "İlerleme",
+                        eyebrow = "Beslenme ve kilo özeti",
+                        collapseFractionState = headerCollapseFraction,
+                        horizontalPadding = PaddingValues(
+                            start = contentPadding.calculateStartPadding(layoutDirection) + NutraTheme.spacing.screen,
+                            end = contentPadding.calculateEndPadding(layoutDirection) + NutraTheme.spacing.screen,
+                        ),
+                        modifier = Modifier.align(Alignment.TopCenter),
+                    )
                 }
             }
         }

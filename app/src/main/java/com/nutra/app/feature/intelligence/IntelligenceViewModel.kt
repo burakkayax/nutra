@@ -36,7 +36,6 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.LocalDate
-import java.time.LocalTime
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
@@ -46,20 +45,25 @@ enum class IntelligenceStudioTab(val title: String) {
 }
 
 @Immutable
-data class DashboardIntelligenceCardState(
+data class DashboardMealRecommendationPage(
     val mealType: MealType,
     val targetCalories: Int,
     val targetProteinGrams: Float,
+    val topRecommendation: MealRecommendation,
+)
+
+@Immutable
+data class DashboardIntelligenceCardState(
+    val defaultMealType: MealType,
     val maturity: HabitMaturity,
-    val topRecommendation: MealRecommendation?,
-    val fallbackNote: String,
+    val mealPages: List<DashboardMealRecommendationPage>,
 )
 
 @Immutable
 data class IntelligenceUiState(
     val isLoading: Boolean = true,
     val selectedDateIso: String = LocalDate.now().toString(),
-    val selectedMealType: MealType = MealType.DINNER,
+    val selectedMealType: MealType = MealType.BREAKFAST,
     val activeTab: IntelligenceStudioTab = IntelligenceStudioTab.RECOMMENDATIONS,
     val report: IntelligenceReport? = null,
     val portionOverrides: Map<String, Map<Long, Float>> = emptyMap(),
@@ -86,6 +90,7 @@ private data class SharedReportSnapshot(
     val dateIso: String,
     val mealType: MealType,
     val report: IntelligenceReport,
+    val dashboardCard: DashboardIntelligenceCardState?,
     val profile: UserProfile,
     val feedback: List<FoodFeedbackRecord>,
 )
@@ -140,10 +145,11 @@ class IntelligenceViewModel @Inject constructor(
         sharedFeedbackFlow,
         studioControlFlow.map { it.manualMealType to it.variationSeed }.distinctUntilChanged(),
     ) { profile, dateData, catalog, feedback, (manualMeal, variationSeed) ->
-        val mealType = manualMeal ?: recommendationEngine.inferActiveMealType(
+        val defaultMealType = recommendationEngine.inferDefaultMealType(
             dailySummary = dateData.summary,
-            nowTime = LocalTime.now(),
+            profile = profile,
         )
+        val mealType = manualMeal ?: defaultMealType
         val report = recommendationEngine.generateRecommendations(
             profile = profile,
             dailySummary = dateData.summary,
@@ -155,10 +161,49 @@ class IntelligenceViewModel @Inject constructor(
             variationSeed = variationSeed,
             maxResults = 4,
         )
+        val dashboardCard = if (report.eatingProfile.maturity == HabitMaturity.NONE) {
+            null
+        } else {
+            val pages = MealType.entries.mapNotNull { candidateMeal ->
+                val mealReport = if (candidateMeal == mealType) {
+                    report
+                } else {
+                    recommendationEngine.generateRecommendations(
+                        profile = profile,
+                        dailySummary = dateData.summary,
+                        mealType = candidateMeal,
+                        catalogFoods = catalog,
+                        historicalLogs = dateData.logs,
+                        feedbackRecords = feedback,
+                        today = dateData.selectedDate,
+                        variationSeed = variationSeed,
+                        maxResults = 1,
+                        precomputedEatingProfile = report.eatingProfile,
+                    )
+                }
+                val topRec = mealReport.recommendations.firstOrNull() ?: return@mapNotNull null
+                DashboardMealRecommendationPage(
+                    mealType = candidateMeal,
+                    targetCalories = mealReport.budget.targetCalories,
+                    targetProteinGrams = mealReport.budget.targetProteinGrams,
+                    topRecommendation = topRec,
+                )
+            }
+            if (pages.isEmpty()) {
+                null
+            } else {
+                DashboardIntelligenceCardState(
+                    defaultMealType = defaultMealType,
+                    maturity = report.eatingProfile.maturity,
+                    mealPages = pages,
+                )
+            }
+        }
         SharedReportSnapshot(
             dateIso = dateData.selectedDate.toString(),
             mealType = mealType,
             report = report,
+            dashboardCard = dashboardCard,
             profile = profile,
             feedback = feedback,
         )
@@ -171,20 +216,10 @@ class IntelligenceViewModel @Inject constructor(
 
     /**
      * Compact, isolated slice for DashboardScreen so editing studio portions never recomposes
-     * NutraAppRoot or DashboardScreen.
+     * NutraAppRoot or DashboardScreen. Emits null when there is insufficient data.
      */
     val dashboardCardState: StateFlow<DashboardIntelligenceCardState?> = sharedReportFlow
-        .map { snap ->
-            val report = snap.report
-            DashboardIntelligenceCardState(
-                mealType = report.mealType,
-                targetCalories = report.budget.targetCalories,
-                targetProteinGrams = report.budget.targetProteinGrams,
-                maturity = report.eatingProfile.maturity,
-                topRecommendation = report.recommendations.firstOrNull(),
-                fallbackNote = report.coldStartNote ?: report.budget.budgetSummaryText,
-            )
-        }
+        .map { snap -> snap.dashboardCard }
         .distinctUntilChanged()
         .stateIn(
             scope = viewModelScope,
@@ -255,7 +290,7 @@ class IntelligenceViewModel @Inject constructor(
         studioControlFlow.update {
             it.copy(
                 activeTab = initialTab,
-                manualMealType = mealType ?: it.manualMealType,
+                manualMealType = mealType,
             )
         }
     }

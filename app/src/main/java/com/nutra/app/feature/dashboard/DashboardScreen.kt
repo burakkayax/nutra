@@ -59,6 +59,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -98,13 +99,15 @@ import com.nutra.app.core.designsystem.NutraIcons
 import com.nutra.app.core.designsystem.NutraLinearProgress
 import com.nutra.app.core.designsystem.NutraMacroStat
 import com.nutra.app.core.designsystem.NutraNumericInputDialog
-import com.nutra.app.core.designsystem.NutraScreenHeader
 import com.nutra.app.core.designsystem.NutraSectionHeader
 import com.nutra.app.core.designsystem.NutraSkeletonBar
 import com.nutra.app.core.designsystem.NutraSnackbarHost
 import com.nutra.app.core.designsystem.NutraSnackbarTone
 import com.nutra.app.core.designsystem.NutraStepperButton
+import com.nutra.app.core.designsystem.NutraStickyHeaderTopReservedPadding
+import com.nutra.app.core.designsystem.NutraStickyScreenHeader
 import com.nutra.app.core.designsystem.NutraTheme
+import com.nutra.app.core.designsystem.rememberHeaderCollapseFraction
 import com.nutra.app.core.designsystem.rememberSkeletonPulseAlpha
 import com.nutra.app.domain.intelligence.MealRecommendation
 import com.nutra.app.domain.model.MealLogItem
@@ -148,6 +151,7 @@ fun DashboardScreen(
     val layoutDirection = LocalLayoutDirection.current
     val accessibilityManager = LocalAccessibilityManager.current
     val listState = rememberLazyListState()
+    val headerCollapseFraction = rememberHeaderCollapseFraction(listState)
 
     LaunchedEffect(scrollToTopTrigger) {
         if (scrollToTopTrigger > 0) {
@@ -185,43 +189,20 @@ fun DashboardScreen(
             contentPadding = PaddingValues(
                 start = contentPadding.calculateStartPadding(layoutDirection) + NutraTheme.spacing.screen,
                 end = contentPadding.calculateEndPadding(layoutDirection) + NutraTheme.spacing.screen,
-                top = contentPadding.calculateTopPadding() + 28.dp,
+                top = contentPadding.calculateTopPadding() + NutraStickyHeaderTopReservedPadding,
                 bottom = contentPadding.calculateBottomPadding() + 16.dp,
             ),
             verticalArrangement = Arrangement.Top,
         ) {
-            item(key = "header", contentType = "header") {
+            item(key = "hero_summary", contentType = "hero_summary") {
                 Column(modifier = Modifier.padding(bottom = NutraTheme.spacing.xl)) {
-                    DashboardHeader(
-                        today = state.today,
-                        selectedDate = state.selectedDate,
-                        isWeekCalendarVisible = state.isWeekCalendarVisible,
-                        onToggleWeekCalendar = viewModel::toggleWeekCalendar,
-                        onJumpToToday = viewModel::jumpToToday,
-                    )
-
                     AnimatedVisibility(
                         visible = state.isWeekCalendarVisible,
                         enter = expandVertically(tween(220)) + fadeIn(tween(180)),
                         exit = shrinkVertically(tween(180)) + fadeOut(tween(120)),
                     ) {
-                        Box(modifier = Modifier.padding(top = NutraTheme.spacing.lg)) {
-                            WeekDateStrip(
-                                today = state.today,
-                                weekStart = state.weekStart,
-                                selectedDate = state.selectedDate,
-                                onSelectDate = viewModel::selectDate,
-                                onPreviousWeek = { viewModel.shiftWeek(-1) },
-                                onNextWeek = { viewModel.shiftWeek(1) },
-                                onJumpToToday = viewModel::jumpToToday,
-                            )
-                        }
+                        Spacer(modifier = Modifier.height(132.dp))
                     }
-                }
-            }
-
-            item(key = "hero_summary", contentType = "hero_summary") {
-                Box(modifier = Modifier.padding(bottom = NutraTheme.spacing.xl)) {
                     HeroNutritionCard(
                         consumedCalories = state.dailySummary.consumedCalories,
                         targetCalories = state.dailySummary.goals.calories,
@@ -311,6 +292,24 @@ fun DashboardScreen(
                 }
             }
         }
+
+        DashboardHeader(
+            today = state.today,
+            selectedDate = state.selectedDate,
+            weekStart = state.weekStart,
+            isWeekCalendarVisible = state.isWeekCalendarVisible,
+            collapseFractionState = headerCollapseFraction,
+            horizontalPadding = PaddingValues(
+                start = contentPadding.calculateStartPadding(layoutDirection) + NutraTheme.spacing.screen,
+                end = contentPadding.calculateEndPadding(layoutDirection) + NutraTheme.spacing.screen,
+            ),
+            onToggleWeekCalendar = viewModel::toggleWeekCalendar,
+            onJumpToToday = viewModel::jumpToToday,
+            onSelectDate = viewModel::selectDate,
+            onPreviousWeek = { viewModel.shiftWeek(-1) },
+            onNextWeek = { viewModel.shiftWeek(1) },
+            modifier = Modifier.align(Alignment.TopCenter),
+        )
 
         val deletedItem = state.lastDeletedItem
         val bannerVisible = deletedItem != null || state.statusBannerMessage != null
@@ -407,12 +406,13 @@ private fun DashboardIntelligenceCardSlot(
 ) {
     val cardState by cardStateFlow.collectAsStateWithLifecycle()
     val resolved = cardState ?: return
+    if (resolved.mealPages.isEmpty()) return
     Box(modifier = Modifier.padding(bottom = NutraTheme.spacing.md)) {
         DashboardIntelligenceCard(
             cardState = resolved,
-            onOpenStudio = {
+            onOpenStudio = { mealType ->
                 onOpenIntelligenceStudio(
-                    resolved.mealType,
+                    mealType,
                     IntelligenceStudioTab.RECOMMENDATIONS,
                 )
             },
@@ -479,9 +479,16 @@ private fun DashboardLoadingSkeleton(
 private fun DashboardHeader(
     today: LocalDate,
     selectedDate: LocalDate,
+    weekStart: LocalDate,
     isWeekCalendarVisible: Boolean,
+    collapseFractionState: State<Float>,
+    horizontalPadding: PaddingValues,
     onToggleWeekCalendar: () -> Unit,
     onJumpToToday: () -> Unit,
+    onSelectDate: (LocalDate) -> Unit,
+    onPreviousWeek: () -> Unit,
+    onNextWeek: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val haptic = LocalHapticFeedback.current
     val isToday = selectedDate == today
@@ -523,10 +530,13 @@ private fun DashboardHeader(
         label = "calendarButtonFg",
     )
 
-    NutraScreenHeader(
+    NutraStickyScreenHeader(
         title = title,
+        collapseFractionState = collapseFractionState,
+        modifier = modifier,
         eyebrow = eyebrow,
         eyebrowColor = if (isToday) NutraTheme.colors.accent else NutraTheme.colors.textSecondary,
+        horizontalPadding = horizontalPadding,
         actions = {
             AnimatedVisibility(
                 visible = !isToday && !isWeekCalendarVisible,
@@ -565,6 +575,25 @@ private fun DashboardHeader(
                 containerColor = calendarContainerColor,
                 contentColor = calendarContentColor,
             )
+        },
+        bottomContent = {
+            AnimatedVisibility(
+                visible = isWeekCalendarVisible,
+                enter = expandVertically(tween(220)) + fadeIn(tween(180)),
+                exit = shrinkVertically(tween(180)) + fadeOut(tween(120)),
+            ) {
+                Box(modifier = Modifier.padding(top = NutraTheme.spacing.md)) {
+                    WeekDateStrip(
+                        today = today,
+                        weekStart = weekStart,
+                        selectedDate = selectedDate,
+                        onSelectDate = onSelectDate,
+                        onPreviousWeek = onPreviousWeek,
+                        onNextWeek = onNextWeek,
+                        onJumpToToday = onJumpToToday,
+                    )
+                }
+            }
         },
     )
 }

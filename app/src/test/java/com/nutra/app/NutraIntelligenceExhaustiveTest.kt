@@ -18,6 +18,7 @@ import com.nutra.app.domain.model.FoodCategory
 import com.nutra.app.domain.model.FoodFeedbackRecord
 import com.nutra.app.domain.model.FoodFeedbackStatus
 import com.nutra.app.domain.model.FoodItem
+import com.nutra.app.domain.model.GoalType
 import com.nutra.app.domain.model.MacroGoals
 import com.nutra.app.domain.model.MealLogItem
 import com.nutra.app.domain.model.MealSummary
@@ -518,5 +519,89 @@ class NutraIntelligenceExhaustiveTest {
             assertTrue("Expected >= 2 distinct foods per recommendation", rec.items.size >= 2)
             assertEquals(rec.items.size, rec.items.map { it.feedbackKey }.distinct().size)
         }
+    }
+
+    @Test
+    fun inferDefaultMealType_followsSequentialNextMealAndGoalCalorieRules() {
+        val sampleFood = indexedCatalog().first()
+        val goals = MacroGoals(calories = 2000, proteinGrams = 140, carbsGrams = 210, fatGrams = 65)
+        val loseProfile = UserProfile(
+            goalType = GoalType.LOSE_WEIGHT,
+            currentWeightKg = 80f,
+            targetWeightKg = 72f,
+            goals = goals,
+        )
+        val gainProfile = UserProfile(
+            goalType = GoalType.GAIN_MUSCLE,
+            currentWeightKg = 70f,
+            targetWeightKg = 76f,
+            goals = goals,
+        )
+
+        // 1. Nothing logged -> BREAKFAST
+        val emptySummary = summaryWithLoggedMeals("2026-11-21", goals, emptyMap())
+        assertEquals(MealType.BREAKFAST, engine.inferDefaultMealType(emptySummary, loseProfile))
+
+        // 2. Breakfast logged -> LUNCH
+        val afterBreakfast = summaryWithLoggedMeals(
+            "2026-11-21",
+            goals,
+            mapOf(MealType.BREAKFAST to listOf(dummyLog(1L, "2026-11-21", MealType.BREAKFAST, sampleFood, grams = 100f, ts = 1000L))),
+        )
+        assertEquals(MealType.LUNCH, engine.inferDefaultMealType(afterBreakfast, loseProfile))
+
+        // 3. Breakfast + Lunch logged -> DINNER
+        val afterLunch = summaryWithLoggedMeals(
+            "2026-11-21",
+            goals,
+            mapOf(
+                MealType.BREAKFAST to listOf(dummyLog(1L, "2026-11-21", MealType.BREAKFAST, sampleFood, grams = 100f, ts = 1000L)),
+                MealType.LUNCH to listOf(dummyLog(2L, "2026-11-21", MealType.LUNCH, sampleFood, grams = 100f, ts = 2000L)),
+            ),
+        )
+        assertEquals(MealType.DINNER, engine.inferDefaultMealType(afterLunch, loseProfile))
+
+        // 4. Breakfast + Lunch + Dinner logged (calories still < 2000) -> SNACK
+        val afterDinner = summaryWithLoggedMeals(
+            "2026-11-21",
+            goals,
+            mapOf(
+                MealType.BREAKFAST to listOf(dummyLog(1L, "2026-11-21", MealType.BREAKFAST, sampleFood, grams = 100f, ts = 1000L)),
+                MealType.LUNCH to listOf(dummyLog(2L, "2026-11-21", MealType.LUNCH, sampleFood, grams = 100f, ts = 2000L)),
+                MealType.DINNER to listOf(dummyLog(3L, "2026-11-21", MealType.DINNER, sampleFood, grams = 100f, ts = 3000L)),
+            ),
+        )
+        assertEquals(MealType.SNACK, engine.inferDefaultMealType(afterDinner, loseProfile))
+
+        // 5. All 4 meals logged, calories still below daily goal -> SNACK
+        val allMealsUnderTarget = summaryWithLoggedMeals(
+            "2026-11-21",
+            goals,
+            mapOf(
+                MealType.BREAKFAST to listOf(dummyLog(1L, "2026-11-21", MealType.BREAKFAST, sampleFood, grams = 80f, ts = 1000L)),
+                MealType.LUNCH to listOf(dummyLog(2L, "2026-11-21", MealType.LUNCH, sampleFood, grams = 80f, ts = 2000L)),
+                MealType.DINNER to listOf(dummyLog(3L, "2026-11-21", MealType.DINNER, sampleFood, grams = 80f, ts = 3000L)),
+                MealType.SNACK to listOf(dummyLog(4L, "2026-11-21", MealType.SNACK, sampleFood, grams = 50f, ts = 4000L)),
+            ),
+        )
+        assertTrue(allMealsUnderTarget.consumedCalories < goals.calories)
+        assertEquals(MealType.SNACK, engine.inferDefaultMealType(allMealsUnderTarget, loseProfile))
+
+        // 6. All 4 meals logged AND daily calorie target reached (>= 2000 kcal):
+        //    - For weight loss / maintenance -> BREAKFAST
+        //    - For weight gain (GAIN_MUSCLE) -> SNACK
+        val allMealsAtOrOverTarget = summaryWithLoggedMeals(
+            "2026-11-21",
+            goals,
+            mapOf(
+                MealType.BREAKFAST to listOf(dummyLog(1L, "2026-11-21", MealType.BREAKFAST, sampleFood, grams = 600f, ts = 1000L)),
+                MealType.LUNCH to listOf(dummyLog(2L, "2026-11-21", MealType.LUNCH, sampleFood, grams = 600f, ts = 2000L)),
+                MealType.DINNER to listOf(dummyLog(3L, "2026-11-21", MealType.DINNER, sampleFood, grams = 600f, ts = 3000L)),
+                MealType.SNACK to listOf(dummyLog(4L, "2026-11-21", MealType.SNACK, sampleFood, grams = 400f, ts = 4000L)),
+            ),
+        )
+        assertTrue(allMealsAtOrOverTarget.consumedCalories >= goals.calories)
+        assertEquals(MealType.BREAKFAST, engine.inferDefaultMealType(allMealsAtOrOverTarget, loseProfile))
+        assertEquals(MealType.SNACK, engine.inferDefaultMealType(allMealsAtOrOverTarget, gainProfile))
     }
 }

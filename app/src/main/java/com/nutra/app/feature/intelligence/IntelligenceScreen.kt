@@ -29,6 +29,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
@@ -83,41 +85,85 @@ import kotlin.math.roundToInt
 @Composable
 fun DashboardIntelligenceCard(
     cardState: DashboardIntelligenceCardState,
-    onOpenStudio: () -> Unit,
-    onQuickLogTopRecommendation: (MealRecommendation) -> Unit,
+    onOpenStudio: (MealType) -> Unit,
+    onQuickLogTopRecommendation: (MealRecommendation) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    val pages = cardState.mealPages
+    if (pages.isEmpty()) return
     val colors = NutraTheme.colors
-    val topRec = cardState.topRecommendation
+    val defaultPageIndex = remember(cardState.defaultMealType, pages) {
+        pages.indexOfFirst { it.mealType == cardState.defaultMealType }.coerceAtLeast(0)
+    }
+    val pagerState = rememberPagerState(initialPage = defaultPageIndex) { pages.size }
+
+    LaunchedEffect(cardState.defaultMealType, pages.size) {
+        val targetIdx = pages.indexOfFirst { it.mealType == cardState.defaultMealType }
+        if (targetIdx >= 0 && targetIdx != pagerState.currentPage && !pagerState.isScrollInProgress) {
+            pagerState.animateScrollToPage(targetIdx)
+        }
+    }
+
+    val currentMealType = pages.getOrNull(pagerState.currentPage)?.mealType ?: cardState.defaultMealType
 
     NutraCard(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(
-                text = "Nutra Intelligence",
-                style = NutraTheme.typography.titleSmall,
-                color = colors.textPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = "Size özel öğün önerisi",
-                style = NutraTheme.typography.caption,
-                color = colors.textSecondary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(
+                modifier = Modifier.weight(1f).padding(end = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = "Önerilen öğünler",
+                    style = NutraTheme.typography.titleSmall,
+                    color = colors.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = "Alışkanlıklarınıza göre kişiselleştirildi",
+                    style = NutraTheme.typography.caption,
+                    color = colors.textSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (pages.size > 1) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    pages.indices.forEach { idx ->
+                        val isSelected = idx == pagerState.currentPage
+                        NutraDot(
+                            color = if (isSelected) colors.accent else colors.surfaceMuted,
+                            size = if (isSelected) 7.dp else 5.dp,
+                        )
+                    }
+                }
+            }
         }
 
-        if (topRec != null) {
+        HorizontalPager(
+            state = pagerState,
+            pageSpacing = 10.dp,
+            verticalAlignment = Alignment.Top,
+            modifier = Modifier.fillMaxWidth(),
+        ) { pageIndex ->
+            val page = pages[pageIndex]
+            val topRec = page.topRecommendation
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(NutraTheme.shapes.md)
                     .background(colors.surfaceMuted)
-                    .clickable(onClick = onOpenStudio)
+                    .clickable { onOpenStudio(page.mealType) }
                     .padding(horizontal = 14.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -127,7 +173,7 @@ fun DashboardIntelligenceCard(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = cardState.mealType.title,
+                        text = page.mealType.title,
                         style = NutraTheme.typography.labelSmall,
                         color = colors.accent,
                         maxLines = 1,
@@ -168,17 +214,11 @@ fun DashboardIntelligenceCard(
                     }
                 }
             }
-        } else {
-            Text(
-                text = cardState.fallbackNote,
-                style = NutraTheme.typography.bodySmall,
-                color = colors.textSecondary,
-            )
         }
 
         NutraButton(
             text = "Önerileri gör",
-            onClick = onOpenStudio,
+            onClick = { onOpenStudio(currentMealType) },
             style = NutraButtonStyle.Secondary,
             size = NutraButtonSize.Small,
             trailingIcon = Icons.AutoMirrored.Rounded.KeyboardArrowRight,

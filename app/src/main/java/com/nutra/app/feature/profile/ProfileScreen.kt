@@ -69,15 +69,17 @@ import com.nutra.app.core.designsystem.NutraIconBadge
 import com.nutra.app.core.designsystem.NutraIconButton
 import com.nutra.app.core.designsystem.NutraIcons
 import com.nutra.app.core.designsystem.NutraListRow
-import com.nutra.app.core.designsystem.NutraScreenHeader
 import com.nutra.app.core.designsystem.NutraSectionHeader
 import com.nutra.app.core.designsystem.NutraSegmentedControl
 import com.nutra.app.core.designsystem.NutraSkeletonBar
 import com.nutra.app.core.designsystem.NutraSnackbarHost
 import com.nutra.app.core.designsystem.NutraSnackbarTone
+import com.nutra.app.core.designsystem.NutraStickyHeaderTopReservedPadding
+import com.nutra.app.core.designsystem.NutraStickyScreenHeader
 import com.nutra.app.core.designsystem.NutraSwitch
 import com.nutra.app.core.designsystem.NutraTextField
 import com.nutra.app.core.designsystem.NutraTheme
+import com.nutra.app.core.designsystem.rememberHeaderCollapseFraction
 import com.nutra.app.core.designsystem.rememberSkeletonPulseAlpha
 import com.nutra.app.core.notification.WaterReminderScheduleCalculator
 import com.nutra.app.domain.model.ThemePreference
@@ -112,6 +114,7 @@ fun ProfileScreen(
     val haptic = LocalHapticFeedback.current
     val layoutDirection = LocalLayoutDirection.current
     val listState = rememberLazyListState()
+    val headerCollapseFraction = rememberHeaderCollapseFraction(listState)
 
     var showGeminiDialog by remember { mutableStateOf(false) }
     var pendingImportUri by remember { mutableStateOf<Uri?>(null) }
@@ -160,18 +163,11 @@ fun ProfileScreen(
             contentPadding = PaddingValues(
                 start = contentPadding.calculateStartPadding(layoutDirection) + NutraTheme.spacing.screen,
                 end = contentPadding.calculateEndPadding(layoutDirection) + NutraTheme.spacing.screen,
-                top = contentPadding.calculateTopPadding() + 28.dp,
+                top = contentPadding.calculateTopPadding() + NutraStickyHeaderTopReservedPadding,
                 bottom = contentPadding.calculateBottomPadding() + 16.dp,
             ),
             verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.xl),
         ) {
-            item(key = "header") {
-                NutraScreenHeader(
-                    title = "Profil",
-                    eyebrow = "Hedefler ve ayarlar",
-                )
-            }
-
             // 1. Personal body & goal overview card
             item(key = "body_profile_card") {
                 NutraCard {
@@ -483,6 +479,17 @@ fun ProfileScreen(
                 }
             }
         }
+
+        NutraStickyScreenHeader(
+            title = "Profil",
+            eyebrow = "Hedefler ve ayarlar",
+            collapseFractionState = headerCollapseFraction,
+            horizontalPadding = PaddingValues(
+                start = contentPadding.calculateStartPadding(layoutDirection) + NutraTheme.spacing.screen,
+                end = contentPadding.calculateEndPadding(layoutDirection) + NutraTheme.spacing.screen,
+            ),
+            modifier = Modifier.align(Alignment.TopCenter),
+        )
 
         NutraSnackbarHost(
             visible = feedback != null,

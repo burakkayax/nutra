@@ -6,7 +6,9 @@ import com.nutra.app.domain.model.DailyNutritionSummary
 import com.nutra.app.domain.model.DietStyle
 import com.nutra.app.domain.model.FoodFeedbackRecord
 import com.nutra.app.domain.model.FoodItem
+import com.nutra.app.domain.model.GoalType
 import com.nutra.app.domain.model.MealLogItem
+import com.nutra.app.domain.model.MealSummary
 import com.nutra.app.domain.model.MealType
 import com.nutra.app.domain.model.UserProfile
 import java.time.LocalDate
@@ -59,6 +61,41 @@ class MealRecommendationEngine @Inject constructor(
         }
     }
 
+    fun inferDefaultMealType(
+        dailySummary: DailyNutritionSummary,
+        profile: UserProfile,
+    ): MealType {
+        val isWeightGainGoal = profile.goalType == GoalType.GAIN_MUSCLE ||
+            profile.targetWeightKg > profile.currentWeightKg
+        val isCalorieGoalNotReached = dailySummary.consumedCalories < dailySummary.goals.calories
+
+        if (!isWeightGainGoal && !isCalorieGoalNotReached) {
+            return MealType.BREAKFAST
+        }
+
+        val loggedMeals = dailySummary.meals.filter { it.items.isNotEmpty() }
+        if (loggedMeals.isEmpty()) {
+            return MealType.BREAKFAST
+        }
+        val loggedTypes = loggedMeals.map { it.mealType }.toSet()
+        if (loggedTypes.size >= MealType.entries.size) {
+            return MealType.SNACK
+        }
+
+        val lastAddedMeal = loggedMeals.maxWithOrNull(
+            compareBy<MealSummary> { summary -> summary.items.maxOfOrNull { it.timestampMillis } ?: 0L }
+                .thenBy { summary -> summary.mealType.sortOrder },
+        )?.mealType ?: MealType.BREAKFAST
+
+        val allMeals = MealType.entries
+        val nextIndex = lastAddedMeal.ordinal + 1
+        return if (nextIndex < allMeals.size) {
+            allMeals[nextIndex]
+        } else {
+            MealType.SNACK
+        }
+    }
+
     fun generateRecommendations(
         profile: UserProfile,
         dailySummary: DailyNutritionSummary,
@@ -69,9 +106,10 @@ class MealRecommendationEngine @Inject constructor(
         today: LocalDate = LocalDate.now(),
         variationSeed: Int = 0,
         maxResults: Int = 4,
+        precomputedEatingProfile: UserEatingProfile? = null,
     ): IntelligenceReport {
         val classifiedAll = classifier.classifyCatalog(catalogFoods)
-        val eatingProfile = profileLearner.learn(
+        val eatingProfile = precomputedEatingProfile ?: profileLearner.learn(
             profile = profile,
             classifiedCatalog = classifiedAll,
             historicalLogs = historicalLogs,

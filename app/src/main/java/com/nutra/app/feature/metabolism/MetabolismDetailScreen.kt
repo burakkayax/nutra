@@ -63,7 +63,6 @@ import com.nutra.app.core.designsystem.NutraSnackbarHost
 import com.nutra.app.core.designsystem.NutraSnackbarTone
 import com.nutra.app.core.designsystem.NutraTheme
 import com.nutra.app.domain.metabolism.CalorieTargetProposal
-import com.nutra.app.domain.metabolism.DataQualityLevel
 import com.nutra.app.domain.metabolism.MetabolismAnalysisResult
 import com.nutra.app.domain.metabolism.MetabolismGuardrailState
 import com.nutra.app.domain.metabolism.TdeeHistoryPoint
@@ -99,12 +98,6 @@ fun MetabolismSummaryCard(
     modifier: Modifier = Modifier,
 ) {
     val colors = NutraTheme.colors
-    val badgeColors = when (analysis.dataQuality.level) {
-        DataQualityLevel.HIGH -> colors.onAccentSoft to colors.accentSoft
-        DataQualityLevel.MODERATE -> colors.onAccentSoft to colors.accentSoft
-        DataQualityLevel.LOW -> colors.warningText to colors.surfaceMuted
-        DataQualityLevel.INSUFFICIENT -> colors.textSecondary to colors.surfaceMuted
-    }
 
     NutraCard(
         onClick = onOpenDetail,
@@ -135,22 +128,12 @@ fun MetabolismSummaryCard(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                NutraBadge(
-                    text = analysis.dataQuality.level.title,
-                    color = badgeColors.first,
-                    container = badgeColors.second,
-                )
-                Icon(
-                    imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                    contentDescription = "Detaylı metabolizma analizi",
-                    tint = colors.textTertiary,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
+            Icon(
+                imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                contentDescription = "Detaylı metabolizma analizi",
+                tint = colors.textTertiary,
+                modifier = Modifier.size(20.dp),
+            )
         }
 
         // Hero TDEE value

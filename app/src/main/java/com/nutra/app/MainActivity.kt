@@ -412,22 +412,24 @@ fun NutraAppRoot(
                     .fillMaxSize()
                     .background(NutraTheme.colors.background),
             ) {
+                val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
                 val navBarBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-                val contentPadding = remember(navBarBottom) {
+                val contentPadding = remember(statusBarTop, navBarBottom) {
                     PaddingValues(
-                        top = 0.dp,
+                        top = statusBarTop,
                         bottom = BottomBarReservedHeight + navBarBottom,
                     )
                 }
 
-                val contentInsets = WindowInsets.statusBars
-                    .union(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal))
+                val horizontalContentInsets = WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal)
                     .union(WindowInsets.navigationBars.only(WindowInsetsSides.Horizontal))
+                val contentInsets = WindowInsets.statusBars
+                    .union(horizontalContentInsets)
 
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .windowInsetsPadding(contentInsets),
+                        .windowInsetsPadding(horizontalContentInsets),
                 ) {
                     TabSlotBox(isSelected = activeTab == PrimaryDestination.DASHBOARD && !hasAnyOverlayScreen) {
                         saveableStateHolder.SaveableStateProvider(PrimaryDestination.DASHBOARD) {

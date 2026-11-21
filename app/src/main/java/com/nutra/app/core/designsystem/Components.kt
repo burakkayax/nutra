@@ -40,6 +40,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -49,8 +51,10 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
@@ -77,6 +81,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -97,6 +102,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -105,6 +111,8 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -128,6 +136,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.delay
@@ -222,6 +231,128 @@ fun NutraCard(
 }
 
 /**
+ * Default expanded vertical space reserved at the top of a LazyColumn when using [NutraStickyScreenHeader].
+ */
+val NutraStickyHeaderTopReservedPadding: Dp = 108.dp
+
+private val HeaderCollapseSpring = spring<Float>(dampingRatio = 0.92f, stiffness = 520f)
+
+/**
+ * Tracks a smooth, spring-animated 0f..1f header collapse progress from [listState]
+ * over the first [collapseRangeDp] of scroll.
+ */
+@Composable
+fun rememberHeaderCollapseFraction(
+    listState: LazyListState,
+    collapseRangeDp: Dp = 56.dp,
+): State<Float> {
+    val density = LocalDensity.current
+    val rangePx = remember(density, collapseRangeDp) {
+        with(density) { collapseRangeDp.toPx().coerceAtLeast(1f) }
+    }
+    val rawFraction by remember(listState, rangePx) {
+        derivedStateOf {
+            if (listState.firstVisibleItemIndex > 0) {
+                1f
+            } else {
+                (listState.firstVisibleItemScrollOffset.toFloat() / rangePx).coerceIn(0f, 1f)
+            }
+        }
+    }
+    return animateFloatAsState(
+        targetValue = rawFraction,
+        animationSpec = HeaderCollapseSpring,
+        label = "headerCollapseFraction",
+    )
+}
+
+private fun Modifier.headerScaleCollapse(
+    scale: Float,
+    originX: Float = 0f,
+): Modifier = if (scale >= 0.999f) {
+    this
+} else {
+    this
+        .layout { measurable, constraints ->
+            val placeable = measurable.measure(constraints)
+            val scaledHeight = (placeable.height * scale).roundToInt().coerceAtLeast(0)
+            layout(placeable.width, scaledHeight) {
+                val yOffset = ((scaledHeight - placeable.height) / 2f).roundToInt()
+                placeable.placeRelative(0, yOffset)
+            }
+        }
+        .graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+            transformOrigin = TransformOrigin(originX, 0.5f)
+        }
+}
+
+/**
+ * Sticky, shrinking, subtly translucent top screen header bar.
+ */
+@Composable
+fun NutraStickyScreenHeader(
+    title: String,
+    collapseFractionState: State<Float>,
+    modifier: Modifier = Modifier,
+    eyebrow: String? = null,
+    eyebrowColor: Color = NutraTheme.colors.textSecondary,
+    horizontalPadding: PaddingValues = PaddingValues(horizontal = NutraTheme.spacing.screen),
+    actions: @Composable RowScope.() -> Unit = {},
+    bottomContent: (@Composable ColumnScope.() -> Unit)? = null,
+) {
+    val colors = NutraTheme.colors
+    val layoutDirection = LocalLayoutDirection.current
+    val fraction = collapseFractionState.value.coerceIn(0f, 1f)
+    val topPad = (28f - 13f * fraction).dp
+    val bottomPad = (18f - 4f * fraction).dp
+    val bgAlpha = 1f - 0.06f * fraction
+    val dividerAlpha = (fraction * 0.75f).coerceIn(0f, 1f)
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .drawBehind {
+                drawRect(color = colors.background.copy(alpha = bgAlpha))
+                if (dividerAlpha > 0.01f) {
+                    val strokePx = 1.dp.toPx()
+                    drawRect(
+                        color = colors.divider.copy(alpha = dividerAlpha),
+                        topLeft = Offset(0f, size.height - strokePx),
+                        size = Size(size.width, strokePx),
+                    )
+                }
+            },
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Column(
+            modifier = Modifier
+                .widthIn(max = NutraContentMaxWidth)
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .padding(
+                    start = horizontalPadding.calculateStartPadding(layoutDirection),
+                    end = horizontalPadding.calculateEndPadding(layoutDirection),
+                    top = topPad,
+                    bottom = bottomPad,
+                ),
+        ) {
+            NutraScreenHeader(
+                title = title,
+                eyebrow = eyebrow,
+                eyebrowColor = eyebrowColor,
+                collapseFraction = fraction,
+                actions = actions,
+            )
+            if (bottomContent != null) {
+                bottomContent()
+            }
+        }
+    }
+}
+
+/**
  * Large screen title with optional eyebrow (small line above) and trailing actions.
  */
 @Composable
@@ -230,31 +361,47 @@ fun NutraScreenHeader(
     modifier: Modifier = Modifier,
     eyebrow: String? = null,
     eyebrowColor: Color = NutraTheme.colors.textSecondary,
+    collapseFraction: Float = 0f,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
+    val clamped = collapseFraction.coerceIn(0f, 1f)
+    val eyebrowScale = 1f - 0.10f * clamped
+    val titleScale = 1f - 0.16f * clamped
+    val actionScale = 1f - 0.08f * clamped
+    val baseEyebrowStyle = NutraTheme.typography.body
+    val baseTitleStyle = remember {
+        DefaultNutraTypography.titleLarge.copy(fontSize = 30.sp, lineHeight = 36.sp)
+    }
+
     Row(
         modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy((3f - 1f * clamped).dp),
+        ) {
             if (eyebrow != null) {
                 Text(
                     text = eyebrow,
-                    style = NutraTheme.typography.bodySmall,
+                    style = baseEyebrowStyle,
                     color = eyebrowColor,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.headerScaleCollapse(scale = eyebrowScale, originX = 0f),
                 )
             }
             Text(
                 text = title,
-                style = NutraTheme.typography.titleLarge,
+                style = baseTitleStyle,
                 color = NutraTheme.colors.textPrimary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.headerScaleCollapse(scale = titleScale, originX = 0f),
             )
         }
         Row(
+            modifier = Modifier.headerScaleCollapse(scale = actionScale, originX = 1f),
             horizontalArrangement = Arrangement.spacedBy(NutraTheme.spacing.sm),
             verticalAlignment = Alignment.CenterVertically,
             content = actions,
