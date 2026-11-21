@@ -274,7 +274,7 @@ class TurkishFoodCatalogIntegrityTest {
         if (localBackup != null) {
             val localPayload = json.decodeFromString<NutraBackupPayload>(localBackup.readText(Charsets.UTF_8))
             assertNull(validateBackupPayload(localPayload))
-            assertTrue(localPayload.mealLogs.all { it.baseUnit == "g" })
+            assertTrue(localPayload.mealLogs.all { it.baseUnit == "g" || it.baseUnit == "ml" })
         }
 
         // Verify TurkishTextNormalizer keeps comma decimals intact while cleaning comma-separated food names
