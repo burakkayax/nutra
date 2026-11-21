@@ -29,9 +29,11 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import kotlin.math.roundToInt
@@ -194,6 +196,9 @@ class AnalyticsViewModel @Inject constructor(
     private val showWeightDialogFlow = MutableStateFlow(false)
     private val feedbackSeq = AtomicLong(0L)
     private val feedbackFlow = MutableStateFlow<Pair<String?, Long>>(null to 0L)
+    private val isUpdatingProposal = AtomicBoolean(false)
+
+    val metabolismFeedback: StateFlow<Pair<String?, Long>> = feedbackFlow.asStateFlow()
 
     private val rangeSummaryFlow = combine(rangeFlow, todayFlow) { option, end ->
         option to end
@@ -205,7 +210,14 @@ class AnalyticsViewModel @Inject constructor(
             .flowOn(Dispatchers.Default)
     }
 
-    private val allWeightTrendPointsFlow = nutritionRepository.observeWeightEntries()
+    private val sharedWeightEntriesFlow = nutritionRepository.observeWeightEntries()
+        .shareIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(30_000),
+            replay = 1,
+        )
+
+    private val allWeightTrendPointsFlow = sharedWeightEntriesFlow
         .map { entries -> weightTrendCalculator.calculateTrend(entries) }
         .distinctUntilChanged()
         .flowOn(Dispatchers.Default)
@@ -220,7 +232,7 @@ class AnalyticsViewModel @Inject constructor(
     val metabolismAnalysis: StateFlow<MetabolismAnalysisResult?> = combine(
         preferencesDataStore.userProfileFlow,
         metabolismIntakeFlow,
-        nutritionRepository.observeWeightEntries(),
+        sharedWeightEntriesFlow,
         nutritionRepository.observeGoalHistory(),
         todayFlow,
     ) { profile, intakeDays, weights, goalHistory, today ->
@@ -340,12 +352,14 @@ class AnalyticsViewModel @Inject constructor(
     }
 
     fun logNewWeight(weightKg: Float) {
+        if (!weightKg.isFinite()) return
+        val safeWeight = weightKg.coerceIn(25f, 350f)
         viewModelScope.launch {
             val today = LocalDate.now()
             todayFlow.value = today
-            nutritionRepository.logWeight(today.toString(), weightKg)
+            nutritionRepository.logWeight(today.toString(), safeWeight)
             showWeightDialogFlow.value = false
-            feedbackFlow.value = "${NutraFormatters.formatKg(weightKg)} kg tartı kaydedildi" to feedbackSeq.incrementAndGet()
+            feedbackFlow.value = "${NutraFormatters.formatKg(safeWeight)} kg tartı kaydedildi" to feedbackSeq.incrementAndGet()
         }
     }
 
@@ -354,38 +368,48 @@ class AnalyticsViewModel @Inject constructor(
     }
 
     fun approveCalorieProposal(proposal: CalorieTargetProposal) {
+        if (!isUpdatingProposal.compareAndSet(false, true)) return
         viewModelScope.launch {
-            val profile = preferencesDataStore.getSnapshot()
-            val todayIso = LocalDate.now().toString()
-            nutritionRepository.approveAdaptiveCalorieProposal(
-                proposedGoals = proposal.proposedGoals,
-                profile = profile,
-                todayIso = todayIso,
-            )
-            metabolismAnalysis.value?.let { analysis ->
-                nutritionRepository.saveMetabolismSnapshots(
-                    listOf(
-                        MetabolismSnapshotRecord(
-                            dateIso = analysis.analysisDateIso,
-                            estimatedTdeeKcal = analysis.estimatedTdeeKcal,
-                            uncertaintyKcal = analysis.uncertaintyKcal,
-                            priorTdeeKcal = analysis.priorTdeeKcal,
-                            trendWeightKg = analysis.currentTrendWeightKg,
-                            confidenceScore = analysis.confidenceScore,
-                            qualityLevel = analysis.dataQuality.level.name,
-                            updatedAtMillis = System.currentTimeMillis(),
-                        ),
-                    ),
+            try {
+                val profile = preferencesDataStore.getSnapshot()
+                val todayIso = LocalDate.now().toString()
+                nutritionRepository.approveAdaptiveCalorieProposal(
+                    proposedGoals = proposal.proposedGoals,
+                    profile = profile,
+                    todayIso = todayIso,
                 )
+                metabolismAnalysis.value?.let { analysis ->
+                    nutritionRepository.saveMetabolismSnapshots(
+                        listOf(
+                            MetabolismSnapshotRecord(
+                                dateIso = analysis.analysisDateIso,
+                                estimatedTdeeKcal = analysis.estimatedTdeeKcal,
+                                uncertaintyKcal = analysis.uncertaintyKcal,
+                                priorTdeeKcal = analysis.priorTdeeKcal,
+                                trendWeightKg = analysis.currentTrendWeightKg,
+                                confidenceScore = analysis.confidenceScore,
+                                qualityLevel = analysis.dataQuality.level.name,
+                                updatedAtMillis = System.currentTimeMillis(),
+                            ),
+                        ),
+                    )
+                }
+                feedbackFlow.value = "Günlük kalori hedefi ${NutraFormatters.formatInt(proposal.proposedGoals.calories)} kcal olarak güncellendi" to feedbackSeq.incrementAndGet()
+            } finally {
+                isUpdatingProposal.set(false)
             }
-            feedbackFlow.value = "Günlük kalori hedefi ${NutraFormatters.formatInt(proposal.proposedGoals.calories)} kcal olarak güncellendi" to feedbackSeq.incrementAndGet()
         }
     }
 
     fun dismissCalorieProposal() {
+        if (!isUpdatingProposal.compareAndSet(false, true)) return
         viewModelScope.launch {
-            nutritionRepository.dismissAdaptiveCalorieProposal(LocalDate.now().toString())
-            feedbackFlow.value = "Mevcut kalori hedefin korundu" to feedbackSeq.incrementAndGet()
+            try {
+                nutritionRepository.dismissAdaptiveCalorieProposal(LocalDate.now().toString())
+                feedbackFlow.value = "Mevcut kalori hedefin korundu" to feedbackSeq.incrementAndGet()
+            } finally {
+                isUpdatingProposal.set(false)
+            }
         }
     }
 }

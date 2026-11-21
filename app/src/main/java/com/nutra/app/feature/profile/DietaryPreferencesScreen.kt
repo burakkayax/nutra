@@ -40,6 +40,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.nutra.app.core.datastore.MAX_EXCLUDED_KEYWORDS
 import com.nutra.app.core.designsystem.NutraCard
 import com.nutra.app.core.designsystem.NutraChip
 import com.nutra.app.core.designsystem.NutraContentMaxWidth
@@ -56,6 +57,7 @@ import com.nutra.app.domain.model.DietStyle
 import com.nutra.app.domain.model.DietaryProfile
 import com.nutra.app.domain.model.FoodFeedbackRecord
 import com.nutra.app.domain.model.UserProfile
+import com.nutra.app.domain.usecase.TurkishTextNormalizer
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -72,10 +74,14 @@ fun DietaryPreferencesScreen(
     val dietary = profile.dietaryProfile
     var keywordInput by remember { mutableStateOf("") }
 
+    val canAddKeyword = dietary.excludedKeywords.size < MAX_EXCLUDED_KEYWORDS &&
+        TurkishTextNormalizer.normalize(keywordInput).length >= 2
+
     fun addExcludedKeyword() {
         val cleaned = keywordInput.trim()
-        if (cleaned.length < 2) return
-        if (dietary.excludedKeywords.none { it.equals(cleaned, ignoreCase = true) }) {
+        val normalized = TurkishTextNormalizer.normalize(cleaned)
+        if (normalized.length < 2 || dietary.excludedKeywords.size >= MAX_EXCLUDED_KEYWORDS) return
+        if (dietary.excludedKeywords.none { TurkishTextNormalizer.normalize(it) == normalized }) {
             onDietaryProfileChange(dietary.copy(excludedKeywords = dietary.excludedKeywords + cleaned))
         }
         keywordInput = ""
@@ -195,7 +201,10 @@ fun DietaryPreferencesScreen(
 
                 // 3. Excluded custom keywords
                 Column(verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.md)) {
-                    NutraSectionHeader(title = "Sevmediğin besin veya malzemeler")
+                    NutraSectionHeader(
+                        title = "Sevmediğin besin veya malzemeler",
+                        supportingText = "${dietary.excludedKeywords.size}/$MAX_EXCLUDED_KEYWORDS",
+                    )
                     NutraCard(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -214,7 +223,7 @@ fun DietaryPreferencesScreen(
                                 icon = Icons.Rounded.Add,
                                 contentDescription = "Hariç tutulan ekle",
                                 onClick = ::addExcludedKeyword,
-                                enabled = keywordInput.trim().length >= 2,
+                                enabled = canAddKeyword,
                                 size = 48.dp,
                             )
                         }

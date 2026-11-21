@@ -112,10 +112,11 @@ import com.nutra.app.domain.model.MealSummary
 import com.nutra.app.domain.model.MealType
 import com.nutra.app.domain.model.ServingUnitLabels
 import com.nutra.app.feature.intelligence.DashboardIntelligenceCard
+import com.nutra.app.feature.intelligence.DashboardIntelligenceCardState
 import com.nutra.app.feature.intelligence.IntelligenceStudioTab
-import com.nutra.app.feature.intelligence.IntelligenceUiState
 import com.nutra.app.feature.logging.AddFoodModalSheet
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.StateFlow
 import java.time.LocalDate
 import java.time.format.TextStyle
 import kotlin.math.roundToInt
@@ -131,7 +132,7 @@ fun DashboardScreen(
     viewModel: DashboardViewModel,
     contentPadding: PaddingValues = PaddingValues(0.dp),
     scrollToTopTrigger: Int = 0,
-    intelligenceUiState: IntelligenceUiState? = null,
+    intelligenceCardStateFlow: StateFlow<DashboardIntelligenceCardState?>? = null,
     onOpenIntelligenceStudio: (MealType?, IntelligenceStudioTab) -> Unit = { _, _ -> },
     onQuickLogIntelligenceRecommendation: (MealRecommendation) -> Unit = {},
 ) {
@@ -244,26 +245,13 @@ fun DashboardScreen(
                 }
             }
 
-            if (intelligenceUiState != null && intelligenceUiState.report != null) {
+            if (intelligenceCardStateFlow != null) {
                 item(key = "nutra_intelligence_card", contentType = "nutra_intelligence_card") {
-                    Box(modifier = Modifier.padding(bottom = NutraTheme.spacing.xl)) {
-                        DashboardIntelligenceCard(
-                            uiState = intelligenceUiState,
-                            onOpenStudio = {
-                                onOpenIntelligenceStudio(
-                                    intelligenceUiState.report.mealType,
-                                    IntelligenceStudioTab.RECOMMENDATIONS,
-                                )
-                            },
-                            onOpenBalancer = {
-                                onOpenIntelligenceStudio(
-                                    intelligenceUiState.report.mealType,
-                                    IntelligenceStudioTab.PORTION_BALANCER,
-                                )
-                            },
-                            onQuickLogTopRecommendation = onQuickLogIntelligenceRecommendation,
-                        )
-                    }
+                    DashboardIntelligenceCardSlot(
+                        cardStateFlow = intelligenceCardStateFlow,
+                        onOpenIntelligenceStudio = onOpenIntelligenceStudio,
+                        onQuickLogIntelligenceRecommendation = onQuickLogIntelligenceRecommendation,
+                    )
                 }
             }
 
@@ -407,6 +395,34 @@ fun DashboardScreen(
                 viewModel.closeAddFoodModal()
                 onOpenIntelligenceStudio(meal, IntelligenceStudioTab.RECOMMENDATIONS)
             },
+        )
+    }
+}
+
+@Composable
+private fun DashboardIntelligenceCardSlot(
+    cardStateFlow: StateFlow<DashboardIntelligenceCardState?>,
+    onOpenIntelligenceStudio: (MealType?, IntelligenceStudioTab) -> Unit,
+    onQuickLogIntelligenceRecommendation: (MealRecommendation) -> Unit,
+) {
+    val cardState by cardStateFlow.collectAsStateWithLifecycle()
+    val resolved = cardState ?: return
+    Box(modifier = Modifier.padding(bottom = NutraTheme.spacing.xl)) {
+        DashboardIntelligenceCard(
+            cardState = resolved,
+            onOpenStudio = {
+                onOpenIntelligenceStudio(
+                    resolved.mealType,
+                    IntelligenceStudioTab.RECOMMENDATIONS,
+                )
+            },
+            onOpenBalancer = {
+                onOpenIntelligenceStudio(
+                    resolved.mealType,
+                    IntelligenceStudioTab.PORTION_BALANCER,
+                )
+            },
+            onQuickLogTopRecommendation = onQuickLogIntelligenceRecommendation,
         )
     }
 }

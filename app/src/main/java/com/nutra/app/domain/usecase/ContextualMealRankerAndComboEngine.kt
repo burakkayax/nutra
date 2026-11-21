@@ -1,5 +1,6 @@
 package com.nutra.app.domain.usecase
 
+import com.nutra.app.core.designsystem.NutraFormatters
 import com.nutra.app.domain.model.ComboFoodEntry
 import com.nutra.app.domain.model.FoodCategory
 import com.nutra.app.domain.model.FoodItem
@@ -16,7 +17,7 @@ private data class ScoredFood(
 private class HistoricalBasketGroup(
     val sampleBasket: List<MealLogItem>,
     var count: Int,
-    val latestTimestamp: Long,
+    var latestTimestamp: Long,
 )
 
 /**
@@ -225,6 +226,9 @@ class ContextualMealRankerAndComboEngine @Inject constructor() {
                         )
                     } else {
                         existing.count++
+                        if (basketMaxTs > existing.latestTimestamp) {
+                            existing.latestTimestamp = basketMaxTs
+                        }
                     }
                 }
             }
@@ -252,7 +256,7 @@ class ContextualMealRankerAndComboEngine @Inject constructor() {
                     val subtitle = if (count >= 2) {
                         "${mealType.title} öğününde $count kez birlikte tükettiniz"
                     } else {
-                        "Son ${mealType.title.lowercase()} kaydınızdan hızlı kombin"
+                        "Son ${NutraFormatters.lowercaseTr(mealType.title)} kaydınızdan hızlı kombin"
                     }
                     suggestions.add(
                         SmartComboSuggestion(
@@ -270,6 +274,7 @@ class ContextualMealRankerAndComboEngine @Inject constructor() {
                                     proteinGrams = log.proteinGrams,
                                     carbsGrams = log.carbsGrams,
                                     fatGrams = log.fatGrams,
+                                    baseUnit = log.baseUnit,
                                 )
                             },
                             coOccurrenceCount = count,

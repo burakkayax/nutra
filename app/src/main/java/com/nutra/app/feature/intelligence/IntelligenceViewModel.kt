@@ -7,14 +7,21 @@ import com.nutra.app.core.datastore.UserPreferencesDataStore
 import com.nutra.app.core.designsystem.NutraFormatters
 import com.nutra.app.domain.intelligence.CustomPortionOptimizationResult
 import com.nutra.app.domain.intelligence.FoodCulinaryClassifier
+import com.nutra.app.domain.intelligence.HabitMaturity
 import com.nutra.app.domain.intelligence.IntelligenceReport
 import com.nutra.app.domain.intelligence.MealRecommendation
 import com.nutra.app.domain.intelligence.MealRecommendationEngine
+import com.nutra.app.domain.intelligence.MicronutrientType
+import com.nutra.app.domain.intelligence.NutrientSignalStatus
 import com.nutra.app.domain.intelligence.PortionOptimizer
 import com.nutra.app.domain.intelligence.RecommendedFoodPortion
 import com.nutra.app.domain.model.ComboFoodEntry
+import com.nutra.app.domain.model.DailyNutritionSummary
+import com.nutra.app.domain.model.FoodFeedbackRecord
 import com.nutra.app.domain.model.FoodItem
+import com.nutra.app.domain.model.MealLogItem
 import com.nutra.app.domain.model.MealType
+import com.nutra.app.domain.model.UserProfile
 import com.nutra.app.domain.repository.NutritionRepository
 import com.nutra.app.domain.usecase.TurkishTextNormalizer
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -25,9 +32,11 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -42,6 +51,16 @@ enum class IntelligenceStudioTab(val title: String) {
     RECOMMENDATIONS("Öneriler"),
     PORTION_BALANCER("Öğün Dengele"),
 }
+
+@Immutable
+data class DashboardIntelligenceCardState(
+    val mealType: MealType,
+    val targetCalories: Int,
+    val targetProteinGrams: Float,
+    val maturity: HabitMaturity,
+    val topRecommendation: MealRecommendation?,
+    val fallbackNote: String,
+)
 
 @Immutable
 data class IntelligenceUiState(
@@ -75,6 +94,20 @@ private data class StudioControlState(
     val feedbackEventId: Long = 0L,
 )
 
+private data class DateScopedData(
+    val selectedDate: LocalDate,
+    val summary: DailyNutritionSummary,
+    val logs: List<MealLogItem>,
+)
+
+private data class SharedReportSnapshot(
+    val dateIso: String,
+    val mealType: MealType,
+    val report: IntelligenceReport,
+    val profile: UserProfile,
+    val feedback: List<FoodFeedbackRecord>,
+)
+
 @OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class IntelligenceViewModel @Inject constructor(
@@ -91,72 +124,115 @@ class IntelligenceViewModel @Inject constructor(
     private val feedbackSeq = AtomicLong(0L)
     private val isLoggingGuard = AtomicBoolean(false)
 
-    private val dailySummaryFlow = selectedDateFlow.flatMapLatest { date ->
-        nutritionRepository.observeDailySummary(date.toString())
+    // Atomic date-scoped pair so date changes never transiently mix yesterday's summary with today's logs
+    private val dateScopedDataFlow = selectedDateFlow.flatMapLatest { date ->
+        combine(
+            nutritionRepository.observeDailySummary(date.toString()),
+            nutritionRepository.observeMealLogsSince(date.minusDays(60).toString()),
+        ) { summary, logs ->
+            DateScopedData(
+                selectedDate = date,
+                summary = summary,
+                logs = logs,
+            )
+        }
     }
 
-    private val historicalLogsFlow = selectedDateFlow.flatMapLatest { date ->
-        nutritionRepository.observeMealLogsSince(date.minusDays(60).toString())
-    }
-
-    private val catalogFoodsFlow = nutritionRepository.observeAllFoods()
-    private val feedbackFlow = nutritionRepository.observeFoodFeedback()
-
-    private val engineInputFlow = combine(
-        preferencesDataStore.userProfileFlow,
-        dailySummaryFlow,
-        catalogFoodsFlow,
-        historicalLogsFlow,
-        feedbackFlow,
-    ) { profile, summary, catalog, logs, feedback ->
-        EngineInputs(
-            profile = profile,
-            summary = summary,
-            catalog = catalog,
-            logs = logs,
-            feedback = feedback,
+    // Shared catalog & feedback flows eliminate duplicate Room queries across report + builder pipelines
+    private val sharedCatalogFlow = nutritionRepository.observeAllFoods()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(30_000),
+            initialValue = null,
         )
-    }
 
-    private data class EngineInputs(
-        val profile: com.nutra.app.domain.model.UserProfile,
-        val summary: com.nutra.app.domain.model.DailyNutritionSummary,
-        val catalog: List<FoodItem>,
-        val logs: List<com.nutra.app.domain.model.MealLogItem>,
-        val feedback: List<com.nutra.app.domain.model.FoodFeedbackRecord>,
-    )
+    private val sharedFeedbackFlow = nutritionRepository.observeFoodFeedback()
+        .shareIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(30_000),
+            replay = 1,
+        )
 
-    private val reportFlow = combine(
-        selectedDateFlow,
-        engineInputFlow,
+    // Single shared computation of recommendations (previously executed twice per emission!)
+    private val sharedReportFlow = combine(
+        preferencesDataStore.userProfileFlow,
+        dateScopedDataFlow,
+        sharedCatalogFlow.filterNotNull(),
+        sharedFeedbackFlow,
         studioControlFlow.map { it.manualMealType to it.variationSeed }.distinctUntilChanged(),
-    ) { selectedDate, inputs, (manualMeal, variationSeed) ->
+    ) { profile, dateData, catalog, feedback, (manualMeal, variationSeed) ->
         val mealType = manualMeal ?: recommendationEngine.inferActiveMealType(
-            dailySummary = inputs.summary,
+            dailySummary = dateData.summary,
             nowTime = LocalTime.now(),
         )
         val report = recommendationEngine.generateRecommendations(
-            profile = inputs.profile,
-            dailySummary = inputs.summary,
+            profile = profile,
+            dailySummary = dateData.summary,
             mealType = mealType,
-            catalogFoods = inputs.catalog,
-            historicalLogs = inputs.logs,
-            feedbackRecords = inputs.feedback,
-            today = selectedDate,
+            catalogFoods = catalog,
+            historicalLogs = dateData.logs,
+            feedbackRecords = feedback,
+            today = dateData.selectedDate,
             variationSeed = variationSeed,
             maxResults = 4,
         )
-        Triple(selectedDate.toString(), mealType, report)
+        SharedReportSnapshot(
+            dateIso = dateData.selectedDate.toString(),
+            mealType = mealType,
+            report = report,
+            profile = profile,
+            feedback = feedback,
+        )
     }.flowOn(Dispatchers.Default)
+        .shareIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(30_000),
+            replay = 1,
+        )
+
+    /**
+     * Compact, isolated slice for DashboardScreen so typing in the Portion Balancer or editing
+     * studio tabs never recomposes NutraAppRoot or DashboardScreen.
+     */
+    val dashboardCardState: StateFlow<DashboardIntelligenceCardState?> = sharedReportFlow
+        .map { snap ->
+            val report = snap.report
+            DashboardIntelligenceCardState(
+                mealType = report.mealType,
+                targetCalories = report.budget.targetCalories,
+                targetProteinGrams = report.budget.targetProteinGrams,
+                maturity = report.eatingProfile.maturity,
+                topRecommendation = report.recommendations.firstOrNull(),
+                fallbackNote = report.coldStartNote ?: report.budget.budgetSummaryText,
+            )
+        }
+        .distinctUntilChanged()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(30_000),
+            initialValue = null,
+        )
 
     private val builderComputedFlow = combine(
-        catalogFoodsFlow,
-        reportFlow,
+        sharedCatalogFlow.filterNotNull(),
+        sharedReportFlow,
         builderStateFlow,
-    ) { catalog, (_, _, report), builder ->
+    ) { catalog, reportSnap, builder ->
+        val report = reportSnap.report
         val matches = if (builder.query.isBlank()) {
-            // Surface practical staple Turkish foods for quick picking
-            catalog.filter { !it.isCustom && it.caloriesPer100g > 10 }.take(18)
+            // Surface practical, preference-safe ready-to-eat Turkish foods for quick picking
+            val classified = classifier.classifyCatalog(catalog)
+            val feedbackByKey = reportSnap.feedback.associateBy { it.foodKey }
+            classified
+                .asSequence()
+                .filter { cf ->
+                    !cf.food.isCustom &&
+                        cf.food.caloriesPer100g > 10 &&
+                        classifier.isAllowedByPreferences(cf, reportSnap.profile.dietaryProfile, feedbackByKey)
+                }
+                .map { it.food }
+                .take(18)
+                .toList()
         } else {
             val normQ = TurkishTextNormalizer.normalize(builder.query)
             val tokens = TurkishTextNormalizer.tokenizeNormalized(normQ)
@@ -185,17 +261,50 @@ class IntelligenceViewModel @Inject constructor(
         Triple(matches, builder, optimized)
     }.flowOn(Dispatchers.Default)
 
+    private val resolvedReportFlow = combine(
+        sharedReportFlow,
+        studioControlFlow.map { it.portionOverrides }.distinctUntilChanged(),
+    ) { reportSnap, overrides ->
+        if (overrides.isEmpty()) {
+            reportSnap
+        } else {
+            val report = reportSnap.report
+            val lowMicros = report.eatingProfile.micronutrientSignals
+                .filter { it.status == NutrientSignalStatus.LOW_RECORDED }
+                .map { it.type }
+                .toSet()
+            val highSodium = report.eatingProfile.micronutrientSignals.any {
+                it.type == MicronutrientType.SODIUM && it.status == NutrientSignalStatus.ELEVATED_RECORDED
+            }
+            val resolvedRecs = report.recommendations.map { rec ->
+                val recOverrides = overrides[rec.id]
+                if (recOverrides.isNullOrEmpty()) {
+                    rec
+                } else {
+                    recommendationEngine.recomputeRecommendationWithPortions(
+                        recommendation = rec,
+                        gramOverridesByFoodId = recOverrides,
+                        budget = report.budget,
+                        lowMicronutrients = lowMicros,
+                        highSodiumActive = highSodium,
+                    )
+                }
+            }
+            reportSnap.copy(report = report.copy(recommendations = resolvedRecs))
+        }
+    }.flowOn(Dispatchers.Default)
+
     val uiState: StateFlow<IntelligenceUiState> = combine(
-        reportFlow,
+        resolvedReportFlow,
         studioControlFlow,
         builderComputedFlow,
-    ) { (dateIso, mealType, report), control, (matches, builder, optimized) ->
+    ) { reportSnap, control, (matches, builder, optimized) ->
         IntelligenceUiState(
             isLoading = false,
-            selectedDateIso = dateIso,
-            selectedMealType = mealType,
+            selectedDateIso = reportSnap.dateIso,
+            selectedMealType = reportSnap.mealType,
             activeTab = control.activeTab,
-            report = report,
+            report = reportSnap.report,
             portionOverrides = control.portionOverrides,
             builderQuery = builder.query,
             builderCatalogMatches = matches,
@@ -269,40 +378,22 @@ class IntelligenceViewModel @Inject constructor(
         }
     }
 
-    fun resolveEffectiveRecommendation(rec: MealRecommendation): MealRecommendation {
-        val overrides = studioControlFlow.value.portionOverrides[rec.id]
-        if (overrides.isNullOrEmpty()) return rec
-        val adjustedItems = rec.items.map { item ->
-            val overrideG = overrides[item.food.id] ?: return@map item
-            val cf = classifier.classifySingle(item.food)
-            portionOptimizer.buildPortionWithGrams(cf, overrideG)
-        }
-        val cal = adjustedItems.sumOf { it.calories }
-        val p = (adjustedItems.sumOf { it.proteinGrams.toDouble() } * 10.0).roundToInt() / 10f
-        val c = (adjustedItems.sumOf { it.carbsGrams.toDouble() } * 10.0).roundToInt() / 10f
-        val f = (adjustedItems.sumOf { it.fatGrams.toDouble() } * 10.0).roundToInt() / 10f
-        val impact = rec.goalImpact.copy(
-            caloriesAfter = rec.goalImpact.caloriesBefore + cal,
-            proteinAfter = ((rec.goalImpact.proteinBefore + p) * 10f).roundToInt() / 10f,
-            carbsAfter = ((rec.goalImpact.carbsBefore + c) * 10f).roundToInt() / 10f,
-            fatAfter = ((rec.goalImpact.fatBefore + f) * 10f).roundToInt() / 10f,
-        )
-        return rec.copy(
-            items = adjustedItems,
-            totalCalories = cal,
-            totalProtein = p,
-            totalCarbs = c,
-            totalFat = f,
-            goalImpact = impact,
-        )
-    }
-
     fun logRecommendation(
         recommendation: MealRecommendation,
-        onLogged: (String) -> Unit = {},
+        onLogged: (MealType, String) -> Unit = { _, _ -> },
     ) {
         if (!isLoggingGuard.compareAndSet(false, true)) return
-        val effective = resolveEffectiveRecommendation(recommendation)
+        val currentOverrides = studioControlFlow.value.portionOverrides[recommendation.id]
+        val budget = uiState.value.report?.budget
+        val effective = if (!currentOverrides.isNullOrEmpty() && budget != null) {
+            recommendationEngine.recomputeRecommendationWithPortions(
+                recommendation = recommendation,
+                gramOverridesByFoodId = currentOverrides,
+                budget = budget,
+            )
+        } else {
+            recommendation
+        }
         val dateIso = selectedDateFlow.value.toString()
         viewModelScope.launch {
             try {
@@ -317,7 +408,7 @@ class IntelligenceViewModel @Inject constructor(
                 )
                 val msg = "${effective.mealType.title} eklendi (${NutraFormatters.formatInt(effective.totalCalories)} kcal)"
                 emitFeedback(msg)
-                onLogged(msg)
+                onLogged(effective.mealType, msg)
             } finally {
                 isLoggingGuard.set(false)
             }
@@ -389,7 +480,7 @@ class IntelligenceViewModel @Inject constructor(
         builderStateFlow.update { BuilderInternalState() }
     }
 
-    fun logBuilderCombo(onLogged: (String) -> Unit = {}) {
+    fun logBuilderCombo(onLogged: (MealType, String) -> Unit = { _, _ -> }) {
         val opt = uiState.value.builderOptimized ?: return
         if (opt.items.isEmpty()) return
         if (!isLoggingGuard.compareAndSet(false, true)) return
@@ -406,9 +497,9 @@ class IntelligenceViewModel @Inject constructor(
                     opt.items.map { Triple(it.feedbackKey, it.food.id.takeIf { id -> id > 0L }, it.food.name) },
                 )
                 builderStateFlow.update { BuilderInternalState() }
-                val msg = "Dengelenmiş ${mealType.title.lowercase()} eklendi (${NutraFormatters.formatInt(opt.totalCalories)} kcal)"
+                val msg = "Dengelenmiş ${NutraFormatters.lowercaseTr(mealType.title)} eklendi (${NutraFormatters.formatInt(opt.totalCalories)} kcal)"
                 emitFeedback(msg)
-                onLogged(msg)
+                onLogged(mealType, msg)
             } finally {
                 isLoggingGuard.set(false)
             }
@@ -431,7 +522,11 @@ class IntelligenceViewModel @Inject constructor(
     ): CustomPortionOptimizationResult {
         val adjusted = base.items.map { item ->
             val g = overrides[item.food.id] ?: return@map item
-            portionOptimizer.buildPortionWithGrams(classifier.classifySingle(item.food), g)
+            portionOptimizer.buildPortionWithGrams(
+                classified = classifier.classifySingle(item.food),
+                grams = g,
+                preferHouseholdSnap = false,
+            )
         }
         val cal = adjusted.sumOf { it.calories }
         val p = (adjusted.sumOf { it.proteinGrams.toDouble() } * 10.0).roundToInt() / 10f

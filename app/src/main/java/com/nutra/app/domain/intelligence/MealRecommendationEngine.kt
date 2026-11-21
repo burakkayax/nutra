@@ -107,7 +107,7 @@ class MealRecommendationEngine @Inject constructor(
             highSodiumActive ->
                 "Son günlerde kayıtlı sodyum alımın yüksek seyrediyor — daha taze ve düşük sodyumlu seçenekler öne çıkarıldı."
             lowMicronutrients.isNotEmpty() -> {
-                val names = lowMicronutrients.take(2).joinToString(" ve ") { it.title.lowercase() }
+                val names = lowMicronutrients.take(2).joinToString(" ve ") { NutraFormatters.lowercaseTr(it.title) }
                 "Son günlerde kayıtlı $names alımın düşük görünüyor — bu besinleri içeren dengeli seçenekler desteklendi."
             }
             else -> null
@@ -152,7 +152,8 @@ class MealRecommendationEngine @Inject constructor(
             budget = budget,
             dietStyle = profile.dietaryProfile.dietStyle,
             scoredByRole = scoredByRole,
-            allowedById = allowed.associateBy { it.food.id },
+            allowed = allowed,
+            allowedById = allowed.filter { it.food.id > 0L }.associateBy { it.food.id },
             eatingProfile = eatingProfile,
             lowFiberActive = lowFiberActive,
             variationSeed = variationSeed,
@@ -162,9 +163,9 @@ class MealRecommendationEngine @Inject constructor(
         val seenSignatures = HashSet<String>(rawCandidates.size)
 
         for ((idx, raw) in rawCandidates.withIndex()) {
-            val distinctFoods = raw.foods.distinctBy { it.food.id }
+            val distinctFoods = raw.foods.distinctBy { it.feedbackKey }
             if (distinctFoods.size < 2) continue
-            val sig = distinctFoods.map { it.food.id }.sorted().joinToString("-")
+            val sig = distinctFoods.map { it.feedbackKey }.sorted().joinToString("|")
             if (!seenSignatures.add(sig)) continue
 
             val opt = portionOptimizer.optimizePortions(
@@ -174,6 +175,13 @@ class MealRecommendationEngine @Inject constructor(
             )
             if (opt.items.isEmpty() || opt.totalCalories <= 0) continue
 
+            val classifiedMap = distinctFoods.associateBy { it.feedbackKey }
+            val (allMicros, highlights, missingNote) = computeMicronutrientBreakdown(
+                items = opt.items,
+                classifiedMap = classifiedMap,
+                lowMicronutrients = lowMicronutrients,
+                highSodiumActive = highSodiumActive,
+            )
             val rec = buildRecommendationModel(
                 id = "intel_${mealType.name}_${variationSeed}_$idx",
                 mealType = mealType,
@@ -184,7 +192,10 @@ class MealRecommendationEngine @Inject constructor(
                 eatingProfile = eatingProfile,
                 lowMicronutrients = lowMicronutrients,
                 highSodiumActive = highSodiumActive,
-                classifiedMap = distinctFoods.associateBy { it.food.id },
+                classifiedMap = classifiedMap,
+                allMicros = allMicros,
+                microHighlights = highlights,
+                missingNote = missingNote,
             )
             val totalScore = computeCompositeCandidateScore(
                 rec = rec,
@@ -193,9 +204,20 @@ class MealRecommendationEngine @Inject constructor(
                 dietStyle = profile.dietaryProfile.dietStyle,
                 lowMicronutrients = lowMicronutrients,
                 highSodiumActive = highSodiumActive,
+                allMicros = allMicros,
                 isHabitAdapted = raw.isHabitAdapted,
             )
-            evaluated.add(ScoredRecommendationCandidate(rec, distinctFoods, totalScore))
+            val keySet = HashSet<String>(distinctFoods.size)
+            for (cf in distinctFoods) keySet.add(cf.feedbackKey)
+            evaluated.add(
+                ScoredRecommendationCandidate(
+                    rec = rec,
+                    foods = distinctFoods,
+                    foodKeys = keySet,
+                    primaryKey = distinctFoods.firstOrNull()?.feedbackKey,
+                    totalScore = totalScore,
+                ),
+            )
         }
 
         // Maximal Marginal Relevance (MMR) selection for genuine variety
@@ -208,6 +230,81 @@ class MealRecommendationEngine @Inject constructor(
             recommendations = selected,
             prioritizedMicronutrientNote = prioritizedMicroNote,
             coldStartNote = coldStartNote,
+        )
+    }
+
+    /**
+     * Re-evaluates a recommendation cleanly after manual user gram adjustments so totals,
+     * fit score, micronutrient highlights, and daily goal impact summary stay 100% consistent.
+     */
+    fun recomputeRecommendationWithPortions(
+        recommendation: MealRecommendation,
+        gramOverridesByFoodId: Map<Long, Float>,
+        budget: MealBudget,
+        lowMicronutrients: Set<MicronutrientType> = emptySet(),
+        highSodiumActive: Boolean = false,
+    ): MealRecommendation {
+        if (gramOverridesByFoodId.isEmpty()) return recommendation
+        val classifiedMap = HashMap<String, ClassifiedFood>(recommendation.items.size)
+        val adjustedItems = recommendation.items.map { item ->
+            val cf = classifier.classifySingle(item.food)
+            classifiedMap[cf.feedbackKey] = cf
+            val overrideG = gramOverridesByFoodId[item.food.id]
+            if (overrideG != null && overrideG.isFinite()) {
+                portionOptimizer.buildPortionWithGrams(
+                    classified = cf,
+                    grams = overrideG,
+                    preferHouseholdSnap = false,
+                )
+            } else {
+                item
+            }
+        }
+        var cal = 0
+        var pSum = 0.0
+        var cSum = 0.0
+        var fSum = 0.0
+        for (item in adjustedItems) {
+            cal += item.calories
+            pSum += item.proteinGrams
+            cSum += item.carbsGrams
+            fSum += item.fatGrams
+        }
+        val p = round1(pSum.toFloat())
+        val c = round1(cSum.toFloat())
+        val f = round1(fSum.toFloat())
+        val newFit = portionOptimizer.computeFitScore(cal, p, c, f, budget)
+        val (_, microHighlights, missingNote) = computeMicronutrientBreakdown(
+            items = adjustedItems,
+            classifiedMap = classifiedMap,
+            lowMicronutrients = lowMicronutrients,
+            highSodiumActive = highSodiumActive,
+        )
+
+        val calAfter = recommendation.goalImpact.caloriesBefore + cal
+        val pAfter = round1(recommendation.goalImpact.proteinBefore + p)
+        val cAfter = round1(recommendation.goalImpact.carbsBefore + c)
+        val fAfter = round1(recommendation.goalImpact.fatBefore + f)
+        val calPct = ((calAfter.toFloat() / recommendation.goalImpact.calorieGoal.coerceAtLeast(1)) * 100f).roundToInt()
+        val pPct = ((pAfter / recommendation.goalImpact.proteinGoal.coerceAtLeast(1)) * 100f).roundToInt()
+        val impact = recommendation.goalImpact.copy(
+            caloriesAfter = calAfter,
+            proteinAfter = pAfter,
+            carbsAfter = cAfter,
+            fatAfter = fAfter,
+            impactSummary = "Eklendiğinde günlük kalori %$calPct, protein hedefin %$pPct düzeyine ulaşır.",
+        )
+
+        return recommendation.copy(
+            items = adjustedItems,
+            totalCalories = cal,
+            totalProtein = p,
+            totalCarbs = c,
+            totalFat = f,
+            micronutrientHighlights = microHighlights,
+            missingMicronutrientNote = missingNote,
+            goalImpact = impact,
+            fitScore = newFit,
         )
     }
 
@@ -242,7 +339,8 @@ class MealRecommendationEngine @Inject constructor(
         // Already over or very close to daily target -> honest light option budget
         if (remCal < 140) {
             val lightCal = if (mealType == MealType.SNACK) 160 else 280
-            val lightP = max(14f, min(remP, 32f))
+            val maxLightP = if (mealType == MealType.SNACK) 22f else 32f
+            val lightP = max(14f, min(remP, maxLightP))
             val lightC = ((lightCal * 0.35f) / 4f).coerceAtLeast(10f)
             val lightF = ((lightCal * 0.25f) / 9f).coerceAtLeast(4f)
             return MealBudget(
@@ -295,12 +393,21 @@ class MealRecommendationEngine @Inject constructor(
             .coerceIn(min(remCal, minSingleMealFloor), maxSingleMealCap)
         val calRatio = (allocatedCal.toFloat() / remCal.toFloat()).coerceIn(0.15f, 1f)
 
-        val targetP = (remP * calRatio).coerceIn(
-            if (mealType == MealType.SNACK) 6f else 18f,
-            max(remP, if (mealType == MealType.SNACK) 25f else 65f),
-        )
-        val targetC = (remC * calRatio).coerceIn(10f, max(remC, 120f))
-        val targetF = (remF * calRatio).coerceIn(4f, max(remF, 45f))
+        // Cap per-meal macro targets to physically achievable shares of allocatedCal
+        val maxFeasibleP = ((allocatedCal * 0.60f) / 4f).coerceAtLeast(if (mealType == MealType.SNACK) 8f else 18f)
+        val minP = min(if (mealType == MealType.SNACK) 6f else 18f, maxFeasibleP)
+        val upperP = max(minP, min(maxFeasibleP, max(remP, if (mealType == MealType.SNACK) 25f else 65f)))
+        val targetP = (remP * calRatio).coerceIn(minP, upperP)
+
+        val maxFeasibleC = ((allocatedCal * 0.75f) / 4f).coerceAtLeast(12f)
+        val minC = min(10f, maxFeasibleC)
+        val upperC = max(minC, min(maxFeasibleC, max(remC, 120f)))
+        val targetC = (remC * calRatio).coerceIn(minC, upperC)
+
+        val maxFeasibleF = ((allocatedCal * 0.55f) / 9f).coerceAtLeast(5f)
+        val minF = min(4f, maxFeasibleF)
+        val upperF = max(minF, min(maxFeasibleF, max(remF, 45f)))
+        val targetF = (remF * calRatio).coerceIn(minF, upperF)
 
         val isFullRemaining = shareOfThisMeal >= 0.95f && allocatedCal >= remCal - 20
         val mode = if (isFullRemaining) MealBudgetMode.REMAINING_FOR_DAY else MealBudgetMode.PROPORTIONAL_MEAL_SHARE
@@ -471,6 +578,7 @@ class MealRecommendationEngine @Inject constructor(
         budget: MealBudget,
         dietStyle: DietStyle,
         scoredByRole: Map<MealRole, List<ClassifiedFood>>,
+        allowed: List<ClassifiedFood>,
         allowedById: Map<Long, ClassifiedFood>,
         eatingProfile: UserEatingProfile,
         lowFiberActive: Boolean,
@@ -486,10 +594,11 @@ class MealRecommendationEngine @Inject constructor(
         val vegSides = scoredByRole[MealRole.VEG_SALAD_SIDE].orEmpty()
         val fruits = scoredByRole[MealRole.FRUIT].orEmpty()
         val nuts = scoredByRole[MealRole.HEALTHY_FAT_NUT].orEmpty()
+        val snacks = scoredByRole[MealRole.SNACK_SWEET].orEmpty()
 
         fun pickRotated(list: List<ClassifiedFood>, index: Int): ClassifiedFood? {
             if (list.isEmpty()) return null
-            val shifted = (index + variationSeed) % list.size
+            val shifted = Math.floorMod(index + variationSeed, list.size)
             return list[shifted]
         }
 
@@ -592,7 +701,7 @@ class MealRecommendationEngine @Inject constructor(
                         )
                     }
                     // Variant with veg side instead of dairy for variety (or dairy-free users)
-                    if (veg != null && carb != null && veg.food.id != carb.food.id) {
+                    if (veg != null && carb != null && veg.feedbackKey != carb.feedbackKey) {
                         candidates.add(
                             RawMealCandidate(
                                 listOf(protein, carb, veg),
@@ -679,6 +788,17 @@ class MealRecommendationEngine @Inject constructor(
                         candidates.add(RawMealCandidate(items, RecommendationStyleTag.HIGH_PROTEIN, false))
                     }
                 }
+                // Archetype 3: Dairy-free / Nut-free friendly snack (Fruit + Veg/Carb/Whole snack)
+                if (candidates.size < 4) {
+                    val secondaryPool = (carbs + vegSides + snacks).ifEmpty { fruits }
+                    for (i in 0 until min(4, fruits.size)) {
+                        val fruit = fruits[i]
+                        val companion = pickRotated(secondaryPool.filter { it.feedbackKey != fruit.feedbackKey }, i)
+                        if (companion != null) {
+                            candidates.add(RawMealCandidate(listOf(fruit, companion), RecommendationStyleTag.LIGHT_OPTION, false))
+                        }
+                    }
+                }
             }
         }
 
@@ -713,8 +833,49 @@ class MealRecommendationEngine @Inject constructor(
             }
         }
 
+        // Restrictive-diet graceful fallback: ensure strict multi-allergen/vegan profiles still receive
+        // valid, safe meal pairings from the allowed pool rather than an empty list.
+        if (candidates.size < 4 && allowed.size >= 2) {
+            val anchors = (proteins + composites + carbs + soups + fruits + vegSides + nuts + dairies)
+                .distinctBy { it.feedbackKey }
+                .ifEmpty { allowed.filter { it.role != MealRole.BEVERAGE }.ifEmpty { allowed } }
+            val companions = (vegSides + carbs + fruits + dairies + nuts + composites + soups)
+                .distinctBy { it.feedbackKey }
+                .ifEmpty { anchors }
+            for (i in 0 until min(6, anchors.size)) {
+                val first = anchors[Math.floorMod(i + variationSeed, anchors.size)]
+                val second = companions.firstOrNull { it.feedbackKey != first.feedbackKey && it.role != first.role }
+                    ?: companions.firstOrNull { it.feedbackKey != first.feedbackKey }
+                if (second != null) {
+                    val third = if (mealType != MealType.SNACK) {
+                        companions.firstOrNull {
+                            it.feedbackKey != first.feedbackKey &&
+                                it.feedbackKey != second.feedbackKey &&
+                                it.role != first.role &&
+                                it.role != second.role
+                        }
+                    } else {
+                        null
+                    }
+                    candidates.add(
+                        RawMealCandidate(
+                            foods = listOfNotNull(first, second, third),
+                            styleTag = RecommendationStyleTag.DISCOVERY,
+                            isHabitAdapted = false,
+                        ),
+                    )
+                }
+            }
+        }
+
         return candidates
     }
+
+    private data class MicronutrientBreakdown(
+        val allContributions: Map<MicronutrientType, MicronutrientContribution>,
+        val highlights: List<MicronutrientContribution>,
+        val missingNote: String?,
+    )
 
     private fun buildRecommendationModel(
         id: String,
@@ -726,18 +887,20 @@ class MealRecommendationEngine @Inject constructor(
         eatingProfile: UserEatingProfile,
         lowMicronutrients: Set<MicronutrientType>,
         highSodiumActive: Boolean,
-        classifiedMap: Map<Long, ClassifiedFood>,
+        classifiedMap: Map<String, ClassifiedFood>,
+        allMicros: Map<MicronutrientType, MicronutrientContribution>,
+        microHighlights: List<MicronutrientContribution>,
+        missingNote: String?,
     ): MealRecommendation {
         val title = opt.items.take(3).joinToString(" · ") { shortDisplayName(it.food.name) }
 
-        val (microHighlights, missingNote) = computeMicronutrientHighlights(opt.items, classifiedMap)
         val impact = buildGoalImpactPreview(dailySummary, opt)
         val reasons = buildReasons(
             raw = raw,
             opt = opt,
             budget = budget,
             eatingProfile = eatingProfile,
-            microHighlights = microHighlights,
+            allMicros = allMicros,
             lowMicronutrients = lowMicronutrients,
             highSodiumActive = highSodiumActive,
             classifiedMap = classifiedMap,
@@ -764,12 +927,15 @@ class MealRecommendationEngine @Inject constructor(
         )
     }
 
-    private fun computeMicronutrientHighlights(
+    private fun computeMicronutrientBreakdown(
         items: List<RecommendedFoodPortion>,
-        classifiedMap: Map<Long, ClassifiedFood>,
-    ): Pair<List<MicronutrientContribution>, String?> {
+        classifiedMap: Map<String, ClassifiedFood>,
+        lowMicronutrients: Set<MicronutrientType>,
+        highSodiumActive: Boolean,
+    ): MicronutrientBreakdown {
         val totalCount = items.size
-        val highlights = ArrayList<MicronutrientContribution>(4)
+        val allContribs = LinkedHashMap<MicronutrientType, MicronutrientContribution>(6)
+        val displayCandidates = ArrayList<MicronutrientContribution>(6)
         var anyMissingData = false
 
         fun collect(
@@ -780,30 +946,32 @@ class MealRecommendationEngine @Inject constructor(
             var sum = 0.0
             var known = 0
             for (item in items) {
-                val cf = classifiedMap[item.food.id] ?: continue
+                val cf = classifiedMap[item.feedbackKey] ?: continue
                 val per100 = extractor(cf)
-                if (per100 != null && per100.isFinite()) {
+                if (per100 != null && per100.isFinite() && per100 >= 0f) {
                     sum += (per100 * item.totalGrams) / 100.0
                     known++
                 }
             }
             if (known < totalCount) anyMissingData = true
-            if (known > 0 && sum >= minMeaningful) {
+            if (known > 0) {
                 val value = round1(sum.toFloat())
                 val formatted = if (type.unit == "mg") {
                     "${NutraFormatters.formatInt(value.roundToInt())} mg"
                 } else {
                     "${NutraFormatters.formatMacroGrams(value)} g"
                 }
-                highlights.add(
-                    MicronutrientContribution(
-                        type = type,
-                        amount = value,
-                        formattedValue = formatted,
-                        knownItemCount = known,
-                        totalItemCount = totalCount,
-                    ),
+                val contrib = MicronutrientContribution(
+                    type = type,
+                    amount = value,
+                    formattedValue = formatted,
+                    knownItemCount = known,
+                    totalItemCount = totalCount,
                 )
+                allContribs[type] = contrib
+                if (sum >= minMeaningful || (type == MicronutrientType.SODIUM && highSodiumActive)) {
+                    displayCandidates.add(contrib)
+                }
             }
         }
 
@@ -814,12 +982,22 @@ class MealRecommendationEngine @Inject constructor(
         collect(MicronutrientType.VITAMIN_C, 15f) { it.food.vitaminCMgPer100g }
         collect(MicronutrientType.SODIUM, 100f) { it.effectiveSodiumMgPer100g }
 
+        // Surface user-relevant active micronutrient priorities first so take(4) never drops them
+        displayCandidates.sortByDescending { contrib ->
+            when {
+                contrib.type in lowMicronutrients -> 2
+                contrib.type == MicronutrientType.SODIUM && highSodiumActive -> 2
+                contrib.type == MicronutrientType.FIBER -> 1
+                else -> 0
+            }
+        }
+        val highlights = displayCandidates.take(4)
         val missingNote = if (anyMissingData && highlights.isNotEmpty()) {
             "Mikro besin toplamları yalnızca verisi bulunan besinlerden hesaplandı; eksik veriler sıfır sayılmadı."
         } else {
             null
         }
-        return highlights.take(4) to missingNote
+        return MicronutrientBreakdown(allContribs, highlights, missingNote)
     }
 
     private fun buildGoalImpactPreview(
@@ -861,10 +1039,10 @@ class MealRecommendationEngine @Inject constructor(
         opt: CustomPortionOptimizationResult,
         budget: MealBudget,
         eatingProfile: UserEatingProfile,
-        microHighlights: List<MicronutrientContribution>,
+        allMicros: Map<MicronutrientType, MicronutrientContribution>,
         lowMicronutrients: Set<MicronutrientType>,
         highSodiumActive: Boolean,
-        classifiedMap: Map<Long, ClassifiedFood>,
+        classifiedMap: Map<String, ClassifiedFood>,
     ): List<String> {
         val reasons = ArrayList<String>(3)
 
@@ -879,15 +1057,13 @@ class MealRecommendationEngine @Inject constructor(
             )
         }
 
-        // Reason 2: Micronutrient contribution (when known & relevant)
-        val fiberContrib = microHighlights.firstOrNull { it.type == MicronutrientType.FIBER }
-        if (fiberContrib != null && MicronutrientType.FIBER in lowMicronutrients) {
+        // Reason 2: Micronutrient contribution (using full non-truncated breakdown!)
+        val fiberContrib = allMicros[MicronutrientType.FIBER]
+        val sodiumContrib = allMicros[MicronutrientType.SODIUM]
+        if (fiberContrib != null && fiberContrib.amount >= 2.5f && MicronutrientType.FIBER in lowMicronutrients) {
             reasons.add("Son günlerde düşük seyreden lif alımına +${fiberContrib.formattedValue} katkı sağlar.")
-        } else if (highSodiumActive) {
-            val sodiumContrib = microHighlights.firstOrNull { it.type == MicronutrientType.SODIUM }
-            if (sodiumContrib != null && sodiumContrib.amount <= 650f) {
-                reasons.add("Sodyum dengesini korumak için daha kontrollü tuz içeriğine (${sodiumContrib.formattedValue}) sahip.")
-            }
+        } else if (highSodiumActive && sodiumContrib != null && sodiumContrib.amount <= 650f) {
+            reasons.add("Sodyum dengesini korumak için daha kontrollü tuz içeriğine (${sodiumContrib.formattedValue}) sahip.")
         } else if (fiberContrib != null && fiberContrib.amount >= 5f) {
             reasons.add("Yüksek tokluk için +${fiberContrib.formattedValue} lif içerir.")
         }
@@ -895,7 +1071,7 @@ class MealRecommendationEngine @Inject constructor(
         // Reason 3: Personalization or Turkish cuisine fit (honest about cold-start!)
         if (eatingProfile.maturity != HabitMaturity.NONE) {
             val familiarCount = opt.items.count { (eatingProfile.foodAffinityById[it.food.id] ?: 0f) > 0.25f }
-            val homeCount = opt.items.count { classifiedMap[it.food.id]?.isTurkishHomeCooked == true }
+            val homeCount = opt.items.count { classifiedMap[it.feedbackKey]?.isTurkishHomeCooked == true }
             when {
                 raw.isHabitAdapted ->
                     reasons.add("Geçmişte sevdiğin kombinasyonlardan uyarlanıp bugünkü kalan hedefine göre dengelendi.")
@@ -914,6 +1090,8 @@ class MealRecommendationEngine @Inject constructor(
     private data class ScoredRecommendationCandidate(
         val rec: MealRecommendation,
         val foods: List<ClassifiedFood>,
+        val foodKeys: Set<String>,
+        val primaryKey: String?,
         val totalScore: Double,
     )
 
@@ -924,9 +1102,11 @@ class MealRecommendationEngine @Inject constructor(
         dietStyle: DietStyle,
         lowMicronutrients: Set<MicronutrientType>,
         highSodiumActive: Boolean,
+        allMicros: Map<MicronutrientType, MicronutrientContribution>,
         isHabitAdapted: Boolean,
     ): Double {
         var score = rec.fitScore * 1.15
+        val count = foods.size.coerceAtLeast(1)
 
         // Habit & cuisine alignment (scaled by maturity)
         val habitWeight = when (eatingProfile.maturity) {
@@ -935,34 +1115,44 @@ class MealRecommendationEngine @Inject constructor(
             HabitMaturity.ESTABLISHED -> 1.0
         }
         if (habitWeight > 0.0) {
-            val avgAff = foods.map { eatingProfile.foodAffinityById[it.food.id] ?: 0f }.average()
+            var affSum = 0.0
+            var homeCount = 0
+            for (f in foods) {
+                affSum += (eatingProfile.foodAffinityById[f.food.id] ?: 0f)
+                if (f.isTurkishHomeCooked) homeCount++
+            }
+            val avgAff = affSum / count
             score += avgAff * 14.0 * habitWeight
             if (isHabitAdapted) score += 5.0 * habitWeight
-            val homeRatio = foods.count { it.isTurkishHomeCooked }.toDouble() / foods.size
+            val homeRatio = homeCount.toDouble() / count
             score += (eatingProfile.homeCookedAffinity - 0.5) * homeRatio * 18.0 * habitWeight
         }
 
-        // Micronutrient alignment
+        // Micronutrient alignment (evaluated on FULL breakdown, never lost to UI take(4) truncation!)
         if (MicronutrientType.FIBER in lowMicronutrients) {
-            val fiber = rec.micronutrientHighlights.firstOrNull { it.type == MicronutrientType.FIBER }?.amount ?: 0f
+            val fiber = allMicros[MicronutrientType.FIBER]?.amount ?: 0f
             score += min(14.0, fiber * 1.6)
         }
         if (highSodiumActive) {
-            val na = rec.micronutrientHighlights.firstOrNull { it.type == MicronutrientType.SODIUM }?.amount
+            val na = allMicros[MicronutrientType.SODIUM]?.amount
             if (na != null) {
-                if (na > 1000f) score -= 12.0 else if (na < 550f) score += 6.0
+                if (na > 1000f) score -= 14.0 else if (na < 550f) score += 7.0
             }
         }
 
-        // Novelty & anti-repetition across 24h
-        val recentOverlap = foods.count { it.food.id in eatingProfile.recentlyEatenFoodIds24h }
+        // Novelty & anti-repetition across 24h + whole-food nutritional quality
+        var recentOverlap = 0
+        var wholeCount = 0
+        var hasMedHighlight = false
+        for (f in foods) {
+            if (f.food.id in eatingProfile.recentlyEatenFoodIds24h) recentOverlap++
+            if (f.isWholeFood) wholeCount++
+            if (f.role == MealRole.VEG_SALAD_SIDE || f.containsFish) hasMedHighlight = true
+        }
         score -= recentOverlap * 6.5
+        score += (wholeCount.toDouble() / count) * 8.0
 
-        // Whole-food nutritional quality bonus
-        val wholeRatio = foods.count { it.isWholeFood }.toDouble() / foods.size
-        score += wholeRatio * 8.0
-
-        if (dietStyle == DietStyle.MEDITERRANEAN && foods.any { it.role == MealRole.VEG_SALAD_SIDE || it.containsFish }) {
+        if (dietStyle == DietStyle.MEDITERRANEAN && hasMedHighlight) {
             score += 6.0
         }
 
@@ -977,7 +1167,7 @@ class MealRecommendationEngine @Inject constructor(
         candidates: List<ScoredRecommendationCandidate>,
         maxResults: Int,
     ): List<MealRecommendation> {
-        if (candidates.isEmpty()) return emptyList()
+        if (candidates.isEmpty() || maxResults <= 0) return emptyList()
         val remaining = candidates.toMutableList()
         val selected = ArrayList<ScoredRecommendationCandidate>(maxResults)
 
@@ -990,15 +1180,19 @@ class MealRecommendationEngine @Inject constructor(
             var bestMmr = Double.NEGATIVE_INFINITY
             for (i in remaining.indices) {
                 val cand = remaining[i]
-                val candIds = cand.foods.map { it.food.id }.toSet()
-                val candPrimaryId = cand.foods.firstOrNull()?.food?.id
+                val candKeys = cand.foodKeys
+                val candPrimaryKey = cand.primaryKey
                 var maxSim = 0.0
                 for (chosen in selected) {
-                    val chosenIds = chosen.foods.map { it.food.id }.toSet()
-                    val inter = candIds.intersect(chosenIds).size.toDouble()
-                    val union = (candIds.size + chosenIds.size - inter).coerceAtLeast(1.0)
+                    val chosenKeys = chosen.foodKeys
+                    var interCount = 0
+                    for (k in candKeys) {
+                        if (k in chosenKeys) interCount++
+                    }
+                    val inter = interCount.toDouble()
+                    val union = (candKeys.size + chosenKeys.size - inter).coerceAtLeast(1.0)
                     var sim = inter / union
-                    if (candPrimaryId != null && candPrimaryId == chosen.foods.firstOrNull()?.food?.id) {
+                    if (candPrimaryKey != null && candPrimaryKey == chosen.primaryKey) {
                         sim = max(sim, 0.72) // Strongly encourage distinct main dish across cards!
                     }
                     if (sim > maxSim) maxSim = sim

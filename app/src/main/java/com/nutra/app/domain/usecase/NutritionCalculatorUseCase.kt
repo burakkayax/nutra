@@ -46,7 +46,7 @@ class NutritionCalculatorUseCase @Inject constructor() {
         activityLevel: ActivityLevel,
         goalType: GoalType,
     ): MacroGoals {
-        val safeWeight = weightKg.coerceIn(35f, 250f)
+        val safeWeight = (if (weightKg.isFinite()) weightKg else 75f).coerceIn(35f, 250f)
         val safeHeight = heightCm.coerceIn(120, 230)
         val safeAge = age.coerceIn(14, 100)
 

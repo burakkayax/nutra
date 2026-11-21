@@ -84,7 +84,51 @@ internal fun validateBackupPayload(payload: NutraBackupPayload): String? {
     if (payload.weightEntries.isNotEmpty() && payload.weightEntries.none { isValidBackupIsoDate(it.dateIso) && it.weightKg.isFinite() }) {
         return "Yedek dosyasındaki kilo kayıtları geçersiz veya bozuk."
     }
+    if (payload.goalHistory.isNotEmpty() && payload.goalHistory.none { isValidBackupIsoDate(it.effectiveDateIso) && it.calories > 0 }) {
+        return "Yedek dosyasındaki hedef geçmişi geçersiz veya bozuk."
+    }
     return null
+}
+
+internal fun sanitizeImportedGoalHistory(entry: GoalHistoryEntry): GoalHistoryEntry {
+    val safeTargetWeight = (if (entry.targetWeightKg.isFinite()) entry.targetWeightKg else 70f).coerceIn(30f, 300f)
+    return entry.copy(
+        id = 0L,
+        calories = entry.calories.coerceIn(1000, 6000),
+        proteinGrams = entry.proteinGrams.coerceIn(30, 400),
+        carbsGrams = entry.carbsGrams.coerceIn(20, 600),
+        fatGrams = entry.fatGrams.coerceIn(20, 250),
+        targetWeightKg = safeTargetWeight,
+        timestampMillis = entry.timestampMillis.coerceAtLeast(0L),
+    )
+}
+
+internal fun remapAndSanitizeFoodFeedback(
+    record: FoodFeedbackRecord,
+    importedFoodIdMap: Map<Long, Long>,
+    nameToTargetId: Map<String, Long>,
+): FoodFeedbackRecord {
+    val remappedId = record.foodId?.let { importedFoodIdMap[it] }
+        ?: record.foodName.takeIf { it.isNotBlank() }?.let { nameToTargetId[TurkishTextNormalizer.normalize(it)] }
+        ?: record.foodId
+    val remappedKey = if (record.foodKey.startsWith("custom:") && remappedId != null && remappedId > 0L) {
+        val parts = record.foodKey.split(':', limit = 3)
+        val normSuffix = parts.getOrNull(2)?.takeIf { it.isNotBlank() }
+            ?: TurkishTextNormalizer.normalize(record.foodName)
+        if (normSuffix.isNotBlank()) "custom:$remappedId:$normSuffix" else record.foodKey.trim()
+    } else {
+        record.foodKey.trim()
+    }
+    return record.copy(
+        foodKey = remappedKey,
+        foodId = remappedId,
+        foodName = record.foodName.trim(),
+        acceptedCount = record.acceptedCount.coerceAtLeast(0),
+        dismissedCount = record.dismissedCount.coerceAtLeast(0),
+        lastSuggestedMillis = record.lastSuggestedMillis.coerceAtLeast(0L),
+        lastAcceptedMillis = record.lastAcceptedMillis.coerceAtLeast(0L),
+        updatedAtMillis = record.updatedAtMillis.coerceAtLeast(0L),
+    )
 }
 
 private fun isValidBackupIsoDate(dateIso: String): Boolean =
@@ -270,19 +314,38 @@ class NutritionRepository @Inject constructor(
         source: GoalChangeSource,
         effectiveDateIso: String = LocalDate.now().toString(),
     ) = withContext(Dispatchers.IO) {
-        nutraDao.insertGoalHistory(
-            GoalHistoryEntity(
-                effectiveDateIso = effectiveDateIso,
-                calories = goals.calories,
-                proteinGrams = goals.proteinGrams,
-                carbsGrams = goals.carbsGrams,
-                fatGrams = goals.fatGrams,
-                goalType = goalType.name,
-                targetWeightKg = targetWeightKg,
-                source = source.name,
-                timestampMillis = System.currentTimeMillis(),
-            ),
-        )
+        val safeTargetWeight = (if (targetWeightKg.isFinite()) targetWeightKg else 70f).coerceIn(30f, 300f)
+        val now = System.currentTimeMillis()
+        database.withTransaction {
+            val latest = nutraDao.findLatestGoalHistoryForDate(effectiveDateIso)
+            if (latest != null && latest.source == source.name) {
+                nutraDao.updateGoalHistory(
+                    latest.copy(
+                        calories = goals.calories,
+                        proteinGrams = goals.proteinGrams,
+                        carbsGrams = goals.carbsGrams,
+                        fatGrams = goals.fatGrams,
+                        goalType = goalType.name,
+                        targetWeightKg = safeTargetWeight,
+                        timestampMillis = now,
+                    ),
+                )
+            } else {
+                nutraDao.insertGoalHistory(
+                    GoalHistoryEntity(
+                        effectiveDateIso = effectiveDateIso,
+                        calories = goals.calories,
+                        proteinGrams = goals.proteinGrams,
+                        carbsGrams = goals.carbsGrams,
+                        fatGrams = goals.fatGrams,
+                        goalType = goalType.name,
+                        targetWeightKg = safeTargetWeight,
+                        source = source.name,
+                        timestampMillis = now,
+                    ),
+                )
+            }
+        }
     }
 
     suspend fun approveAdaptiveCalorieProposal(
@@ -534,15 +597,17 @@ class NutritionRepository @Inject constructor(
         multiplier: Float,
     ): MealLogItem {
         val isRawUnitMode = ServingUnitLabels.isRawUnitLabel(unitLabel)
+        val finiteMultiplier = if (multiplier.isFinite()) multiplier else if (isRawUnitMode) 100f else 1f
+        val finiteUnitGrams = if (unitGrams.isFinite() && unitGrams > 0f) unitGrams else food.defaultUnitGrams.takeIf { it.isFinite() && it > 0f } ?: 100f
         val safeMultiplier = if (isRawUnitMode) {
-            multiplier.coerceIn(1f, 3000f)
+            finiteMultiplier.coerceIn(1f, 3000f)
         } else {
-            multiplier.coerceIn(0.1f, 50f)
+            finiteMultiplier.coerceIn(0.1f, 50f)
         }
         val totalGrams = if (isRawUnitMode) {
             safeMultiplier
         } else {
-            (unitGrams * safeMultiplier).coerceAtLeast(1f)
+            (finiteUnitGrams * safeMultiplier).coerceAtLeast(1f)
         }
         return MealLogItem(
             dateIso = dateIso,
@@ -596,12 +661,13 @@ class NutritionRepository @Inject constructor(
         newMultiplier: Float,
     ) = withContext(Dispatchers.IO) {
         val isRawUnitMode = ServingUnitLabels.isRawUnitLabel(logItem.unitLabel)
+        val finiteNewMult = if (newMultiplier.isFinite()) newMultiplier else logItem.multiplier.takeIf { it.isFinite() } ?: 1f
         val safeNewMult = if (isRawUnitMode) {
-            newMultiplier.coerceIn(1f, 3000f)
+            finiteNewMult.coerceIn(1f, 3000f)
         } else {
-            newMultiplier.coerceIn(0.25f, 20f)
+            finiteNewMult.coerceIn(0.25f, 20f)
         }
-        val safeOldMult = logItem.multiplier.coerceAtLeast(0.05f)
+        val safeOldMult = (if (logItem.multiplier.isFinite()) logItem.multiplier else 1f).coerceAtLeast(0.05f)
         val sourceFood = logItem.foodId?.let { nutraDao.findFoodById(it)?.toDomain() }
 
         val updated = if (sourceFood != null) {
@@ -710,6 +776,7 @@ class NutritionRepository @Inject constructor(
         weightKg: Float,
         syncProfileWeight: Boolean = true,
     ) = withContext(Dispatchers.IO) {
+        if (!weightKg.isFinite()) return@withContext
         val safeWeight = weightKg.coerceIn(30f, 300f)
         nutraDao.insertWeightLog(
             WeightLogEntity(
@@ -728,6 +795,7 @@ class NutritionRepository @Inject constructor(
         weightKg: Float,
         syncProfileWeight: Boolean = false,
     ) = withContext(Dispatchers.IO) {
+        if (!weightKg.isFinite()) return@withContext
         val safeWeight = weightKg.coerceIn(30f, 300f)
         val now = System.currentTimeMillis()
         database.withTransaction {
@@ -942,8 +1010,8 @@ class NutritionRepository @Inject constructor(
 
                     nutraDao.deleteAllGoalHistory()
                     val goalHistoryEntities = payload.goalHistory
-                        .filter { isValidBackupIsoDate(it.effectiveDateIso) }
-                        .map { GoalHistoryEntity.fromDomain(it.copy(id = 0L)) }
+                        .filter { isValidBackupIsoDate(it.effectiveDateIso) && it.calories > 0 }
+                        .map { GoalHistoryEntity.fromDomain(sanitizeImportedGoalHistory(it)) }
                     if (goalHistoryEntities.isNotEmpty()) {
                         nutraDao.insertGoalHistoryEntries(goalHistoryEntities)
                     }
@@ -951,7 +1019,15 @@ class NutritionRepository @Inject constructor(
                     nutraDao.deleteAllFoodFeedback()
                     val feedbackEntities = payload.foodFeedback
                         .filter { it.foodKey.isNotBlank() }
-                        .map { FoodFeedbackEntity.fromDomain(it) }
+                        .map { record ->
+                            FoodFeedbackEntity.fromDomain(
+                                remapAndSanitizeFoodFeedback(
+                                    record = record,
+                                    importedFoodIdMap = importedFoodIdMap,
+                                    nameToTargetId = nameToTargetId,
+                                ),
+                            )
+                        }
                     if (feedbackEntities.isNotEmpty()) {
                         nutraDao.upsertFoodFeedbackList(feedbackEntities)
                     }

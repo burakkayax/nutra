@@ -68,7 +68,9 @@ class AdaptiveMetabolismEngine @Inject constructor(
         val ignoredOutlierCount = cleanedWeights.count { it.isOutlier }
 
         val currentRawWeight = validWeighIns.lastOrNull()?.weightKg
-        val referenceWeightKg = currentRawWeight ?: profile.currentWeightKg.coerceIn(35f, 250f)
+        val safeProfileWeight = (if (profile.currentWeightKg.isFinite()) profile.currentWeightKg else 75f).coerceIn(35f, 250f)
+        val safeTargetWeight = (if (profile.targetWeightKg.isFinite()) profile.targetWeightKg else safeProfileWeight).coerceIn(35f, 250f)
+        val referenceWeightKg = currentRawWeight ?: safeProfileWeight
 
         val priorBmr = computeMifflinBmr(
             sex = profile.sex,
@@ -211,6 +213,7 @@ class AdaptiveMetabolismEngine @Inject constructor(
         // Plateau evaluation
         val plateauAssessment = evaluatePlateau(
             profile = profile,
+            targetWeightKg = safeTargetWeight,
             dailyTrendByDate = dailyTrendByDate,
             smoothedWeighIns = smoothedWeighIns,
             intakeByDate = intakeByDate,
@@ -247,6 +250,7 @@ class AdaptiveMetabolismEngine @Inject constructor(
         )
         val (projectionCurve, targetEta) = projectDynamicWeight(
             profile = profile,
+            targetWeightKg = safeTargetWeight,
             startWeightKg = currentTrendWeightKg,
             estimatedTdee = estimatedTdee,
             uncertaintyKcal = uncertaintyKcal,
@@ -283,7 +287,7 @@ class AdaptiveMetabolismEngine @Inject constructor(
             averageDailyIntakeLast28Kcal = avgIntake28,
             averageDailyIntakeLast14Kcal = avgIntake14,
             activeDailyCalorieGoal = profile.goals.calories,
-            targetWeightKg = profile.targetWeightKg,
+            targetWeightKg = safeTargetWeight,
             dataQuality = dataQuality,
             weightSeries = chartWeightSeries,
             tdeeHistory = kalmanResult.history,
@@ -301,7 +305,7 @@ class AdaptiveMetabolismEngine @Inject constructor(
         heightCm: Int,
         weightKg: Float,
     ): Float {
-        val safeWeight = weightKg.coerceIn(35f, 250f)
+        val safeWeight = (if (weightKg.isFinite()) weightKg else 75f).coerceIn(35f, 250f)
         val safeHeight = heightCm.coerceIn(120, 230)
         val safeAge = age.coerceIn(14, 100)
         val sexConstant = when (sex) {
@@ -349,14 +353,28 @@ class AdaptiveMetabolismEngine @Inject constructor(
         val sorted = latestByDate.entries.sortedBy { it.key }
         val result = ArrayList<CleanedWeightEntry>(sorted.size)
         val recentValid = ArrayList<Float>(7)
+        var lastValidDate: LocalDate? = null
 
         for (i in sorted.indices) {
             val date = sorted[i].key
             val weight = sorted[i].value.weightKg
             var isOutlier = false
-            if (recentValid.isNotEmpty()) {
+            if (recentValid.isEmpty() && sorted.size >= 3 && i == 0) {
+                // Guard against a typo on the very first weigh-in when subsequent readings clearly agree
+                val d1 = sorted[1].key
+                val w1 = sorted[1].value.weightKg
+                val d2 = sorted[2].key
+                val w2 = sorted[2].value.weightKg
+                val span01 = ChronoUnit.DAYS.between(date, d1).coerceAtLeast(1L)
+                val span12 = ChronoUnit.DAYS.between(d1, d2).coerceAtLeast(1L)
+                val maxJump01 = OUTLIER_JUMP_KG + (span01 * 0.35f).coerceAtMost(6f)
+                val maxJump12 = OUTLIER_JUMP_KG + (span12 * 0.35f).coerceAtMost(6f)
+                if (abs(weight - w1) > maxJump01 && abs(w1 - w2) <= maxJump12) {
+                    isOutlier = true
+                }
+            } else if (recentValid.isNotEmpty()) {
                 val medianRef = medianFloat(recentValid)
-                val prevDate = sorted.getOrNull(i - 1)?.key
+                val prevDate = lastValidDate ?: sorted.getOrNull(i - 1)?.key
                 val daysSincePrev = if (prevDate != null) ChronoUnit.DAYS.between(prevDate, date).coerceAtLeast(1L) else 1L
                 val diffFromRef = abs(weight - medianRef)
                 val maxPlausibleJump = OUTLIER_JUMP_KG + (daysSincePrev * 0.35f).coerceAtMost(6f)
@@ -370,6 +388,7 @@ class AdaptiveMetabolismEngine @Inject constructor(
             }
             result.add(CleanedWeightEntry(date = date, weightKg = weight, isOutlier = isOutlier))
             if (!isOutlier) {
+                lastValidDate = date
                 recentValid.add(weight)
                 if (recentValid.size > 5) recentValid.removeAt(0)
             }
@@ -785,6 +804,17 @@ class AdaptiveMetabolismEngine @Inject constructor(
             prevStepWeight = currWeight
         }
 
+        if (updatesCount == 0) {
+            val uncalibratedUncertainty = (((priorSd * CREDIBLE_Z_80) + 5.0) / 10.0).toInt() * 10
+            return KalmanTdeeResult(
+                estimatedTdeeKcal = priorTdeeAtCurrent,
+                uncertaintyKcal = uncalibratedUncertainty.coerceIn(90, 360),
+                posteriorSd = priorSd,
+                updatesCount = 0,
+                history = history,
+            )
+        }
+
         val finalSd = sqrt(stateVar)
         val roundedTdee = ((stateMean + 5.0) / 10.0).toInt() * 10
         val roundedUncertainty = (((finalSd * CREDIBLE_Z_80) + 5.0) / 10.0).toInt() * 10
@@ -856,6 +886,7 @@ class AdaptiveMetabolismEngine @Inject constructor(
 
     private fun evaluatePlateau(
         profile: UserProfile,
+        targetWeightKg: Float,
         dailyTrendByDate: Map<LocalDate, Float>,
         smoothedWeighIns: List<SmoothedWeighIn>,
         intakeByDate: Map<LocalDate, DailyIntakeObservation>,
@@ -877,12 +908,16 @@ class AdaptiveMetabolismEngine @Inject constructor(
             )
         }
 
-        val alreadyNearTarget = abs(currentTrendWeightKg - profile.targetWeightKg) <= 0.4f
-        if (alreadyNearTarget) {
+        val alreadyAtOrPastTarget = when (profile.goalType) {
+            GoalType.LOSE_WEIGHT -> currentTrendWeightKg <= targetWeightKg + 0.4f
+            GoalType.GAIN_MUSCLE -> currentTrendWeightKg >= targetWeightKg - 0.4f
+            GoalType.MAINTAIN -> true
+        }
+        if (alreadyAtOrPastTarget) {
             return PlateauAssessment(
                 isStalled = false,
                 stallDurationDays = 0,
-                headline = "Hedef kiloya çok yakınsın",
+                headline = "Hedef kilona ulaştın",
                 explanation = "Trend kilon hedef kilona ulaşmış görünüyor; plato yerine koruma dengesi ön planda.",
                 factors = emptyList(),
                 recommendsWaiting = false,
@@ -1089,12 +1124,13 @@ class AdaptiveMetabolismEngine @Inject constructor(
         // Respect plateau wait policy: never recommend cutting calories when plateau evidence is inconclusive
         if (plateau.isStalled && plateau.recommendsWaiting) return null
 
-        // Cooldown gate: avoid nagging if user reviewed/applied a target recently
+        // Cooldown gate: avoid nagging if user reviewed/applied a target recently (order-independent across goalHistory)
         val lastReviewDate = profile.lastAdaptiveReviewDateIso?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
         val lastAdaptiveHistoryDate = goalHistory
-            .lastOrNull { it.source == com.nutra.app.domain.model.GoalChangeSource.ADAPTIVE_APPROVED }
-            ?.effectiveDateIso
-            ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+            .asSequence()
+            .filter { it.source == com.nutra.app.domain.model.GoalChangeSource.ADAPTIVE_APPROVED }
+            .mapNotNull { runCatching { LocalDate.parse(it.effectiveDateIso) }.getOrNull() }
+            .maxOrNull()
         val latestDecisionDate = listOfNotNull(lastReviewDate, lastAdaptiveHistoryDate).maxOrNull()
         if (latestDecisionDate != null && ChronoUnit.DAYS.between(latestDecisionDate, today) < PROPOSAL_COOLDOWN_DAYS) {
             return null
@@ -1164,8 +1200,12 @@ class AdaptiveMetabolismEngine @Inject constructor(
                     .coerceAtMost(((proposedCalories * 0.38f) / 4f).roundToInt())
                 if (base.proteinGrams < minProtectiveProtein) {
                     val extraP = minProtectiveProtein - base.proteinGrams
-                    val nextCarbs = (base.carbsGrams - extraP).coerceAtLeast(60)
-                    base.copy(proteinGrams = minProtectiveProtein, carbsGrams = nextCarbs)
+                    val carbsReduction = min(extraP, (base.carbsGrams - 60).coerceAtLeast(0))
+                    val nextCarbs = base.carbsGrams - carbsReduction
+                    val leftoverKcal = (extraP - carbsReduction) * 4
+                    val fatReduction = if (leftoverKcal > 0) (leftoverKcal / 9.0).roundToInt() else 0
+                    val nextFat = (base.fatGrams - fatReduction).coerceAtLeast(35)
+                    base.copy(proteinGrams = minProtectiveProtein, carbsGrams = nextCarbs, fatGrams = nextFat)
                 } else {
                     base
                 }
@@ -1178,9 +1218,9 @@ class AdaptiveMetabolismEngine @Inject constructor(
         val rationale = buildString {
             append("Son ${dataQuality.spanDays.coerceAtMost(28)} günlük kilo trendin ")
             append("(${formatSignedRate(weeklyRateKg)} kg/hafta) ve kalori kayıtların değerlendirildiğinde ")
-            append("günlük enerji harcamanın (~${NutraFormatters.formatInt(estimatedTdee)} kcal) ")
-            append("mevcut hedefine kıyasla $directionPhrase olabileceği görülüyor. ")
-            append("Hedefine dengeli ilerlemek için günlük kaloriyi ")
+            append("günlük enerji harcaman (~${NutraFormatters.formatInt(estimatedTdee)} kcal) doğrultusunda ")
+            append("hedefin için önerilen günlük alımın mevcut hedefine kıyasla $directionPhrase olması gerektiği görülüyor. ")
+            append("Dengeli ilerlemek için günlük kaloriyi ")
             append("${NutraFormatters.formatInt(currentCalories)} → ${NutraFormatters.formatInt(proposedCalories)} kcal ")
             append("olarak güncellemek değerlendirilebilir.")
         }
@@ -1226,13 +1266,14 @@ class AdaptiveMetabolismEngine @Inject constructor(
      */
     private fun projectDynamicWeight(
         profile: UserProfile,
+        targetWeightKg: Float,
         startWeightKg: Float,
         estimatedTdee: Int,
         uncertaintyKcal: Int,
         projectedIntakeKcal: Int,
         today: LocalDate,
     ): Pair<List<WeightProjectionPoint>, TargetEtaRange?> {
-        val targetWeight = profile.targetWeightKg
+        val targetWeight = targetWeightKg
         val isLosing = profile.goalType == GoalType.LOSE_WEIGHT
         val isGaining = profile.goalType == GoalType.GAIN_MUSCLE
 
@@ -1267,7 +1308,11 @@ class AdaptiveMetabolismEngine @Inject constructor(
         var earliestWeekHit: Int? = null
         var latestWeekHit: Int? = null
 
-        val alreadyAtTarget = abs(startWeightKg - targetWeight) <= 0.4f
+        val alreadyAtTarget = when {
+            isLosing -> startWeightKg <= targetWeight + 0.4f
+            isGaining -> startWeightKg >= targetWeight - 0.4f
+            else -> abs(startWeightKg - targetWeight) <= 0.4f
+        }
 
         for (week in 0..78) {
             if (week <= 16) {

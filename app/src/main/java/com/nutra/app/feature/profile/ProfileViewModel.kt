@@ -24,6 +24,7 @@ import com.nutra.app.domain.model.WaterReminderSettings
 import com.nutra.app.domain.repository.NutritionRepository
 import com.nutra.app.domain.usecase.MacroGoalBounds
 import com.nutra.app.domain.usecase.NutritionCalculatorUseCase
+import com.nutra.app.domain.usecase.TurkishTextNormalizer
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -125,7 +126,7 @@ class ProfileViewModel @Inject constructor(
     private val pendingEditCount = AtomicInteger(0)
     private val pendingBodyEditCount = AtomicInteger(0)
     private val pendingWaterReminderEditCount = AtomicInteger(0)
-    private val pendingDailyGoalsTarget = AtomicReference<MacroGoals?>(null)
+    private val pendingDailyGoalsTarget = AtomicReference<Pair<MacroGoals, GoalChangeSource>?>(null)
     private var latestOptimisticGoals: MacroGoals? = null
     private var calorieScalingBaseline: MacroGoals? = null
     private var lastCalorieScaledGoals: MacroGoals? = null
@@ -156,7 +157,10 @@ class ProfileViewModel @Inject constructor(
     }
 
     private val dislikedFoodsFlow = nutritionRepository.observeFoodFeedback()
-        .map { list -> list.filter { it.status == FoodFeedbackStatus.DISLIKED }.sortedBy { it.foodName } }
+        .map { list ->
+            list.filter { it.status == FoodFeedbackStatus.DISLIKED }
+                .sortedBy { TurkishTextNormalizer.normalize(it.foodName) }
+        }
         .distinctUntilChanged()
 
     val uiState: StateFlow<ProfileUiState> = combine(
@@ -213,7 +217,10 @@ class ProfileViewModel @Inject constructor(
         )
     }
 
-    fun updateDailyGoals(goals: MacroGoals) {
+    fun updateDailyGoals(
+        goals: MacroGoals,
+        source: GoalChangeSource = GoalChangeSource.MANUAL,
+    ) {
         val safeGoals = MacroGoals(
             calories = goals.calories.coerceIn(profileGoalBounds.minCalories, profileGoalBounds.maxCalories),
             proteinGrams = goals.proteinGrams.coerceIn(profileGoalBounds.minProtein, profileGoalBounds.maxProtein),
@@ -222,11 +229,11 @@ class ProfileViewModel @Inject constructor(
             waterMl = goals.waterMl.coerceIn(profileGoalBounds.minWaterMl, profileGoalBounds.maxWaterMl),
         )
         pendingGoalsFlow.value = safeGoals
-        pendingDailyGoalsTarget.set(safeGoals)
+        pendingDailyGoalsTarget.set(safeGoals to source)
         launchGoalEdit {
             calorieScalingBaseline = null
             lastCalorieScaledGoals = null
-            val target = pendingDailyGoalsTarget.getAndSet(null) ?: return@launchGoalEdit
+            val (target, targetSource) = pendingDailyGoalsTarget.getAndSet(null) ?: return@launchGoalEdit
             latestOptimisticGoals = target
             preferencesDataStore.updateGoals(target)
             val snapshot = preferencesDataStore.getSnapshot()
@@ -234,7 +241,7 @@ class ProfileViewModel @Inject constructor(
                 goals = target,
                 goalType = snapshot.goalType,
                 targetWeightKg = snapshot.targetWeightKg,
-                source = GoalChangeSource.MANUAL,
+                source = targetSource,
             )
         }
     }
@@ -310,10 +317,22 @@ class ProfileViewModel @Inject constructor(
     private suspend fun currentGoalsLocked(): MacroGoals =
         latestOptimisticGoals ?: preferencesDataStore.getSnapshot().goals
 
-    private suspend fun persistGoalsLocked(updated: MacroGoals) {
+    private suspend fun persistGoalsLocked(
+        updated: MacroGoals,
+        historySource: GoalChangeSource? = null,
+    ) {
         latestOptimisticGoals = updated
         pendingGoalsFlow.value = updated
         preferencesDataStore.updateGoals(updated)
+        if (historySource != null) {
+            val snapshot = preferencesDataStore.getSnapshot()
+            nutritionRepository.recordGoalHistory(
+                goals = updated,
+                goalType = snapshot.goalType,
+                targetWeightKg = snapshot.targetWeightKg,
+                source = historySource,
+            )
+        }
     }
 
     private fun updateMacroGoal(transform: (MacroGoals) -> MacroGoals) {
@@ -325,7 +344,7 @@ class ProfileViewModel @Inject constructor(
                 goals = transform(current),
                 bounds = profileGoalBounds,
             )
-            persistGoalsLocked(updated)
+            persistGoalsLocked(updated, historySource = GoalChangeSource.MANUAL)
         }
     }
 
@@ -340,7 +359,7 @@ class ProfileViewModel @Inject constructor(
             bounds = profileGoalBounds,
         ).copy(waterMl = current.waterMl)
         lastCalorieScaledGoals = updated
-        persistGoalsLocked(updated)
+        persistGoalsLocked(updated, historySource = GoalChangeSource.MANUAL)
     }
 
     private suspend fun applyWaterGoalLocked(current: MacroGoals, waterMl: Int) {
@@ -365,7 +384,7 @@ class ProfileViewModel @Inject constructor(
                 activityLevel = p.activityLevel,
                 goalType = p.goalType,
             )
-            persistGoalsLocked(calculated)
+            persistGoalsLocked(calculated, historySource = GoalChangeSource.FORMULA)
             emitFeedback(
                 message = "Hedefler formüle göre yenilendi",
                 tone = NutraSnackbarTone.Success,
@@ -380,7 +399,7 @@ class ProfileViewModel @Inject constructor(
         launchGoalEdit {
             calorieScalingBaseline = null
             lastCalorieScaledGoals = null
-            persistGoalsLocked(prev)
+            persistGoalsLocked(prev, historySource = GoalChangeSource.MANUAL)
             clearFeedback()
         }
     }
@@ -441,6 +460,14 @@ class ProfileViewModel @Inject constructor(
                     goalType = goalType,
                     updatedGoals = updatedGoals,
                 )
+                if (updatedGoals != null) {
+                    nutritionRepository.recordGoalHistory(
+                        goals = updatedGoals,
+                        goalType = goalType,
+                        targetWeightKg = targetWeightKg,
+                        source = GoalChangeSource.FORMULA,
+                    )
+                }
                 if (abs(currentWeightKg - previousWeight) >= 0.05f) {
                     nutritionRepository.upsertDailyWeight(
                         dateIso = LocalDate.now().toString(),

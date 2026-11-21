@@ -20,6 +20,7 @@ import com.nutra.app.domain.model.MacroGoals
 import com.nutra.app.domain.model.ThemePreference
 import com.nutra.app.domain.model.UserProfile
 import com.nutra.app.domain.model.WaterReminderSettings
+import com.nutra.app.domain.usecase.TurkishTextNormalizer
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -40,6 +41,16 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 private val Context.nutraDataStore: DataStore<Preferences> by preferencesDataStore(name = "nutra_preferences")
+
+internal const val MAX_EXCLUDED_KEYWORDS = 40
+
+internal fun sanitizeDietaryProfileData(profile: DietaryProfile): DietaryProfile = profile.copy(
+    excludedKeywords = profile.excludedKeywords
+        .map { it.trim() }
+        .filter { TurkishTextNormalizer.normalize(it).length >= 2 }
+        .distinctBy { TurkishTextNormalizer.normalize(it) }
+        .take(MAX_EXCLUDED_KEYWORDS),
+)
 
 @Singleton
 class UserPreferencesDataStore @Inject constructor(
@@ -137,15 +148,15 @@ class UserPreferencesDataStore @Inject constructor(
 
         val dietaryProfile = prefs[Keys.DIETARY_PROFILE_JSON]
             ?.takeIf { it.isNotBlank() }
-            ?.let { raw -> runCatching { prefsJson.decodeFromString<DietaryProfile>(raw) }.getOrNull() }
+            ?.let { raw -> runCatching { sanitizeDietaryProfileData(prefsJson.decodeFromString<DietaryProfile>(raw)) }.getOrNull() }
             ?: DietaryProfile()
 
         return UserProfile(
             sex = sex,
-            age = prefs[Keys.AGE] ?: 28,
-            heightCm = prefs[Keys.HEIGHT_CM] ?: 176,
-            currentWeightKg = prefs[Keys.CURRENT_WEIGHT_KG] ?: 75f,
-            targetWeightKg = prefs[Keys.TARGET_WEIGHT_KG] ?: 70f,
+            age = (prefs[Keys.AGE] ?: 28).coerceIn(14, 100),
+            heightCm = (prefs[Keys.HEIGHT_CM] ?: 176).coerceIn(120, 230),
+            currentWeightKg = sanitizeWeightKg(prefs[Keys.CURRENT_WEIGHT_KG] ?: 75f, 75f),
+            targetWeightKg = sanitizeWeightKg(prefs[Keys.TARGET_WEIGHT_KG] ?: 70f, 70f),
             activityLevel = activityLevel,
             goalType = goalType,
             goals = goals,
@@ -192,8 +203,9 @@ class UserPreferencesDataStore @Inject constructor(
     }
 
     suspend fun updateCurrentWeight(weightKg: Float) {
+        val safeWeight = sanitizeWeightKg(weightKg)
         context.nutraDataStore.edit { prefs ->
-            prefs[Keys.CURRENT_WEIGHT_KG] = weightKg
+            prefs[Keys.CURRENT_WEIGHT_KG] = safeWeight
         }
     }
 
@@ -207,12 +219,14 @@ class UserPreferencesDataStore @Inject constructor(
         goalType: GoalType,
         updatedGoals: MacroGoals? = null,
     ) {
+        val safeCurrentWeight = sanitizeWeightKg(currentWeightKg)
+        val safeTargetWeight = sanitizeWeightKg(targetWeightKg)
         context.nutraDataStore.edit { prefs ->
             prefs[Keys.SEX] = sex.name
-            prefs[Keys.AGE] = age
-            prefs[Keys.HEIGHT_CM] = heightCm
-            prefs[Keys.CURRENT_WEIGHT_KG] = currentWeightKg
-            prefs[Keys.TARGET_WEIGHT_KG] = targetWeightKg
+            prefs[Keys.AGE] = age.coerceIn(14, 100)
+            prefs[Keys.HEIGHT_CM] = heightCm.coerceIn(120, 230)
+            prefs[Keys.CURRENT_WEIGHT_KG] = safeCurrentWeight
+            prefs[Keys.TARGET_WEIGHT_KG] = safeTargetWeight
             prefs[Keys.ACTIVITY_LEVEL] = activityLevel.name
             prefs[Keys.GOAL_TYPE] = goalType.name
             if (updatedGoals != null) {
@@ -262,8 +276,8 @@ class UserPreferencesDataStore @Inject constructor(
             prefs[Keys.SEX] = profile.sex.name
             prefs[Keys.AGE] = profile.age.coerceIn(14, 100)
             prefs[Keys.HEIGHT_CM] = profile.heightCm.coerceIn(120, 230)
-            prefs[Keys.CURRENT_WEIGHT_KG] = profile.currentWeightKg.coerceIn(30f, 300f)
-            prefs[Keys.TARGET_WEIGHT_KG] = profile.targetWeightKg.coerceIn(30f, 300f)
+            prefs[Keys.CURRENT_WEIGHT_KG] = sanitizeWeightKg(profile.currentWeightKg)
+            prefs[Keys.TARGET_WEIGHT_KG] = sanitizeWeightKg(profile.targetWeightKg)
             prefs[Keys.ACTIVITY_LEVEL] = profile.activityLevel.name
             prefs[Keys.GOAL_TYPE] = profile.goalType.name
             prefs[Keys.GOAL_CALORIES] = safeGoals.calories
@@ -315,13 +329,10 @@ class UserPreferencesDataStore @Inject constructor(
         }
     }
 
-    private fun sanitizeDietaryProfile(profile: DietaryProfile): DietaryProfile = profile.copy(
-        excludedKeywords = profile.excludedKeywords
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-            .distinctBy { it.lowercase() }
-            .take(40),
-    )
+    private fun sanitizeWeightKg(weightKg: Float, fallback: Float = 75f): Float =
+        (if (weightKg.isFinite()) weightKg else fallback).coerceIn(30f, 300f)
+
+    private fun sanitizeDietaryProfile(profile: DietaryProfile): DietaryProfile = sanitizeDietaryProfileData(profile)
 
     suspend fun updateGeminiConfig(apiKey: String, model: String) {
         context.nutraDataStore.edit { prefs ->

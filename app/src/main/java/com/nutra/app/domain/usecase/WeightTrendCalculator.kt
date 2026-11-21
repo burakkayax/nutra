@@ -16,14 +16,16 @@ class WeightTrendCalculator @Inject constructor() {
         smoothingFactor: Float = 0.25f,
     ): List<WeightTrendPoint> {
         if (entries.isEmpty()) return emptyList()
+        val safeAlpha = if (smoothingFactor.isFinite()) smoothingFactor.coerceIn(0.01f, 1f) else 0.25f
 
-        // Single-pass deduplication keeping the latest weigh-in per calendar day
+        // Single-pass deduplication keeping the latest valid weigh-in per calendar day
         val latestByDate = LinkedHashMap<String, WeightEntry>(entries.size.coerceAtMost(256))
         var isAlreadySorted = true
         var lastInsertedDate: String? = null
 
         for (i in entries.indices) {
             val entry = entries[i]
+            if (!entry.weightKg.isFinite() || entry.weightKg <= 0f || entry.dateIso.isBlank()) continue
             val existing = latestByDate[entry.dateIso]
             if (existing == null) {
                 if (isAlreadySorted && lastInsertedDate != null && entry.dateIso < lastInsertedDate) {
@@ -38,6 +40,7 @@ class WeightTrendCalculator @Inject constructor() {
                 latestByDate[entry.dateIso] = entry
             }
         }
+        if (latestByDate.isEmpty()) return emptyList()
 
         val dailyEntries = ArrayList<WeightEntry>(latestByDate.size)
         for (entry in latestByDate.values) {
@@ -49,14 +52,14 @@ class WeightTrendCalculator @Inject constructor() {
 
         val result = ArrayList<WeightTrendPoint>(dailyEntries.size)
         var currentEma = dailyEntries[0].weightKg
-        val decay = 1f - smoothingFactor
+        val decay = 1f - safeAlpha
 
         for (i in dailyEntries.indices) {
             val entry = dailyEntries[i]
             currentEma = if (i == 0) {
                 entry.weightKg
             } else {
-                (smoothingFactor * entry.weightKg) + (decay * currentEma)
+                (safeAlpha * entry.weightKg) + (decay * currentEma)
             }
             val roundedEma = (currentEma * 10f).roundToInt() / 10f
             result.add(

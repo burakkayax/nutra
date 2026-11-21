@@ -39,25 +39,28 @@ class PortionOptimizer @Inject constructor() {
         }
 
         val k = foods.size
-        val ePerG = DoubleArray(k) { foods[it].food.caloriesPer100g / 100.0 }
-        val pPerG = DoubleArray(k) { foods[it].food.proteinPer100g / 100.0 }
-        val cPerG = DoubleArray(k) { foods[it].food.carbsPer100g / 100.0 }
-        val fPerG = DoubleArray(k) { foods[it].food.fatPer100g / 100.0 }
+        val ePerG = DoubleArray(k) { foods[it].food.caloriesPer100g.coerceAtLeast(0) / 100.0 }
+        val pPerG = DoubleArray(k) { finiteNonNeg(foods[it].food.proteinPer100g) / 100.0 }
+        val cPerG = DoubleArray(k) { finiteNonNeg(foods[it].food.carbsPer100g) / 100.0 }
+        val fPerG = DoubleArray(k) { finiteNonNeg(foods[it].food.fatPer100g) / 100.0 }
 
-        val minG = DoubleArray(k) { foods[it].portionConstraint.minGrams.toDouble() }
-        val maxG = DoubleArray(k) { foods[it].portionConstraint.maxGrams.toDouble() }
+        val minG = DoubleArray(k) { finitePositive(foods[it].portionConstraint.minGrams, 10f).toDouble() }
+        val maxG = DoubleArray(k) { idx ->
+            max(minG[idx], finitePositive(foods[idx].portionConstraint.maxGrams, 200f).toDouble())
+        }
         val anchorG = DoubleArray(k) { idx ->
             val cf = foods[idx]
-            val usual = usualGramsByFoodId[cf.food.id]
-            val target = usual?.coerceIn(cf.portionConstraint.minGrams, cf.portionConstraint.maxGrams)
-                ?: cf.portionConstraint.typicalGrams
+            val usual = usualGramsByFoodId[cf.food.id]?.takeIf { it.isFinite() && it > 0f }
+            val typical = finitePositive(cf.portionConstraint.typicalGrams, 100f)
+            val target = usual?.coerceIn(minG[idx].toFloat(), maxG[idx].toFloat())
+                ?: typical.coerceIn(minG[idx].toFloat(), maxG[idx].toFloat())
             target.toDouble()
         }
 
         val targetE = budget.targetCalories.coerceAtLeast(100).toDouble()
-        val targetP = budget.targetProteinGrams.coerceAtLeast(5f).toDouble()
-        val targetC = budget.targetCarbsGrams.coerceAtLeast(5f).toDouble()
-        val targetF = budget.targetFatGrams.coerceAtLeast(3f).toDouble()
+        val targetP = finiteNonNeg(budget.targetProteinGrams).coerceAtLeast(5f).toDouble()
+        val targetC = finiteNonNeg(budget.targetCarbsGrams).coerceAtLeast(5f).toDouble()
+        val targetF = finiteNonNeg(budget.targetFatGrams).coerceAtLeast(3f).toDouble()
 
         val normE = max(targetE, 150.0)
         val normP = max(targetP, 15.0)
@@ -185,28 +188,44 @@ class PortionOptimizer @Inject constructor() {
         actualF: Float,
         budget: MealBudget,
     ): Int {
+        val safeCal = actualCal.coerceAtLeast(0).toFloat()
+        val safeP = finiteNonNeg(actualP)
+        val safeC = finiteNonNeg(actualC)
+        val safeF = finiteNonNeg(actualF)
         val targetE = budget.targetCalories.coerceAtLeast(100).toFloat()
-        val targetP = budget.targetProteinGrams.coerceAtLeast(10f)
-        val targetC = budget.targetCarbsGrams.coerceAtLeast(15f)
-        val targetF = budget.targetFatGrams.coerceAtLeast(8f)
+        val targetP = finiteNonNeg(budget.targetProteinGrams).coerceAtLeast(10f)
+        val targetC = finiteNonNeg(budget.targetCarbsGrams).coerceAtLeast(15f)
+        val targetF = finiteNonNeg(budget.targetFatGrams).coerceAtLeast(8f)
 
-        val errE = abs(actualCal - targetE) / max(targetE, 150f)
-        val errP = abs(actualP - targetP) / max(targetP, 18f)
-        val errC = abs(actualC - targetC) / max(targetC, 25f)
-        val errF = abs(actualF - targetF) / max(targetF, 12f)
+        val errE = abs(safeCal - targetE) / max(targetE, 150f)
+        val errP = abs(safeP - targetP) / max(targetP, 18f)
+        val errC = abs(safeC - targetC) / max(targetC, 25f)
+        val errF = abs(safeF - targetF) / max(targetF, 12f)
 
-        val weightedErr = (0.42f * errE + 0.34f * errP + 0.12f * errC + 0.12f * errF)
-        return ((1f - weightedErr.coerceIn(0f, 1f)) * 100f).roundToInt().coerceIn(20, 100)
+        val rawErr = 0.42f * errE + 0.34f * errP + 0.12f * errC + 0.12f * errF
+        val weightedErr = if (rawErr.isFinite()) rawErr.coerceIn(0f, 1f) else 1f
+        return ((1f - weightedErr) * 100f).roundToInt().coerceIn(20, 100)
     }
 
     fun buildPortionWithGrams(
         classified: ClassifiedFood,
         grams: Float,
+        preferHouseholdSnap: Boolean = true,
     ): RecommendedFoodPortion {
         val food = classified.food
-        val clamped = grams.coerceIn(classified.portionConstraint.minGrams, classified.portionConstraint.maxGrams)
-        val presentation = resolveCleanUnitPresentation(food, clamped, classified.portionConstraint.gramStep)
-        val finalGrams = presentation.totalGrams
+        val minBound = finitePositive(classified.portionConstraint.minGrams, 10f)
+        val maxBound = max(minBound, finitePositive(classified.portionConstraint.maxGrams, 200f))
+        val finiteGrams = if (grams.isFinite()) grams else classified.portionConstraint.typicalGrams
+        val clamped = finiteGrams.coerceIn(minBound, maxBound)
+        val presentation = resolveCleanUnitPresentation(
+            food = food,
+            targetGrams = clamped,
+            minGrams = minBound,
+            maxGrams = maxBound,
+            gramStep = classified.portionConstraint.gramStep,
+            preferHouseholdSnap = preferHouseholdSnap,
+        )
+        val finalGrams = presentation.totalGrams.coerceIn(minBound, maxBound)
         return RecommendedFoodPortion(
             food = food,
             feedbackKey = classified.feedbackKey,
@@ -219,8 +238,8 @@ class PortionOptimizer @Inject constructor() {
             proteinGrams = food.proteinForGrams(finalGrams),
             carbsGrams = food.carbsForGrams(finalGrams),
             fatGrams = food.fatForGrams(finalGrams),
-            minGrams = classified.portionConstraint.minGrams,
-            maxGrams = classified.portionConstraint.maxGrams,
+            minGrams = minBound,
+            maxGrams = maxBound,
         )
     }
 
@@ -234,27 +253,34 @@ class PortionOptimizer @Inject constructor() {
     private fun resolveCleanUnitPresentation(
         food: FoodItem,
         targetGrams: Float,
+        minGrams: Float,
+        maxGrams: Float,
         gramStep: Float,
+        preferHouseholdSnap: Boolean,
     ): UnitPresentation {
         val defGrams = food.defaultUnitGrams
         val isRawDefault = ServingUnitLabels.isRawUnitLabel(food.defaultUnitLabel) ||
             food.defaultUnitLabel == ServingUnitLabels.BASE_100G ||
             food.defaultUnitLabel == ServingUnitLabels.BASE_100ML
 
-        // Prefer natural household unit if a clean multiplier lands within 8% of targetGrams
-        if (!isRawDefault && defGrams >= 10f && defGrams <= 350f) {
+        // Prefer natural household unit if a clean multiplier lands within tolerance AND strictly inside [minGrams, maxGrams].
+        // When user explicitly adjusts grams manually (preferHouseholdSnap == false), only use a household unit if it matches nearly exactly (<= 1.5%)
+        // so manual +/- clicks never snap back to the previous weight.
+        val snapTolerance = if (preferHouseholdSnap) 0.08f else 0.015f
+        if (!isRawDefault && defGrams.isFinite() && defGrams >= 10f && defGrams <= 350f) {
             var bestMult: Float? = null
             var bestRelErr = Float.MAX_VALUE
             for (m in CLEAN_UNIT_MULTIPLIERS) {
                 val candG = defGrams * m
+                if (candG < minGrams - 0.01f || candG > maxGrams + 0.01f) continue
                 val relErr = abs(candG - targetGrams) / targetGrams.coerceAtLeast(10f)
-                if (relErr <= 0.08f && relErr < bestRelErr) {
+                if (relErr <= snapTolerance && relErr < bestRelErr) {
                     bestRelErr = relErr
                     bestMult = m
                 }
             }
             if (bestMult != null) {
-                val total = (defGrams * bestMult).coerceAtLeast(5f)
+                val total = (defGrams * bestMult).coerceIn(minGrams, maxGrams)
                 return UnitPresentation(
                     unitLabel = food.defaultUnitLabel,
                     unitGrams = defGrams,
@@ -264,14 +290,18 @@ class PortionOptimizer @Inject constructor() {
             }
         }
 
-        // Clean raw gram / ml representation (e.g., 150 g, 140 g, 200 ml)
-        val step = gramStep.coerceAtLeast(5f)
-        val roundedGrams = ((targetGrams / step).roundToInt() * step).coerceAtLeast(step)
+        // Clean raw gram / ml representation (e.g., 150 g, 140 g, 200 ml) strictly inside [minGrams, maxGrams]
+        val finalRawGrams = if (preferHouseholdSnap) {
+            val step = gramStep.coerceAtLeast(5f)
+            ((targetGrams / step).roundToInt() * step).coerceIn(minGrams, maxGrams)
+        } else {
+            targetGrams.roundToInt().toFloat().coerceIn(minGrams, maxGrams)
+        }
         return UnitPresentation(
             unitLabel = ServingUnitLabels.rawUnitFor(food.baseUnit),
             unitGrams = 1f,
-            multiplier = roundedGrams,
-            totalGrams = roundedGrams,
+            multiplier = finalRawGrams,
+            totalGrams = finalRawGrams,
         )
     }
 
@@ -308,18 +338,22 @@ class PortionOptimizer @Inject constructor() {
             options.map { buildPortionWithGrams(cf, it) }.distinctBy { it.totalGrams.roundToInt() }
         }
 
-        // Greedy + coordinate pass over discrete candidates (exact for k <= 4 with <= 3^4 = 81 combos!)
+        fun lossOf(eAcc: Double, pAcc: Double, cAcc: Double, fAcc: Double): Double {
+            val de = (eAcc - targetE) / normE
+            val dp = (pAcc - targetP) / normP
+            val dc = (cAcc - targetC) / normC
+            val df = (fAcc - targetF) / normF
+            return wE * de * de + wP * dp * dp + wC * dc * dc + wF * df * df
+        }
+
+        // Exact search for k <= 4 (<= 3^4 = 81 combos); coordinate descent over discrete candidates for k > 4
         var bestSelection = Array(k) { candidateLists[it][0] }
         if (k <= 4) {
             var bestLoss = Double.MAX_VALUE
             val current = arrayOfNulls<RecommendedFoodPortion>(k)
             fun dfs(idx: Int, eAcc: Double, pAcc: Double, cAcc: Double, fAcc: Double) {
                 if (idx == k) {
-                    val de = (eAcc - targetE) / normE
-                    val dp = (pAcc - targetP) / normP
-                    val dc = (cAcc - targetC) / normC
-                    val df = (fAcc - targetF) / normF
-                    val loss = wE * de * de + wP * dp * dp + wC * dc * dc + wF * df * df
+                    val loss = lossOf(eAcc, pAcc, cAcc, fAcc)
                     if (loss < bestLoss) {
                         bestLoss = loss
                         bestSelection = Array(k) { current[it]!! }
@@ -338,10 +372,56 @@ class PortionOptimizer @Inject constructor() {
                 }
             }
             dfs(0, 0.0, 0.0, 0.0, 0.0)
+        } else {
+            var eSum = 0.0
+            var pSum = 0.0
+            var cSum = 0.0
+            var fSum = 0.0
+            for (i in 0 until k) {
+                eSum += bestSelection[i].calories
+                pSum += bestSelection[i].proteinGrams
+                cSum += bestSelection[i].carbsGrams
+                fSum += bestSelection[i].fatGrams
+            }
+            repeat(3) {
+                var improved = false
+                for (i in 0 until k) {
+                    val old = bestSelection[i]
+                    val baseE = eSum - old.calories
+                    val baseP = pSum - old.proteinGrams
+                    val baseC = cSum - old.carbsGrams
+                    val baseF = fSum - old.fatGrams
+                    var bestCand = old
+                    var bestLoss = lossOf(eSum, pSum, cSum, fSum)
+                    for (cand in candidateLists[i]) {
+                        val loss = lossOf(
+                            baseE + cand.calories,
+                            baseP + cand.proteinGrams,
+                            baseC + cand.carbsGrams,
+                            baseF + cand.fatGrams,
+                        )
+                        if (loss < bestLoss - 1e-9) {
+                            bestLoss = loss
+                            bestCand = cand
+                        }
+                    }
+                    if (bestCand !== old) {
+                        bestSelection[i] = bestCand
+                        eSum = baseE + bestCand.calories
+                        pSum = baseP + bestCand.proteinGrams
+                        cSum = baseC + bestCand.carbsGrams
+                        fSum = baseF + bestCand.fatGrams
+                        improved = true
+                    }
+                }
+                if (!improved) return@repeat
+            }
         }
 
         return bestSelection.toList()
     }
 
+    private fun finiteNonNeg(v: Float): Float = if (v.isFinite() && v > 0f) v else 0f
+    private fun finitePositive(v: Float, fallback: Float): Float = if (v.isFinite() && v > 0f) v else fallback
     private fun round1(v: Float): Float = (v * 10f).roundToInt() / 10f
 }

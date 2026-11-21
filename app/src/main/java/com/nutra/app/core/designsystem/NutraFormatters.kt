@@ -86,6 +86,9 @@ object NutraFormatters {
     fun capitalizeTr(text: String): String =
         text.replaceFirstChar { it.titlecase(TR_LOCALE) }
 
+    fun lowercaseTr(text: String): String =
+        text.lowercase(TR_LOCALE)
+
     fun formatMonthSpan(weekStart: LocalDate): String {
         val weekEnd = weekStart.plusDays(6)
         val startMonth = capitalizeTr(

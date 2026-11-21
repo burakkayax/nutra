@@ -21,11 +21,13 @@ import javax.inject.Singleton
 @Singleton
 class FoodCulinaryClassifier @Inject constructor() {
 
-    @Volatile
-    private var lastCatalogSignature: Int = 0
+    private data class CatalogCacheSnapshot(
+        val signature: Int,
+        val byKey: Map<String, ClassifiedFood>,
+    )
 
     @Volatile
-    private var cachedMap: Map<Long, ClassifiedFood> = emptyMap()
+    private var cacheSnapshot: CatalogCacheSnapshot = CatalogCacheSnapshot(0, emptyMap())
 
     fun foodFeedbackKey(food: FoodItem): String =
         food.catalogCode?.takeIf { it.isNotBlank() }
@@ -33,12 +35,12 @@ class FoodCulinaryClassifier @Inject constructor() {
 
     fun classifyCatalog(foods: List<FoodItem>): List<ClassifiedFood> {
         val signature = computeSignature(foods)
-        val existing = cachedMap
-        if (signature == lastCatalogSignature && existing.size == foods.size) {
+        val snapshot = cacheSnapshot
+        if (signature == snapshot.signature && snapshot.byKey.size == foods.size) {
             val out = ArrayList<ClassifiedFood>(foods.size)
             var allHit = true
             for (food in foods) {
-                val c = existing[food.id]
+                val c = snapshot.byKey[foodFeedbackKey(food)]
                 if (c != null && c.food == food) {
                     out.add(c)
                 } else {
@@ -50,14 +52,13 @@ class FoodCulinaryClassifier @Inject constructor() {
         }
 
         val classified = ArrayList<ClassifiedFood>(foods.size)
-        val nextMap = HashMap<Long, ClassifiedFood>(foods.size.coerceAtLeast(16))
+        val nextMap = HashMap<String, ClassifiedFood>(foods.size.coerceAtLeast(16))
         for (food in foods) {
             val item = classifySingle(food)
             classified.add(item)
-            if (food.id > 0L) nextMap[food.id] = item
+            nextMap[item.feedbackKey] = item
         }
-        cachedMap = nextMap
-        lastCatalogSignature = signature
+        cacheSnapshot = CatalogCacheSnapshot(signature = signature, byKey = nextMap)
         return classified
     }
 
@@ -66,41 +67,57 @@ class FoodCulinaryClassifier @Inject constructor() {
         val normFull = food.normalizedSearchText.ifBlank {
             TurkishTextNormalizer.normalize("${food.name} ${food.subtitle} ${food.brand.orEmpty()}")
         }
+        val paddedName = " $normName "
+        val paddedFull = " $normFull "
         val prep = TurkishTextNormalizer.normalize(food.preparationState.orEmpty())
 
-        val edibility = resolveEdibility(food, normName, prep)
+        val edibility = resolveEdibility(food, normName, paddedName, prep)
         val role = if (edibility == EdibilityStatus.COOKING_INGREDIENT_ONLY) {
             MealRole.INGREDIENT_ONLY
         } else {
-            resolveMealRole(food, normName)
+            resolveMealRole(food, normName, paddedName)
         }
 
-        val containsFish = containsAnyToken(normFull, FISH_TOKENS)
-        val containsPoultry = containsAnyToken(normFull, POULTRY_TOKENS)
-        val containsRedMeat = containsAnyToken(normFull, RED_MEAT_TOKENS) ||
-            (food.category == FoodCategory.MEAT_POULTRY && !containsFish && !containsPoultry && !containsAnyToken(normFull, PLANT_PROTEIN_TOKENS))
+        val isExplicitlyMeatFree = containsAnyToken(normName, PLANT_PROTEIN_TOKENS) ||
+            normName.contains("mercimek kofte") ||
+            normName.contains("cig kofte") ||
+            normName.contains("patates kofte") ||
+            normName.contains("ispanakli kofte") ||
+            normName.contains("koftelik")
 
-        val allergens = detectAllergens(food, normName, normFull, containsFish)
-        val containsHoney = containsAnyToken(normName, HONEY_TOKENS)
+        val containsFish = containsAnyToken(normFull, FISH_TOKENS) || containsAnyToken(paddedFull, FISH_WORD_TOKENS)
+        val containsPoultry = !isExplicitlyMeatFree && containsAnyToken(normFull, POULTRY_TOKENS)
+        val hasExplicitRedMeatWord = containsAnyToken(normFull, EXPLICIT_RED_MEAT_TOKENS)
+        val hasGenericMeatDishWord = containsAnyToken(normFull, GENERIC_MEAT_DISH_TOKENS)
+        val containsRedMeat = !isExplicitlyMeatFree && (
+            hasExplicitRedMeatWord ||
+                (!containsPoultry && !containsFish && hasGenericMeatDishWord) ||
+                (food.category == FoodCategory.MEAT_POULTRY && !containsFish && !containsPoultry)
+            )
+
+        val allergens = detectAllergens(normName, normFull, paddedFull, containsFish)
+        val containsHoney = containsAnyToken(paddedName, HONEY_WORD_TOKENS) || containsAnyToken(normName, HONEY_SUBSTRING_TOKENS)
         val containsAnimalProduct = containsRedMeat || containsPoultry || containsFish ||
             AllergenTag.DAIRY in allergens || AllergenTag.EGG in allergens || containsHoney
 
-        val isTurkishHomeCooked = food.brand == null && (
+        val isFastFood = containsAnyToken(normName, FAST_FOOD_TOKENS)
+        val isTurkishHomeCooked = food.brand == null && !isFastFood && (
             food.category == FoodCategory.HOME_COOKED ||
                 food.category == FoodCategory.SOUP ||
                 food.category == FoodCategory.SALAD_MEZE ||
                 (food.category == FoodCategory.MEAT_POULTRY && edibility == EdibilityStatus.READY_TO_EAT) ||
-                (food.category == FoodCategory.BREAKFAST && !containsAnyToken(normName, PACKAGED_SNACK_TOKENS))
+                (food.category == FoodCategory.BREAKFAST && role != MealRole.SNACK_SWEET && !containsAnyToken(normName, PACKAGED_SNACK_TOKENS))
             )
 
         val isWholeFood = food.brand == null &&
             food.category != FoodCategory.SNACKS_SWEETS &&
             food.category != FoodCategory.OILS_SAUCES &&
+            role != MealRole.SNACK_SWEET &&
             !containsAnyToken(normName, PROCESSED_MEAT_TOKENS)
 
         val effectiveSodium = food.sodiumMgPer100g ?: food.saltPer100g?.let { it * 393.4f }
 
-        val portionConstraint = computePortionConstraint(food, role, normName)
+        val portionConstraint = computePortionConstraint(food, role, normName, paddedName)
 
         return ClassifiedFood(
             food = food,
@@ -164,24 +181,43 @@ class FoodCulinaryClassifier @Inject constructor() {
         return true
     }
 
-    private fun resolveEdibility(food: FoodItem, normName: String, prep: String): EdibilityStatus {
+    private fun resolveEdibility(food: FoodItem, normName: String, paddedName: String, prep: String): EdibilityStatus {
         if (food.caloriesPer100g <= 2 && food.proteinPer100g < 0.5f && food.carbsPer100g < 0.5f && food.fatPer100g < 0.5f) {
             return EdibilityStatus.COOKING_INGREDIENT_ONLY
         }
         if (food.category == FoodCategory.OILS_SAUCES) {
             return EdibilityStatus.COOKING_INGREDIENT_ONLY
         }
-        if (containsAnyToken(normName, INGREDIENT_ONLY_TOKENS)) {
-            // Allow ready-to-eat dishes that happen to mention olive oil ("zeytinyagli ...")
-            if (!normName.contains("zeytinyagli") && !normName.contains("tereyagli")) {
+        // Raw whole lemon is a condiment/acidifier, not a standalone 150g fruit portion
+        if (food.category == FoodCategory.FRUIT_NUTS && containsAnyToken(paddedName, RAW_LEMON_WORD_TOKENS)) {
+            return EdibilityStatus.COOKING_INGREDIENT_ONLY
+        }
+        // Alcohol & energy drinks are excluded from healthy meal recommendations
+        if (food.category == FoodCategory.DRINKS &&
+            (containsAnyToken(paddedName, ALCOHOL_WORD_TOKENS) || containsAnyToken(normName, DRY_OR_EXCLUDED_DRINK_TOKENS))
+        ) {
+            return EdibilityStatus.COOKING_INGREDIENT_ONLY
+        }
+        if (containsAnyToken(normName, INGREDIENT_ONLY_SUBSTRING_TOKENS) ||
+            containsAnyToken(paddedName, INGREDIENT_ONLY_WORD_TOKENS)
+        ) {
+            // Allow ready-to-eat dishes that mention olive oil / butter / sunflower oil preparation
+            val isPreparedDishWithOilOrButter = normName.contains("zeytinyagli") ||
+                normName.contains("tereyagli") ||
+                normName.contains("aycicek yagli")
+            if (!isPreparedDishWithOilOrButter) {
                 return EdibilityStatus.COOKING_INGREDIENT_ONLY
             }
         }
-        // Raw meat/fish/poultry or minced raw meat
+        // Raw meat/fish/poultry, frozen raw seafood, or minced raw meat
         if (food.category == FoodCategory.MEAT_POULTRY) {
-            if (prep.contains("cig") || normName.contains("cig") || normName.contains("kiyma")) {
+            if (prep.contains("cig") || prep.contains("dondurulmus") || normName.contains("cig") || normName.contains("kiyma")) {
                 return EdibilityStatus.COOKING_INGREDIENT_ONLY
             }
+        }
+        // Raw whole eggs (uncooked) should not be suggested as ready-to-eat
+        if (food.category == FoodCategory.BREAKFAST && prep.contains("cig")) {
+            return EdibilityStatus.COOKING_INGREDIENT_ONLY
         }
         // Dry uncooked grains/legumes/pasta/flour (except oats, muesli, bread, cooked pilav/makarna)
         if (food.category == FoodCategory.GRAINS_BAKERY) {
@@ -191,23 +227,37 @@ class FoodCulinaryClassifier @Inject constructor() {
                 }
             }
         }
-        // Raw vegetables that are NOT normally eaten raw standalone
-        if (food.category == FoodCategory.VEGETABLES && (prep.contains("cig") || prep.contains("kuru") || prep.contains("dondurulmus"))) {
-            if (!containsAnyToken(normName, RAW_EDIBLE_VEG_TOKENS)) {
+        // Raw vegetables that are NOT normally eaten raw as a standalone side (or culinary herbs / hot chili peppers)
+        if (food.category == FoodCategory.VEGETABLES) {
+            if (containsAnyToken(normName, HERB_OR_CHILI_VEG_TOKENS)) {
                 return EdibilityStatus.COOKING_INGREDIENT_ONLY
+            }
+            if (prep.contains("cig") || prep.contains("kuru") || prep.contains("dondurulmus")) {
+                if (!isRawEdibleSaladVegetable(normName)) {
+                    return EdibilityStatus.COOKING_INGREDIENT_ONLY
+                }
             }
         }
         // Raw meat-free cig kofte is ready to eat!
         if (food.category == FoodCategory.SALAD_MEZE && normName.contains("cig kofte")) {
             return EdibilityStatus.READY_TO_EAT
         }
-        if (food.category == FoodCategory.DRINKS && containsAnyToken(normName, DRY_DRINK_TOKENS)) {
-            return EdibilityStatus.COOKING_INGREDIENT_ONLY
-        }
         return EdibilityStatus.READY_TO_EAT
     }
 
-    private fun resolveMealRole(food: FoodItem, normName: String): MealRole {
+    private fun isRawEdibleSaladVegetable(normName: String): Boolean {
+        if (containsAnyToken(normName, RAW_EDIBLE_VEG_TOKENS)) return true
+        // Support catalog comma-reversed titles like "Lahana, kırmızı, baş", "Biber, sivri", "Biber, kırmızı"
+        if (normName.contains("lahana") && normName.contains("kirmizi")) return true
+        if (normName.contains("biber") && !normName.contains("aci") &&
+            (normName.contains("sivri") || normName.contains("kirmizi") || normName.contains("yesil") || normName.contains("kapya") || normName.contains("carliston"))
+        ) {
+            return true
+        }
+        return false
+    }
+
+    private fun resolveMealRole(food: FoodItem, normName: String, paddedName: String): MealRole {
         if (food.category == FoodCategory.SOUP || normName.contains("corba")) return MealRole.SOUP
 
         if (containsAnyToken(normName, DAIRY_ROLE_TOKENS)) {
@@ -238,7 +288,7 @@ class FoodCulinaryClassifier @Inject constructor() {
         if (food.category == FoodCategory.SALAD_MEZE) {
             return when {
                 normName.contains("cacik") || normName.contains("haydari") -> MealRole.DAIRY_PROBIOTIC
-                normName.contains("kisir") || normName.contains("cig kofte") -> MealRole.CARB_BASE
+                normName.contains("kisir") || normName.contains("cig kofte") || normName.contains("mercimek kofte") -> MealRole.CARB_BASE
                 else -> MealRole.VEG_SALAD_SIDE
             }
         }
@@ -251,7 +301,10 @@ class FoodCulinaryClassifier @Inject constructor() {
             return when {
                 containsAnyToken(normName, EGG_MAIN_TOKENS) -> MealRole.MAIN_PROTEIN
                 containsAnyToken(normName, OAT_CEREAL_TOKENS) -> MealRole.CARB_BASE
-                containsAnyToken(normName, OLIVE_FAT_TOKENS) -> MealRole.HEALTHY_FAT_NUT
+                containsAnyToken(normName, SWEET_SPREAD_BREAKFAST_TOKENS) || containsAnyToken(paddedName, HONEY_WORD_TOKENS) ->
+                    MealRole.SNACK_SWEET
+                (normName.contains("kaymak") && !normName.contains("kaymaksiz")) || containsAnyToken(normName, OLIVE_FAT_TOKENS) ->
+                    MealRole.HEALTHY_FAT_NUT
                 else -> MealRole.DAIRY_PROBIOTIC
             }
         }
@@ -286,14 +339,15 @@ class FoodCulinaryClassifier @Inject constructor() {
     }
 
     private fun detectAllergens(
-        food: FoodItem,
         normName: String,
         normFull: String,
+        paddedFull: String,
         containsFish: Boolean,
     ): Set<AllergenTag> {
         val set = HashSet<AllergenTag>(4)
         val isPlantMilk = containsAnyToken(normName, PLANT_MILK_TOKENS)
-        if (!isPlantMilk && containsAnyToken(normFull, DAIRY_ALLERGEN_TOKENS)) {
+        val dairySearchText = normFull.replace("kaymaksiz", "")
+        if (!isPlantMilk && containsAnyToken(dairySearchText, DAIRY_ALLERGEN_TOKENS)) {
             set.add(AllergenTag.DAIRY)
         }
         val isGlutenFree = normFull.contains("glutensiz")
@@ -306,16 +360,21 @@ class FoodCulinaryClassifier @Inject constructor() {
         if (containsFish) {
             set.add(AllergenTag.FISH_SEAFOOD)
         }
-        if (containsAnyToken(normFull, TREE_NUT_ALLERGEN_TOKENS)) {
-            set.add(AllergenTag.TREE_NUTS)
-        }
-        if (containsAnyToken(normFull, PEANUT_ALLERGEN_TOKENS)) {
+        val isPeanut = containsAnyToken(normFull, PEANUT_ALLERGEN_TOKENS)
+        if (isPeanut) {
             set.add(AllergenTag.PEANUT)
+        }
+        val treeNutSearch = normFull
+            .replace("hindistan cevizi", "")
+            .replace("yer fistikli", "")
+            .replace("yer fistigi", "")
+        if (containsAnyToken(treeNutSearch, TREE_NUT_ALLERGEN_TOKENS)) {
+            set.add(AllergenTag.TREE_NUTS)
         }
         if (containsAnyToken(normFull, SOY_ALLERGEN_TOKENS)) {
             set.add(AllergenTag.SOY)
         }
-        if (containsAnyToken(normFull, SESAME_ALLERGEN_TOKENS)) {
+        if (containsAnyToken(normFull, SESAME_ALLERGEN_TOKENS) || containsAnyToken(paddedFull, SESAME_WORD_TOKENS)) {
             set.add(AllergenTag.SESAME)
         }
         if (containsAnyToken(normFull, LEGUME_ALLERGEN_TOKENS)) {
@@ -328,14 +387,19 @@ class FoodCulinaryClassifier @Inject constructor() {
         food: FoodItem,
         role: MealRole,
         normName: String,
+        paddedName: String,
     ): PortionConstraint {
-        val defaultG = food.defaultUnitGrams.coerceAtLeast(10f)
+        val defaultG = (if (food.defaultUnitGrams.isFinite()) food.defaultUnitGrams else 100f).coerceAtLeast(10f)
         val isCheese = normName.contains("peynir") || normName.contains("kasar") || normName.contains("ezine") || normName.contains("lor")
         val isBread = normName.contains("ekmek") || normName.contains("lavas") || normName.contains("simit")
         val isOat = normName.contains("yulaf") || normName.contains("musli") || normName.contains("granola")
         val isEgg = normName.contains("yumurta") && !normName.contains("menemen")
         val isOlive = normName.contains("zeytin") && !normName.contains("zeytinyagli")
         val isAvocado = normName.contains("avokado")
+        val isSweetSpread = containsAnyToken(normName, SWEET_SPREAD_BREAKFAST_TOKENS) || containsAnyToken(paddedName, HONEY_WORD_TOKENS)
+        val isKaymak = normName.contains("kaymak") && !normName.contains("kaymaksiz")
+        val isPickleOrSpicyMeze = normName.contains("tursu") || normName.contains("acili ezme")
+        val isHumusOrDip = normName.contains("humus") || normName.contains("haydari")
 
         return when {
             isEgg -> PortionConstraint(minGrams = 50f, maxGrams = 200f, typicalGrams = 100f, gramStep = 50f)
@@ -344,6 +408,9 @@ class FoodCulinaryClassifier @Inject constructor() {
             isOat -> PortionConstraint(minGrams = 30f, maxGrams = 100f, typicalGrams = 50f, gramStep = 10f)
             isOlive -> PortionConstraint(minGrams = 15f, maxGrams = 50f, typicalGrams = 25f, gramStep = 5f)
             isAvocado -> PortionConstraint(minGrams = 40f, maxGrams = 150f, typicalGrams = 75f, gramStep = 15f)
+            isSweetSpread || isKaymak -> PortionConstraint(minGrams = 15f, maxGrams = 45f, typicalGrams = 25f, gramStep = 5f)
+            isPickleOrSpicyMeze -> PortionConstraint(minGrams = 30f, maxGrams = 90f, typicalGrams = 50f, gramStep = 10f)
+            isHumusOrDip -> PortionConstraint(minGrams = 45f, maxGrams = 130f, typicalGrams = 75f, gramStep = 15f)
             role == MealRole.MAIN_PROTEIN -> PortionConstraint(
                 minGrams = 80f,
                 maxGrams = 260f,
@@ -418,56 +485,73 @@ class FoodCulinaryClassifier @Inject constructor() {
     private fun computeSignature(foods: List<FoodItem>): Int {
         var h = foods.size
         if (foods.isNotEmpty()) {
-            h = 31 * h + foods.first().id.hashCode()
-            h = 31 * h + foods.last().id.hashCode()
-            h = 31 * h + foods[foods.size / 2].id.hashCode()
+            val first = foods.first()
+            val last = foods.last()
+            val mid = foods[foods.size / 2]
+            h = 31 * h + first.id.hashCode() + first.name.hashCode()
+            h = 31 * h + last.id.hashCode() + last.name.hashCode()
+            h = 31 * h + mid.id.hashCode() + mid.name.hashCode()
         }
         return h
     }
 
     private companion object {
-        val INGREDIENT_ONLY_TOKENS = arrayOf(
-            "aycicek yag", "zeytinyagi", "tereyagi", "margarin", "pane harci", "dokme cay",
-            "bulyon", "nisasta", "kabartma", "maya", "toz seker", "esmer seker", "tuz ",
-            "sirke", "nar eksisi", "ketcap", "mayonez", "hardal", "salca", "un ", "bugday unu",
-            "misir unu", "tam bugday unu", "galeta unu", "kakao tozu", "krema", "baharat",
+        val INGREDIENT_ONLY_SUBSTRING_TOKENS = arrayOf(
+            "aycicek yagi", "aycicekyagi", "zeytinyagi", "tereyagi", "margarin", "pane harci", "dokme cay",
+            "bulyon", "nisasta", "kabartma", "toz seker", "esmer seker",
+            "sirke", "nar eksisi", "ketcap", "mayonez", "hardal", "salca", "bugday unu",
+            "misir unu", "tam bugday unu", "galeta unu", "kakao tozu",
             "karabiber", "kimyon", "kekik", "pul biber", "sumak", "nane kuru", "sogan", "sarimsak",
         )
+        val INGREDIENT_ONLY_WORD_TOKENS = arrayOf(
+            " un ", " tuz ", " maya ", " krema ", " baharat ",
+        )
+        val RAW_LEMON_WORD_TOKENS = arrayOf(" limon ")
+        val ALCOHOL_WORD_TOKENS = arrayOf(" bira ", " sarap ", " raki ", " viski ", " votka ", " cin ")
+        val DRY_OR_EXCLUDED_DRINK_TOKENS = arrayOf(
+            "dokme cay", "poset cay", "granul kahve", "turk kahvesi kuru",
+            "enerji icecegi", "red bull",
+        )
+        val HERB_OR_CHILI_VEG_TOKENS = arrayOf("maydanoz", "dereotu", "nane", "aci biber")
         val RAW_EDIBLE_VEG_TOKENS = arrayOf(
-            "domates", "salatalik", "marul", "roka", "havuc", "maydanoz", "dereotu",
+            "domates", "salatalik", "marul", "roka", "havuc",
             "tere", "turp", "semizotu", "avokado", "yesil biber", "kapya", "carliston", "sivri biber",
             "gobek", "kivircik", "kirmizi lahana",
         )
-        val DRY_DRINK_TOKENS = arrayOf("dokme cay", "poset cay", "granul kahve", "turk kahvesi kuru")
         val DAIRY_ROLE_TOKENS = arrayOf("yogurt", "ayran", "kefir", "cacik", "haydari", "peynir", "kasar", "ezine", "lor", "labne")
         val PROTEIN_DRINK_TOKENS = arrayOf("sut", "ayran", "kefir", "probiyotik", "protein")
         val CARB_SIDE_DISH_TOKENS = arrayOf("pilav", "makarna", "eriste", "kuskus", "patates", "kisir", "bulgur", "sehriye")
         val LIGHT_VEG_DISH_TOKENS = arrayOf("zeytinyagli", "salata", "brokoli", "ispanak", "kabak", "taze fasulye", "bamya", "pirasa", "enginar", "kereviz", "semizotu", "bezelye")
         val EGG_MAIN_TOKENS = arrayOf("yumurta", "omlet", "menemen", "cilbir")
-        val OAT_CEREAL_TOKENS = arrayOf("yulaf", "musli", "granola", "gevrek", "corn flakes")
+        val OAT_CEREAL_TOKENS = arrayOf("yulaf", "musli", "granola", "gevrek", "corn flakes", "cheerios")
         val OLIVE_FAT_TOKENS = arrayOf("zeytin", "avokado", "fistik ezmesi", "badem ezmesi", "tahin")
+        val SWEET_SPREAD_BREAKFAST_TOKENS = arrayOf("recel", "pekmez", "helva", "nutella", "sarelle", "banada", "findik kremasi")
         val PASTRY_MAIN_TOKENS = arrayOf("borek", "gozleme", "lahmacun", "pide", "pizza", "tost", "sandvic")
         val NUT_SEED_TOKENS = arrayOf("badem", "ceviz", "findik", "fistik", "kaju", "cekirdek", "chia", "keten", "kabak cekirdegi", "ezme")
         val PACKAGED_SNACK_TOKENS = arrayOf("biskuvi", "cips", "gofret", "bar", "cikolata", "kraker")
-        val PROCESSED_MEAT_TOKENS = arrayOf("salam", "sosis", "sucuk", "nugget", "jambon")
+        val FAST_FOOD_TOKENS = arrayOf("hamburger", "cheeseburger", "pizza", "hot dog", "nugget", "patates kizartma", "sandvic")
+        val PROCESSED_MEAT_TOKENS = arrayOf("salam", "sosis", "sucuk", "nugget", "jambon", "pepperoni")
 
-        val FISH_TOKENS = arrayOf("balik", "ton ", "ton,", "somon", "levrek", "cipura", "hamsi", "palamut", "sardalya", "uskumru", "karides", "kalamar", "midye", "alabalik", "istavrit", "mezgit", "lufer", "dardanel")
+        val FISH_TOKENS = arrayOf("balik", "somon", "levrek", "cipura", "hamsi", "palamut", "sardalya", "uskumru", "karides", "kalamar", "midye", "alabalik", "istavrit", "mezgit", "lufer", "dardanel")
+        val FISH_WORD_TOKENS = arrayOf(" ton ")
         val POULTRY_TOKENS = arrayOf("tavuk", "pilic", "hindi", "banvit", "keskinoglu")
-        val RED_MEAT_TOKENS = arrayOf(
-            "dana", "kuzu", "sigir", "kofte", "kebap", "adana", "urfa", "doner", "kavurma",
-            "pastirma", "sucuk", "salam", "sosis", "etli", "et sote", "kiymali", "kiyma",
-            "karniyarik", "hunkar", "alinazik", "iskembe", "kelle", "paca", "manti",
-            "hamburger", "lahmacun", "antrikot", "bonfile", "biftek", "pirzola", "tas kebabi",
-            "dugun corbasi", "icli kofte", "beyti", "iskender", "tantuni",
+        val EXPLICIT_RED_MEAT_TOKENS = arrayOf(
+            "dana", "kuzu", "sigir", "pastirma", "sucuk", "salam", "sosis", "jambon", "pepperoni",
+            "etli", "et sote", "kiymali", "kiyma", "kavurma", "antrikot", "bonfile", "biftek", "pirzola",
+            "iskembe", "kelle", "paca", "iskender", "tas kebabi", "adana", "urfa", "beyti",
+            "karniyarik", "hunkar", "alinazik", "manti", "lahmacun", "dugun corbasi", "icli kofte",
         )
+        val GENERIC_MEAT_DISH_TOKENS = arrayOf("kofte", "kebap", "doner", "hamburger", "tantuni")
         val PLANT_PROTEIN_TOKENS = arrayOf("bitkisel", "vegan", "soya", "tofu", "etsiz", "sebzeli")
-        val HONEY_TOKENS = arrayOf("bal ", "cicek bali", "cam bali", "suzme bal")
+        val HONEY_WORD_TOKENS = arrayOf(" bal ", " bali ", " balli ")
+        val HONEY_SUBSTRING_TOKENS = arrayOf("cicek bali", "cam bali", "suzme bal", "karakovan")
         val PLANT_MILK_TOKENS = arrayOf("badem sutu", "yulaf sutu", "soya sutu", "hindistan cevizi sutu", "bitkisel sut")
         val DAIRY_ALLERGEN_TOKENS = arrayOf(
             "sut", "yogurt", "peynir", "ayran", "kefir", "kasar", "lor", "ezine", "labne",
             "krema", "tereyag", "cacik", "haydari", "kaymak", "sutlac", "muhallebi", "kazandibi",
             "dondurma", "whey", "tulum", "hellim", "cheddar", "mozzarella", "yayla corbasi",
             "kremali", "manti", "alinazik", "hunkar", "iskender", "milk", "probiyotik",
+            "kunefe", "puding", "danette", "cornetto", "magnum", "algida", "kinder", "nutella", "sarelle", "banada",
         )
         val GLUTEN_ALLERGEN_TOKENS = arrayOf(
             "ekmek", "bugday", "bulgur", "makarna", "borek", "simit", "pogaca", "gozleme",
@@ -475,13 +559,18 @@ class FoodCulinaryClassifier @Inject constructor() {
             "biskuvi", "kraker", "kek", "pasta", "baklava", "kuskus", "sehriye", "eriste",
             "tarhana", "galeta", "lavas", "yufka", "arpa", "cavdar", "irmik", "gevrek",
             "musli", "granola", "gofret", "kurabiye", "waffle", "krep", "pankek", "ezogelin",
-            "nugget", "icli kofte", "kisir", "cig kofte", "unlu", "kepekli",
+            "nugget", "icli kofte", "kisir", "cig kofte", "mercimek kofte", "unlu", "kepekli",
+            "kunefe", "kadayif", "sekerpare", "lokma", "cornetto", "un helva", "un corba", "un kurabiye",
         )
         val EGG_ALLERGEN_TOKENS = arrayOf("yumurta", "omlet", "menemen", "cilbir", "mayonez", "krep", "pankek", "waffle", "kek", "manti")
-        val TREE_NUT_ALLERGEN_TOKENS = arrayOf("badem", "ceviz", "findik", "antep fistigi", "sam fistigi", "kaju", "kuruyemis", "asorti", "pikan", "fistikli")
-        val PEANUT_ALLERGEN_TOKENS = arrayOf("yer fistigi", "fistik ezmesi")
+        val TREE_NUT_ALLERGEN_TOKENS = arrayOf(
+            "badem", "ceviz", "findik", "antep fistigi", "sam fistigi", "kaju", "kuruyemis",
+            "asorti", "pikan", "fistikli", "kestane", "nutella", "sarelle", "banada", "kinder",
+        )
+        val PEANUT_ALLERGEN_TOKENS = arrayOf("yer fistik", "fistik ezme")
         val SOY_ALLERGEN_TOKENS = arrayOf("soya", "tofu", "edamame")
-        val SESAME_ALLERGEN_TOKENS = arrayOf("susam", "tahin", "helva", "humus", "simit")
+        val SESAME_ALLERGEN_TOKENS = arrayOf("susam", "tahin", "humus", "simit", "kurek helva", "yaz helva")
+        val SESAME_WORD_TOKENS = arrayOf(" susam ")
         val LEGUME_ALLERGEN_TOKENS = arrayOf("mercimek", "fasulye", "nohut", "barbunya", "bezelye", "bakla", "borulce", "humus", "falafel", "ezogelin", "soya")
     }
 }

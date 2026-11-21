@@ -86,15 +86,14 @@ import kotlin.math.roundToInt
  */
 @Composable
 fun DashboardIntelligenceCard(
-    uiState: IntelligenceUiState,
+    cardState: DashboardIntelligenceCardState,
     onOpenStudio: () -> Unit,
     onOpenBalancer: () -> Unit,
     onQuickLogTopRecommendation: (MealRecommendation) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val colors = NutraTheme.colors
-    val report = uiState.report ?: return
-    val topRec = report.recommendations.firstOrNull()
+    val topRec = cardState.topRecommendation
 
     NutraCard(
         modifier = modifier.fillMaxWidth(),
@@ -122,7 +121,7 @@ fun DashboardIntelligenceCard(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = "${report.mealType.title} · ~${NutraFormatters.formatInt(report.budget.targetCalories)} kcal · ${NutraFormatters.formatInt(report.budget.targetProteinGrams.roundToInt())} g protein",
+                    text = "${cardState.mealType.title} · ~${NutraFormatters.formatInt(cardState.targetCalories)} kcal · ${NutraFormatters.formatInt(cardState.targetProteinGrams.roundToInt())} g protein",
                     style = NutraTheme.typography.caption,
                     color = colors.textSecondary,
                     maxLines = 1,
@@ -130,7 +129,7 @@ fun DashboardIntelligenceCard(
                 )
             }
             NutraBadge(
-                text = report.eatingProfile.maturity.title,
+                text = cardState.maturity.title,
                 color = colors.textSecondary,
                 container = colors.surfaceMuted,
             )
@@ -182,7 +181,7 @@ fun DashboardIntelligenceCard(
             }
         } else {
             Text(
-                text = report.coldStartNote ?: report.budget.budgetSummaryText,
+                text = cardState.fallbackNote,
                 style = NutraTheme.typography.bodySmall,
                 color = colors.textSecondary,
             )
@@ -226,7 +225,7 @@ fun DashboardIntelligenceCard(
 fun NutraIntelligenceScreen(
     viewModel: IntelligenceViewModel,
     onNavigateBack: () -> Unit,
-    onLoggedMeal: (String) -> Unit = {},
+    onLoggedMeal: (MealType, String) -> Unit = { _, _ -> },
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val colors = NutraTheme.colors
@@ -363,7 +362,7 @@ fun NutraIntelligenceScreen(
 private fun RecommendationsTabContent(
     state: IntelligenceUiState,
     viewModel: IntelligenceViewModel,
-    onLoggedMeal: (String) -> Unit,
+    onLoggedMeal: (MealType, String) -> Unit,
 ) {
     val colors = NutraTheme.colors
     val report = state.report
@@ -491,17 +490,14 @@ private fun RecommendationsTabContent(
                 )
             }
         } else {
-            items(report.recommendations, key = { it.id }) { rawRec ->
-                val effective = remember(rawRec, state.portionOverrides[rawRec.id]) {
-                    viewModel.resolveEffectiveRecommendation(rawRec)
-                }
+            items(report.recommendations, key = { it.id }) { effective ->
                 RecommendationDetailCard(
                     recommendation = effective,
-                    hasManualEdits = !state.portionOverrides[rawRec.id].isNullOrEmpty(),
+                    hasManualEdits = !state.portionOverrides[effective.id].isNullOrEmpty(),
                     onAdjustPortion = { portion, delta ->
-                        viewModel.adjustRecommendationItemGrams(rawRec.id, portion, delta)
+                        viewModel.adjustRecommendationItemGrams(effective.id, portion, delta)
                     },
-                    onResetPortions = { viewModel.resetRecommendationPortions(rawRec.id) },
+                    onResetPortions = { viewModel.resetRecommendationPortions(effective.id) },
                     onCustomizeInBalancer = { viewModel.loadRecommendationIntoBalancer(effective) },
                     onDislikeFood = viewModel::dislikeFood,
                     onAcceptAndLog = {
@@ -825,7 +821,7 @@ private fun RecommendedPortionRow(
 private fun PortionBalancerTabContent(
     state: IntelligenceUiState,
     viewModel: IntelligenceViewModel,
-    onLoggedMeal: (String) -> Unit,
+    onLoggedMeal: (MealType, String) -> Unit,
 ) {
     val colors = NutraTheme.colors
     val report = state.report

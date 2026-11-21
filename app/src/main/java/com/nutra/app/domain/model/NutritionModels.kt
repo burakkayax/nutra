@@ -184,20 +184,29 @@ data class FoodItem(
             }
         }
 
-    fun caloriesForGrams(grams: Float): Int =
-        ((caloriesPer100g * grams) / 100f).roundToInt().coerceAtLeast(0)
+    fun caloriesForGrams(grams: Float): Int {
+        val safeGrams = if (grams.isFinite() && grams > 0f) grams else 0f
+        val safePer100 = caloriesPer100g.coerceAtLeast(0)
+        return ((safePer100.toDouble() * safeGrams.toDouble()) / 100.0).roundToInt().coerceAtLeast(0)
+    }
 
-    fun proteinForGrams(grams: Float): Float =
-        ((proteinPer100g * grams) / 100f * 10f).roundToInt() / 10f
+    fun proteinForGrams(grams: Float): Float = scaleMacroForGrams(proteinPer100g, grams)
 
-    fun carbsForGrams(grams: Float): Float =
-        ((carbsPer100g * grams) / 100f * 10f).roundToInt() / 10f
+    fun carbsForGrams(grams: Float): Float = scaleMacroForGrams(carbsPer100g, grams)
 
-    fun fatForGrams(grams: Float): Float =
-        ((fatPer100g * grams) / 100f * 10f).roundToInt() / 10f
+    fun fatForGrams(grams: Float): Float = scaleMacroForGrams(fatPer100g, grams)
 
-    fun scaledNutrient(per100: Float?, amount: Float): Float? =
-        per100?.let { ((it * amount) / 100f * 10f).roundToInt() / 10f }
+    fun scaledNutrient(per100: Float?, amount: Float): Float? {
+        if (per100 == null || !per100.isFinite()) return null
+        return scaleMacroForGrams(per100, amount)
+    }
+
+    private fun scaleMacroForGrams(per100: Float, grams: Float): Float {
+        if (!per100.isFinite() || !grams.isFinite() || per100 <= 0f || grams <= 0f) return 0f
+        val scaled = (per100.toDouble() * grams.toDouble()) / 100.0
+        if (!scaled.isFinite() || scaled <= 0.0) return 0f
+        return ((scaled * 10.0).roundToInt() / 10f).coerceAtLeast(0f)
+    }
 }
 
 @Immutable
@@ -221,10 +230,11 @@ data class MealLogItem(
     @Transient
     val formattedQuantity: String = run {
         val unitSuffix = ServingUnitLabels.normalizedBaseUnit(baseUnit)
+        val safeGrams = if (totalGrams.isFinite() && totalGrams > 0f) totalGrams.roundToInt() else 0
         if (ServingUnitLabels.isRawUnitLabel(unitLabel)) {
-            "${totalGrams.roundToInt()} $unitSuffix"
+            "$safeGrams $unitSuffix"
         } else {
-            "${NutraFormatters.formatMultiplier(multiplier)}x $unitLabel (${totalGrams.roundToInt()} $unitSuffix)"
+            "${NutraFormatters.formatMultiplier(multiplier)}x $unitLabel ($safeGrams $unitSuffix)"
         }
     }
 }
@@ -481,11 +491,17 @@ data class AiAnalyzedFoodItem(
     val confidence: Float = 0.92f,
     val included: Boolean = true,
 ) {
-    val effectiveGrams: Float get() = baseGrams * multiplier
-    val effectiveCalories: Int get() = (baseCalories * multiplier).roundToInt()
-    val effectiveProtein: Float get() = ((baseProtein * multiplier) * 10f).roundToInt() / 10f
-    val effectiveCarbs: Float get() = ((baseCarbs * multiplier) * 10f).roundToInt() / 10f
-    val effectiveFat: Float get() = ((baseFat * multiplier) * 10f).roundToInt() / 10f
+    private val safeMultiplier: Float get() = if (multiplier.isFinite() && multiplier > 0f) multiplier else 1f
+    val effectiveGrams: Float get() = if (baseGrams.isFinite() && baseGrams > 0f) baseGrams * safeMultiplier else 0f
+    val effectiveCalories: Int get() = (baseCalories.coerceAtLeast(0).toDouble() * safeMultiplier).roundToInt().coerceAtLeast(0)
+    val effectiveProtein: Float get() = scaleBaseMacro(baseProtein, safeMultiplier)
+    val effectiveCarbs: Float get() = scaleBaseMacro(baseCarbs, safeMultiplier)
+    val effectiveFat: Float get() = scaleBaseMacro(baseFat, safeMultiplier)
+
+    private fun scaleBaseMacro(base: Float, mult: Float): Float {
+        if (!base.isFinite() || base <= 0f) return 0f
+        return ((base.toDouble() * mult * 10.0).roundToInt() / 10f).coerceAtLeast(0f)
+    }
 }
 
 @Immutable

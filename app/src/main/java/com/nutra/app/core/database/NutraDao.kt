@@ -196,8 +196,14 @@ interface NutraDao {
     @Query("SELECT COUNT(*) FROM goal_history")
     suspend fun countGoalHistory(): Int
 
+    @Query("SELECT * FROM goal_history WHERE effectiveDateIso = :effectiveDateIso ORDER BY timestampMillis DESC, id DESC LIMIT 1")
+    suspend fun findLatestGoalHistoryForDate(effectiveDateIso: String): GoalHistoryEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertGoalHistory(entry: GoalHistoryEntity): Long
+
+    @Update
+    suspend fun updateGoalHistory(entry: GoalHistoryEntity)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertGoalHistoryEntries(entries: List<GoalHistoryEntity>)

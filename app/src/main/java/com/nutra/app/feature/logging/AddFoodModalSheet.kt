@@ -642,8 +642,8 @@ private fun CatalogFoodResultsList(
     onQuickAddFood: (FoodItem) -> Unit,
     onToggleFavorite: (FoodItem) -> Unit,
     onLogSmartCombo: (SmartComboSuggestion) -> Unit,
-    onOpenIntelligenceForMeal: ((MealType) -> Unit)? = null,
     modifier: Modifier = Modifier,
+    onOpenIntelligenceForMeal: ((MealType) -> Unit)? = null,
 ) {
     LazyColumn(
         state = listState,

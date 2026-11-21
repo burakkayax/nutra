@@ -42,6 +42,7 @@ import com.nutra.app.core.designsystem.NutraSectionHeader
 import com.nutra.app.core.designsystem.NutraStackedRatioBar
 import com.nutra.app.core.designsystem.NutraTheme
 import com.nutra.app.domain.metabolism.MetabolismAnalysisResult
+import com.nutra.app.domain.model.GoalChangeSource
 import com.nutra.app.domain.model.MacroGoals
 import com.nutra.app.domain.model.UserProfile
 import com.nutra.app.domain.usecase.MacroGoalBounds
@@ -66,7 +67,7 @@ private enum class DailyGoalField(
 fun DailyGoalsScreen(
     profile: UserProfile,
     onNavigateBack: () -> Unit,
-    onGoalsChange: (MacroGoals) -> Unit,
+    onGoalsChange: (MacroGoals, GoalChangeSource) -> Unit,
     metabolismAnalysis: MetabolismAnalysisResult? = null,
 ) {
     val colors = NutraTheme.colors
@@ -92,14 +93,17 @@ fun DailyGoalsScreen(
         waterMl = waterMl,
     )
 
-    fun applyGoals(updated: MacroGoals) {
+    fun applyGoals(
+        updated: MacroGoals,
+        source: GoalChangeSource = GoalChangeSource.MANUAL,
+    ) {
         if (updated == draftGoals) return
         calories = updated.calories
         proteinGrams = updated.proteinGrams
         carbsGrams = updated.carbsGrams
         fatGrams = updated.fatGrams
         waterMl = updated.waterMl
-        onGoalsChange(updated)
+        onGoalsChange(updated, source)
     }
 
     fun applyCalorieTarget(targetCalories: Int) {
@@ -114,7 +118,7 @@ fun DailyGoalsScreen(
             bounds = bounds,
         ).copy(waterMl = current.waterMl)
         lastCalorieScaledGoals = scaled
-        applyGoals(scaled)
+        applyGoals(scaled, GoalChangeSource.MANUAL)
     }
 
     fun updateMacro(transform: (MacroGoals) -> MacroGoals) {
@@ -124,7 +128,7 @@ fun DailyGoalsScreen(
             goals = transform(draftGoals),
             bounds = bounds,
         )
-        applyGoals(recalculated)
+        applyGoals(recalculated, GoalChangeSource.MANUAL)
     }
 
     fun updateWater(nextWaterMl: Int) {
@@ -133,7 +137,7 @@ fun DailyGoalsScreen(
         waterMl = clamped
         calorieScalingBaseline = calorieScalingBaseline?.copy(waterMl = clamped)
         lastCalorieScaledGoals = lastCalorieScaledGoals?.copy(waterMl = clamped)
-        onGoalsChange(draftGoals.copy(waterMl = clamped))
+        onGoalsChange(draftGoals.copy(waterMl = clamped), GoalChangeSource.MANUAL)
     }
 
     fun recalculateFromProfile() {
@@ -147,7 +151,7 @@ fun DailyGoalsScreen(
             activityLevel = profile.activityLevel,
             goalType = profile.goalType,
         )
-        applyGoals(calculated)
+        applyGoals(calculated, GoalChangeSource.FORMULA)
     }
 
     BackHandler(onBack = onNavigateBack)

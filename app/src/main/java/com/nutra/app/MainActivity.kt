@@ -120,6 +120,7 @@ import com.nutra.app.feature.dashboard.DashboardScreen
 import com.nutra.app.feature.dashboard.DashboardViewModel
 import com.nutra.app.feature.intelligence.IntelligenceViewModel
 import com.nutra.app.feature.intelligence.NutraIntelligenceScreen
+import com.nutra.app.feature.metabolism.MetabolismDetailLoadingScreen
 import com.nutra.app.feature.metabolism.MetabolismDetailScreen
 import com.nutra.app.feature.onboarding.OnboardingScreen
 import com.nutra.app.feature.onboarding.OnboardingViewModel
@@ -379,13 +380,15 @@ fun NutraAppRoot(
             var profileScrollTopTick by remember { mutableIntStateOf(0) }
 
             val intelligenceViewModel: IntelligenceViewModel = viewModel()
-            val intelligenceState by intelligenceViewModel.uiState.collectAsStateWithLifecycle()
-            val dashboardSelectedDate by remember(dashboardViewModel) {
-                dashboardViewModel.uiState.map { it.selectedDate }.distinctUntilChanged()
-            }.collectAsStateWithLifecycle(initialValue = java.time.LocalDate.now())
 
-            LaunchedEffect(dashboardSelectedDate) {
-                intelligenceViewModel.syncDate(dashboardSelectedDate)
+            // Side-effect-only date sync so NutraAppRoot never recomposes on Dashboard date changes.
+            LaunchedEffect(dashboardViewModel, intelligenceViewModel) {
+                dashboardViewModel.uiState
+                    .map { it.selectedDate }
+                    .distinctUntilChanged()
+                    .collect { selectedDate ->
+                        intelligenceViewModel.syncDate(selectedDate)
+                    }
             }
 
             BackHandler(enabled = showIntelligenceStudio) {
@@ -432,14 +435,14 @@ fun NutraAppRoot(
                                 viewModel = dashboardViewModel,
                                 contentPadding = contentPadding,
                                 scrollToTopTrigger = dashboardScrollTopTick,
-                                intelligenceUiState = intelligenceState,
+                                intelligenceCardStateFlow = intelligenceViewModel.dashboardCardState,
                                 onOpenIntelligenceStudio = { mealType, tab ->
                                     intelligenceViewModel.openForMeal(mealType, tab)
                                     showIntelligenceStudio = true
                                 },
                                 onQuickLogIntelligenceRecommendation = { rec ->
-                                    intelligenceViewModel.logRecommendation(rec) { msg ->
-                                        dashboardViewModel.showIntelligenceBanner(msg)
+                                    intelligenceViewModel.logRecommendation(rec) { mealType, msg ->
+                                        dashboardViewModel.onIntelligenceMealLogged(mealType, msg)
                                     }
                                 },
                             )
@@ -567,8 +570,8 @@ fun NutraAppRoot(
                         DailyGoalsScreen(
                             profile = profileState.profile,
                             onNavigateBack = { profileSubScreen = ProfileSubScreen.NONE },
-                            onGoalsChange = { updatedGoals ->
-                                profileViewModel.updateDailyGoals(updatedGoals)
+                            onGoalsChange = { updatedGoals, source ->
+                                profileViewModel.updateDailyGoals(updatedGoals, source)
                             },
                             metabolismAnalysis = metabolismAnalysis,
                         )
@@ -618,8 +621,8 @@ fun NutraAppRoot(
                     NutraIntelligenceScreen(
                         viewModel = intelligenceViewModel,
                         onNavigateBack = { showIntelligenceStudio = false },
-                        onLoggedMeal = { msg ->
-                            dashboardViewModel.showIntelligenceBanner(msg)
+                        onLoggedMeal = { mealType, msg ->
+                            dashboardViewModel.onIntelligenceMealLogged(mealType, msg)
                         },
                     )
                 }
@@ -636,18 +639,21 @@ fun NutraAppRoot(
                 ) {
                     val analyticsViewModel: AnalyticsViewModel = viewModel()
                     val analysis by analyticsViewModel.metabolismAnalysis.collectAsStateWithLifecycle()
-                    if (analysis != null) {
+                    val metabolismFeedback by analyticsViewModel.metabolismFeedback.collectAsStateWithLifecycle()
+                    val currentAnalysis = analysis
+                    if (currentAnalysis != null) {
                         MetabolismDetailScreen(
-                            analysis = analysis!!,
+                            analysis = currentAnalysis,
                             onNavigateBack = { showMetabolismDetail = false },
                             onApproveProposal = analyticsViewModel::approveCalorieProposal,
                             onDismissProposal = analyticsViewModel::dismissCalorieProposal,
+                            feedbackMessage = metabolismFeedback.first,
+                            feedbackEventId = metabolismFeedback.second,
+                            onClearFeedback = analyticsViewModel::clearFeedback,
                         )
                     } else {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(NutraTheme.colors.background),
+                        MetabolismDetailLoadingScreen(
+                            onNavigateBack = { showMetabolismDetail = false },
                         )
                     }
                 }

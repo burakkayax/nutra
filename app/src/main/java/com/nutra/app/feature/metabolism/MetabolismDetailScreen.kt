@@ -24,6 +24,7 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -57,6 +58,8 @@ import com.nutra.app.core.designsystem.NutraIconBadge
 import com.nutra.app.core.designsystem.NutraIconButton
 import com.nutra.app.core.designsystem.NutraIcons
 import com.nutra.app.core.designsystem.NutraLinearProgress
+import com.nutra.app.core.designsystem.NutraSnackbarHost
+import com.nutra.app.core.designsystem.NutraSnackbarTone
 import com.nutra.app.core.designsystem.NutraTheme
 import com.nutra.app.domain.metabolism.CalorieTargetProposal
 import com.nutra.app.domain.metabolism.DataQualityLevel
@@ -64,11 +67,24 @@ import com.nutra.app.domain.metabolism.MetabolismAnalysisResult
 import com.nutra.app.domain.metabolism.MetabolismGuardrailState
 import com.nutra.app.domain.metabolism.TdeeHistoryPoint
 import com.nutra.app.domain.metabolism.WeightProjectionPoint
+import kotlinx.coroutines.delay
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private val DashedLineEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f))
 private val CursorDashEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f))
+
+internal fun metabolismChartIndexForX(
+    x: Float,
+    widthPx: Int,
+    padXPx: Float,
+    pointCount: Int,
+): Int {
+    if (pointCount <= 1) return 0
+    val usableWidth = (widthPx.toFloat() - padXPx * 2f).coerceAtLeast(1f)
+    val fraction = ((x - padXPx) / usableWidth).coerceIn(0f, 1f)
+    return (fraction * (pointCount - 1)).roundToInt().coerceIn(0, pointCount - 1)
+}
 
 /**
  * Calm-neutral summary card embedded inside AnalyticsScreen linking to [MetabolismDetailScreen].
@@ -262,9 +278,19 @@ fun MetabolismDetailScreen(
     onNavigateBack: () -> Unit,
     onApproveProposal: (CalorieTargetProposal) -> Unit,
     onDismissProposal: () -> Unit,
+    feedbackMessage: String? = null,
+    feedbackEventId: Long = 0L,
+    onClearFeedback: () -> Unit = {},
 ) {
     val colors = NutraTheme.colors
     BackHandler(onBack = onNavigateBack)
+
+    LaunchedEffect(feedbackEventId, feedbackMessage) {
+        if (feedbackMessage != null) {
+            delay(2800L)
+            onClearFeedback()
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -623,6 +649,72 @@ fun MetabolismDetailScreen(
                 }
             }
         }
+
+        NutraSnackbarHost(
+            visible = feedbackMessage != null,
+            message = feedbackMessage.orEmpty(),
+            tone = NutraSnackbarTone.Success,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(horizontal = NutraTheme.spacing.screen, vertical = 14.dp),
+        )
+    }
+}
+
+@Composable
+fun MetabolismDetailLoadingScreen(
+    onNavigateBack: () -> Unit,
+) {
+    val colors = NutraTheme.colors
+    BackHandler(onBack = onNavigateBack)
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(colors.background),
+    ) {
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .widthIn(max = NutraContentMaxWidth)
+                .fillMaxSize(),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = NutraTheme.spacing.screen)
+                    .padding(top = NutraTheme.spacing.section, bottom = NutraTheme.spacing.md),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(NutraTheme.spacing.md),
+            ) {
+                NutraIconButton(
+                    icon = Icons.AutoMirrored.Rounded.ArrowBack,
+                    contentDescription = "Geri",
+                    onClick = onNavigateBack,
+                    size = 44.dp,
+                    iconSize = 20.dp,
+                )
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Text(
+                        text = "Adaptif Metabolizma",
+                        style = NutraTheme.typography.titleMedium,
+                        color = colors.textPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = "Metabolizma verileri hazırlanıyor...",
+                        style = NutraTheme.typography.caption,
+                        color = colors.textSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -708,30 +800,26 @@ private fun TdeeHistoryChartCard(
                 .fillMaxWidth()
                 .height(168.dp)
                 .pointerInput(history.size) {
+                    val padX = 10.dp.toPx()
                     detectTapGestures { offset ->
-                        val idx = ((offset.x / size.width.coerceAtLeast(1)) * (history.size - 1))
-                            .roundToInt()
-                            .coerceIn(0, history.lastIndex)
+                        val idx = metabolismChartIndexForX(offset.x, size.width, padX, history.size)
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         scrubbedIndex = if (scrubbedIndex == idx) null else idx
                     }
                 }
                 .pointerInput(history.size) {
+                    val padX = 10.dp.toPx()
                     var lastIdx = -1
                     detectHorizontalDragGestures(
                         onDragStart = { offset ->
-                            val idx = ((offset.x / size.width.coerceAtLeast(1)) * (history.size - 1))
-                                .roundToInt()
-                                .coerceIn(0, history.lastIndex)
+                            val idx = metabolismChartIndexForX(offset.x, size.width, padX, history.size)
                             lastIdx = idx
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             scrubbedIndex = idx
                         },
                         onHorizontalDrag = { change, _ ->
                             change.consume()
-                            val idx = ((change.position.x / size.width.coerceAtLeast(1)) * (history.size - 1))
-                                .roundToInt()
-                                .coerceIn(0, history.lastIndex)
+                            val idx = metabolismChartIndexForX(change.position.x, size.width, padX, history.size)
                             if (idx != lastIdx) {
                                 lastIdx = idx
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -914,30 +1002,26 @@ private fun DynamicWeightProjectionCard(
                     .fillMaxWidth()
                     .height(168.dp)
                     .pointerInput(curve.size) {
+                        val padX = 10.dp.toPx()
                         detectTapGestures { offset ->
-                            val idx = ((offset.x / size.width.coerceAtLeast(1)) * (curve.size - 1))
-                                .roundToInt()
-                                .coerceIn(0, curve.lastIndex)
+                            val idx = metabolismChartIndexForX(offset.x, size.width, padX, curve.size)
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             scrubbedIndex = if (scrubbedIndex == idx) null else idx
                         }
                     }
                     .pointerInput(curve.size) {
+                        val padX = 10.dp.toPx()
                         var lastIdx = -1
                         detectHorizontalDragGestures(
                             onDragStart = { offset ->
-                                val idx = ((offset.x / size.width.coerceAtLeast(1)) * (curve.size - 1))
-                                    .roundToInt()
-                                    .coerceIn(0, curve.lastIndex)
+                                val idx = metabolismChartIndexForX(offset.x, size.width, padX, curve.size)
                                 lastIdx = idx
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 scrubbedIndex = idx
                             },
                             onHorizontalDrag = { change, _ ->
                                 change.consume()
-                                val idx = ((change.position.x / size.width.coerceAtLeast(1)) * (curve.size - 1))
-                                    .roundToInt()
-                                    .coerceIn(0, curve.lastIndex)
+                                val idx = metabolismChartIndexForX(change.position.x, size.width, padX, curve.size)
                                 if (idx != lastIdx) {
                                     lastIdx = idx
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)

@@ -704,6 +704,11 @@ class DashboardViewModel @Inject constructor(
         showStatusBanner(message)
     }
 
+    fun onIntelligenceMealLogged(mealType: MealType, message: String) {
+        updateExpandedMeals { it + mealType }
+        showStatusBanner(message)
+    }
+
     fun undoDeleteLoggedItem() {
         val deleted = bannerStateFlow.getAndUpdate { it.copy(lastDeletedItem = null) }.lastDeletedItem ?: return
         viewModelScope.launch {

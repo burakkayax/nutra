@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Base64
 import androidx.core.graphics.scale
+import com.nutra.app.core.designsystem.NutraFormatters
 import com.nutra.app.domain.model.AiAnalyzedFoodItem
 import com.nutra.app.domain.model.AppResult
 import com.nutra.app.domain.model.FoodItem
@@ -443,12 +444,12 @@ class GeminiAiService @Inject constructor(
                 )
             } else {
                 // Intelligent estimation for custom/unlisted dish
-                val estGrams = explicitGrams ?: (150f * quantity)
+                val estGrams = (explicitGrams ?: (150f * quantity)).coerceIn(1f, 5000f)
                 val estCal = (estGrams * 1.45f).roundToInt()
                 results.add(
                     AiAnalyzedFoodItem(
                         id = UUID.randomUUID().toString(),
-                        name = segment.replaceFirstChar { it.uppercaseChar() },
+                        name = NutraFormatters.capitalizeTr(segment),
                         unitLabel = "${estGrams.roundToInt()} g (Tahmini Porsiyon)",
                         baseGrams = estGrams,
                         multiplier = 1f,

@@ -35,6 +35,11 @@ class UserEatingProfileLearner @Inject constructor() {
         )
     }
 
+    private data class ParsedLog(
+        val log: MealLogItem,
+        val date: LocalDate,
+    )
+
     fun learn(
         profile: UserProfile,
         classifiedCatalog: List<ClassifiedFood>,
@@ -48,13 +53,15 @@ class UserEatingProfileLearner @Inject constructor() {
         }
         val feedbackByKey = feedbackRecords.associateBy { it.foodKey }
 
-        val validLogs = historicalLogs.filter { log ->
-            val d = runCatching { LocalDate.parse(log.dateIso) }.getOrNull()
-            d != null && !d.isAfter(today) && ChronoUnit.DAYS.between(d, today) <= 90L
-        }
-
+        val validLogs = ArrayList<ParsedLog>(historicalLogs.size.coerceAtMost(512))
         val distinctDates = HashSet<String>(64)
-        for (log in validLogs) distinctDates.add(log.dateIso)
+        for (log in historicalLogs) {
+            val d = runCatching { LocalDate.parse(log.dateIso) }.getOrNull() ?: continue
+            if (!d.isAfter(today) && ChronoUnit.DAYS.between(d, today) <= 90L) {
+                validLogs.add(ParsedLog(log, d))
+                distinctDates.add(log.dateIso)
+            }
+        }
         val loggedDaysCount = distinctDates.size
 
         val maturity = when {
@@ -87,13 +94,15 @@ class UserEatingProfileLearner @Inject constructor() {
         val yesterday = today.minusDays(1)
         val twoDaysAgo = today.minusDays(2)
 
-        for (log in validLogs) {
-            val d = LocalDate.parse(log.dateIso)
+        for (parsed in validLogs) {
+            val log = parsed.log
+            val d = parsed.date
             val ageDays = ChronoUnit.DAYS.between(d, today).coerceAtLeast(0L).toDouble()
             val decayWeight = exp(-lambda * ageDays)
 
-            mealCalTotals[log.mealType.ordinal] += log.calories * decayWeight
-            totalTrackedCal += log.calories * decayWeight
+            val safeCal = log.calories.coerceAtLeast(0)
+            mealCalTotals[log.mealType.ordinal] += safeCal * decayWeight
+            totalTrackedCal += safeCal * decayWeight
 
             val fid = log.foodId ?: continue
             foodWeightedCounts[fid] = (foodWeightedCounts[fid] ?: 0.0) + decayWeight
@@ -164,9 +173,9 @@ class UserEatingProfileLearner @Inject constructor() {
         val usualGrams = HashMap<Long, Float>(gramsHistoryByFoodId.size)
         for ((fid, list) in gramsHistoryByFoodId) {
             if (list.isNotEmpty()) {
-                val sorted = list.sorted()
-                val mid = sorted.size / 2
-                usualGrams[fid] = if (sorted.size % 2 == 1) sorted[mid] else (sorted[mid - 1] + sorted[mid]) / 2f
+                list.sort()
+                val mid = list.size / 2
+                usualGrams[fid] = if (list.size % 2 == 1) list[mid] else (list[mid - 1] + list[mid]) / 2f
             }
         }
 
@@ -260,21 +269,30 @@ class UserEatingProfileLearner @Inject constructor() {
     private fun evaluateRecentMicronutrients(
         profile: UserProfile,
         byFoodId: Map<Long, ClassifiedFood>,
-        validLogs: List<MealLogItem>,
+        validLogs: List<ParsedLog>,
         today: LocalDate,
     ): List<MicronutrientSignal> {
         val windowStart = today.minusDays(6)
-        val recentLogs = validLogs.filter {
-            val d = LocalDate.parse(it.dateIso)
-            !d.isBefore(windowStart) && !d.isAfter(today)
+        val recentLogs = ArrayList<MealLogItem>(validLogs.size.coerceAtMost(128))
+        val activeDates = HashSet<String>(8)
+        var totalKcal = 0f
+        for (parsed in validLogs) {
+            if (!parsed.date.isBefore(windowStart) && !parsed.date.isAfter(today)) {
+                recentLogs.add(parsed.log)
+                activeDates.add(parsed.log.dateIso)
+                totalKcal += parsed.log.calories.coerceAtLeast(0)
+            }
         }
-        val activeDates = recentLogs.map { it.dateIso }.distinct()
         val dayCount = activeDates.size
 
         val fiberRef = ((profile.goals.calories / 1000f) * 14f).coerceIn(22f, 38f)
         val sodiumRef = 2300f
         val potassiumRef = if (profile.sex == BiologicalSex.MALE) 3400f else 2600f
-        val calciumRef = 1000f
+        val calciumRef = when {
+            profile.age < 19 -> 1300f
+            profile.age > 70 || (profile.sex == BiologicalSex.FEMALE && profile.age > 50) -> 1200f
+            else -> 1000f
+        }
         val ironRef = if (profile.sex == BiologicalSex.FEMALE && profile.age <= 50) 18f else 8f
         val vitCRef = if (profile.sex == BiologicalSex.MALE) 90f else 75f
 
@@ -287,9 +305,8 @@ class UserEatingProfileLearner @Inject constructor() {
             MicronutrientType.VITAMIN_C to vitCRef,
         )
 
-        val totalKcal = recentLogs.sumOf { it.calories }.toFloat()
-
         return references.map { (type, ref) ->
+            val lowerTitle = NutraFormatters.lowercaseTr(type.title)
             if (dayCount < MIN_MICRONUTRIENT_DAYS || totalKcal < 400f) {
                 return@map MicronutrientSignal(
                     type = type,
@@ -297,7 +314,7 @@ class UserEatingProfileLearner @Inject constructor() {
                     dailyAverageKnown = null,
                     referenceValue = ref,
                     coverageRatio = 0f,
-                    plainNote = "Yeterli kayıt birikmediği için ${type.title.lowercase()} eğilimi hesaplanmadı.",
+                    plainNote = "Yeterli kayıt birikmediği için $lowerTitle eğilimi hesaplanmadı.",
                 )
             }
 
@@ -314,9 +331,9 @@ class UserEatingProfileLearner @Inject constructor() {
                     MicronutrientType.IRON -> cf.food.ironMgPer100g
                     MicronutrientType.VITAMIN_C -> cf.food.vitaminCMgPer100g
                 }
-                if (per100 != null && per100.isFinite()) {
+                if (per100 != null && per100.isFinite() && per100 >= 0f && log.totalGrams.isFinite() && log.totalGrams > 0f) {
                     knownSum += (per100 * log.totalGrams) / 100.0
-                    knownKcal += log.calories
+                    knownKcal += log.calories.coerceAtLeast(0)
                 }
             }
 
@@ -328,7 +345,7 @@ class UserEatingProfileLearner @Inject constructor() {
                     dailyAverageKnown = null,
                     referenceValue = ref,
                     coverageRatio = coverage,
-                    plainNote = "Son kayıtlardaki besinlerin bir kısmında ${type.title.lowercase()} bilgisi eksik olduğu için değerlendirme yapılmadı.",
+                    plainNote = "Son kayıtlardaki besinlerin bir kısmında $lowerTitle bilgisi eksik olduğu için değerlendirme yapılmadı.",
                 )
             }
 
@@ -359,11 +376,11 @@ class UserEatingProfileLearner @Inject constructor() {
             }
             val note = when (status) {
                 NutrientSignalStatus.LOW_RECORDED ->
-                    "Son $dayCount günde kayıtlı ortalama ${type.title.lowercase()} ~$formattedAvg (referans ~$formattedRef); bu besini destekleyen seçenekler öne çıkarılabilir."
+                    "Son $dayCount günde kayıtlı ortalama $lowerTitle ~$formattedAvg (referans ~$formattedRef); bu besini destekleyen seçenekler öne çıkarılabilir."
                 NutrientSignalStatus.ELEVATED_RECORDED ->
-                    "Son $dayCount günde kayıtlı ortalama ${type.title.lowercase()} ~$formattedAvg (üst sınır ~$formattedRef); daha taze ve düşük tuzlu seçenekler dengelenebilir."
+                    "Son $dayCount günde kayıtlı ortalama $lowerTitle ~$formattedAvg (üst sınır ~$formattedRef); daha taze ve düşük tuzlu seçenekler dengelenebilir."
                 NutrientSignalStatus.ADEQUATE ->
-                    "Son $dayCount günde kayıtlı ortalama ${type.title.lowercase()} ~$formattedAvg ile dengeli aralıkta."
+                    "Son $dayCount günde kayıtlı ortalama $lowerTitle ~$formattedAvg ile dengeli aralıkta."
                 NutrientSignalStatus.INSUFFICIENT_DATA ->
                     "Değerlendirme için yeterli veri bulunmuyor."
             }
