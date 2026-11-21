@@ -251,6 +251,94 @@ data class WaterReminderSettings(
     val stopWhenGoalReached: Boolean = true,
 )
 
+enum class DietStyle(
+    val title: String,
+    val subtitle: String,
+) {
+    STANDARD("Standart", "Tüm besin gruplarını dengeli biçimde içerir"),
+    MEDITERRANEAN("Akdeniz & Ev Yemeği", "Zeytinyağlı, sebze, baklagil, balık ve tam tahıl ağırlıklı"),
+    VEGETARIAN("Vejetaryen", "Et, tavuk ve balık içermez; süt ve yumurta içerir"),
+    VEGAN("Vegan", "Yalnızca bitkisel besinlerden oluşur"),
+    PESCATARIAN("Pesketaryen", "Et ve tavuk içermez; balık ve deniz ürünleri içerir"),
+    LOW_CARB("Düşük Karbonhidrat", "Protein ve sağlıklı yağ odaklı, daha düşük karbonhidrat"),
+}
+
+enum class AllergenTag(val title: String) {
+    GLUTEN("Gluten"),
+    DAIRY("Süt ürünleri"),
+    EGG("Yumurta"),
+    TREE_NUTS("Kuruyemiş"),
+    PEANUT("Yer fıstığı"),
+    FISH_SEAFOOD("Balık & Deniz ürünü"),
+    SOY("Soya"),
+    SESAME("Susam & Tahin"),
+    LEGUMES("Baklagiller"),
+}
+
+@Immutable
+@Serializable
+data class DietaryProfile(
+    val dietStyle: DietStyle = DietStyle.STANDARD,
+    val excludedAllergens: Set<AllergenTag> = emptySet(),
+    val excludedKeywords: List<String> = emptyList(),
+    val specialHealthGuardrail: Boolean = false,
+)
+
+enum class GoalChangeSource(val title: String) {
+    ONBOARDING("Başlangıç"),
+    MANUAL("Manuel"),
+    FORMULA("Formül"),
+    ADAPTIVE_APPROVED("Adaptif onaylı"),
+}
+
+@Immutable
+@Serializable
+data class GoalHistoryEntry(
+    val id: Long = 0L,
+    val effectiveDateIso: String,
+    val calories: Int,
+    val proteinGrams: Int,
+    val carbsGrams: Int,
+    val fatGrams: Int,
+    val goalType: GoalType,
+    val targetWeightKg: Float,
+    val source: GoalChangeSource = GoalChangeSource.MANUAL,
+    val timestampMillis: Long = 0L,
+)
+
+enum class FoodFeedbackStatus {
+    NEUTRAL,
+    DISLIKED,
+    PINNED,
+}
+
+@Immutable
+@Serializable
+data class FoodFeedbackRecord(
+    val foodKey: String,
+    val foodId: Long? = null,
+    val foodName: String = "",
+    val status: FoodFeedbackStatus = FoodFeedbackStatus.NEUTRAL,
+    val acceptedCount: Int = 0,
+    val dismissedCount: Int = 0,
+    val lastSuggestedMillis: Long = 0L,
+    val lastAcceptedMillis: Long = 0L,
+    val updatedAtMillis: Long = 0L,
+)
+
+@Immutable
+@Serializable
+data class MetabolismSnapshotRecord(
+    val dateIso: String,
+    val estimatedTdeeKcal: Int,
+    val uncertaintyKcal: Int,
+    val priorTdeeKcal: Int,
+    val trendWeightKg: Float,
+    val confidenceScore: Int,
+    val qualityLevel: String,
+    val updatedAtMillis: Long = 0L,
+)
+
 @Immutable
 @Serializable
 data class UserProfile(
@@ -268,6 +356,9 @@ data class UserProfile(
     val geminiApiKey: String = "",
     val geminiModel: String = "gemini-2.5-flash",
     val waterReminder: WaterReminderSettings = WaterReminderSettings(),
+    val dietaryProfile: DietaryProfile = DietaryProfile(),
+    val adaptiveMetabolismEnabled: Boolean = true,
+    val lastAdaptiveReviewDateIso: String? = null,
 )
 
 @Immutable

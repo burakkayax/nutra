@@ -217,6 +217,12 @@ class OnboardingViewModel @Inject constructor(
                     onboardingCompleted = true,
                 )
                 preferencesDataStore.saveOnboardingProfile(profile)
+                nutritionRepository.recordGoalHistory(
+                    goals = profile.goals,
+                    goalType = profile.goalType,
+                    targetWeightKg = profile.targetWeightKg,
+                    source = com.nutra.app.domain.model.GoalChangeSource.ONBOARDING,
+                )
                 onFinished()
             } finally {
                 _uiState.update { it.copy(isCompleting = false) }

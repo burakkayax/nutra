@@ -98,6 +98,7 @@ fun ProfileScreen(
     onEditBodyProfile: () -> Unit = {},
     onOpenDailyGoals: () -> Unit = {},
     onOpenWaterReminder: () -> Unit = {},
+    onOpenDietaryPreferences: () -> Unit = {},
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val colors = NutraTheme.colors
@@ -282,6 +283,34 @@ fun ProfileScreen(
                                 )
                             },
                             onClick = onOpenWaterReminder,
+                        )
+
+                        NutraDivider(startIndent = 54.dp)
+
+                        val allergenCount = profile.dietaryProfile.excludedAllergens.size
+                        val dietSubtitle = if (allergenCount > 0) {
+                            "${profile.dietaryProfile.dietStyle.title} · $allergenCount alerjen filtresi"
+                        } else {
+                            profile.dietaryProfile.dietStyle.title
+                        }
+                        NutraListRow(
+                            title = "Beslenme tercihleri",
+                            subtitle = dietSubtitle,
+                            leading = {
+                                NutraIconBadge(
+                                    icon = NutraIcons.Restaurant,
+                                    tint = colors.textPrimary,
+                                    container = colors.surfaceMuted,
+                                )
+                            },
+                            trailing = {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                                    contentDescription = null,
+                                    tint = colors.textTertiary,
+                                )
+                            },
+                            onClick = onOpenDietaryPreferences,
                         )
                     }
                 }

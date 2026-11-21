@@ -183,6 +183,7 @@ fun AddFoodModalSheet(
     onLookupBarcode: (String?) -> Unit,
     onCustomFoodDraftChange: (CustomFoodDraft) -> Unit,
     onCreateAndLogCustomFood: (String, String, Float, Int, Float, Float, Float) -> Unit,
+    onOpenIntelligenceForMeal: ((MealType) -> Unit)? = null,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val catalogListState = rememberLazyListState()
@@ -343,6 +344,7 @@ fun AddFoodModalSheet(
                                         onQuickAddFood = onQuickAddFood,
                                         onToggleFavorite = onToggleFavorite,
                                         onLogSmartCombo = onLogSmartCombo,
+                                        onOpenIntelligenceForMeal = onOpenIntelligenceForMeal,
                                     )
                                     LoggingTabMode.AI_ANALYZE -> AiAnalyzeTab(
                                         state = state,
@@ -501,6 +503,7 @@ private fun CatalogAndSmartComboTab(
     onQuickAddFood: (FoodItem) -> Unit,
     onToggleFavorite: (FoodItem) -> Unit,
     onLogSmartCombo: (SmartComboSuggestion) -> Unit,
+    onOpenIntelligenceForMeal: ((MealType) -> Unit)? = null,
 ) {
     val showSmartCombos = state.shouldShowSmartCombos
 
@@ -528,6 +531,7 @@ private fun CatalogAndSmartComboTab(
             onQuickAddFood = onQuickAddFood,
             onToggleFavorite = onToggleFavorite,
             onLogSmartCombo = onLogSmartCombo,
+            onOpenIntelligenceForMeal = onOpenIntelligenceForMeal,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth(),
@@ -638,6 +642,7 @@ private fun CatalogFoodResultsList(
     onQuickAddFood: (FoodItem) -> Unit,
     onToggleFavorite: (FoodItem) -> Unit,
     onLogSmartCombo: (SmartComboSuggestion) -> Unit,
+    onOpenIntelligenceForMeal: ((MealType) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -661,6 +666,11 @@ private fun CatalogFoodResultsList(
                 Column(modifier = Modifier.fillMaxWidth()) {
                     NutraSectionHeader(
                         title = "Sık birlikte",
+                        actionLabel = if (onOpenIntelligenceForMeal != null) "Akıllı öneri" else null,
+                        actionIcon = if (onOpenIntelligenceForMeal != null) NutraIcons.AutoAwesome else null,
+                        actionContainerColor = NutraTheme.colors.accentSoft,
+                        actionContentColor = NutraTheme.colors.onAccentSoft,
+                        onAction = onOpenIntelligenceForMeal?.let { cb -> { cb(activeMeal) } },
                         modifier = Modifier.padding(
                             start = NutraTheme.spacing.screen,
                             end = NutraTheme.spacing.screen,

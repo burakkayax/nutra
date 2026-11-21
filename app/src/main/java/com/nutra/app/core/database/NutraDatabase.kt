@@ -9,8 +9,11 @@ import androidx.room.RoomDatabase
         MealLogEntity::class,
         WaterLogEntity::class,
         WeightLogEntity::class,
+        GoalHistoryEntity::class,
+        FoodFeedbackEntity::class,
+        MetabolismSnapshotEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = false,
 )
 abstract class NutraDatabase : RoomDatabase() {

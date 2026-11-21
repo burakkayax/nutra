@@ -12,6 +12,10 @@ import com.nutra.app.core.notification.WaterReminderScheduler
 import com.nutra.app.domain.model.ActivityLevel
 import com.nutra.app.domain.model.AppResult
 import com.nutra.app.domain.model.BiologicalSex
+import com.nutra.app.domain.model.DietaryProfile
+import com.nutra.app.domain.model.FoodFeedbackRecord
+import com.nutra.app.domain.model.FoodFeedbackStatus
+import com.nutra.app.domain.model.GoalChangeSource
 import com.nutra.app.domain.model.GoalType
 import com.nutra.app.domain.model.MacroGoals
 import com.nutra.app.domain.model.ThemePreference
@@ -26,6 +30,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -82,6 +88,7 @@ data class ProfileFeedback(
 data class ProfileUiState(
     val isLoading: Boolean = true,
     val profile: UserProfile = UserProfile(),
+    val dislikedFoods: List<FoodFeedbackRecord> = emptyList(),
     val isBackupBusy: Boolean = false,
     val feedback: ProfileFeedback? = null,
 )
@@ -148,12 +155,17 @@ class ProfileViewModel @Inject constructor(
         )
     }
 
+    private val dislikedFoodsFlow = nutritionRepository.observeFoodFeedback()
+        .map { list -> list.filter { it.status == FoodFeedbackStatus.DISLIKED }.sortedBy { it.foodName } }
+        .distinctUntilChanged()
+
     val uiState: StateFlow<ProfileUiState> = combine(
         preferencesDataStore.userProfileFlow,
         pendingOverridesFlow,
+        dislikedFoodsFlow,
         isBackupBusyFlow,
         feedbackFlow,
-    ) { profile, overrides, isBackupBusy, feedback ->
+    ) { profile, overrides, dislikedFoods, isBackupBusy, feedback ->
         val resolvedProfile = profile.let { base ->
             val withBody = if (overrides.body != null) {
                 base.copy(
@@ -178,6 +190,7 @@ class ProfileViewModel @Inject constructor(
         ProfileUiState(
             isLoading = false,
             profile = resolvedProfile,
+            dislikedFoods = dislikedFoods,
             isBackupBusy = isBackupBusy,
             feedback = feedback,
         )
@@ -216,6 +229,13 @@ class ProfileViewModel @Inject constructor(
             val target = pendingDailyGoalsTarget.getAndSet(null) ?: return@launchGoalEdit
             latestOptimisticGoals = target
             preferencesDataStore.updateGoals(target)
+            val snapshot = preferencesDataStore.getSnapshot()
+            nutritionRepository.recordGoalHistory(
+                goals = target,
+                goalType = snapshot.goalType,
+                targetWeightKg = snapshot.targetWeightKg,
+                source = GoalChangeSource.MANUAL,
+            )
         }
     }
 
@@ -439,6 +459,30 @@ class ProfileViewModel @Inject constructor(
     fun updateAppearance(themePreference: ThemePreference, useDynamicColor: Boolean) {
         viewModelScope.launch {
             preferencesDataStore.updateAppearance(themePreference, useDynamicColor)
+        }
+    }
+
+    fun updateDietaryProfile(dietaryProfile: DietaryProfile) {
+        viewModelScope.launch {
+            preferencesDataStore.updateDietaryProfile(dietaryProfile)
+        }
+    }
+
+    fun updateAdaptiveMetabolismEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            preferencesDataStore.updateAdaptiveMetabolismEnabled(enabled)
+        }
+    }
+
+    fun restoreDislikedFood(record: FoodFeedbackRecord) {
+        viewModelScope.launch {
+            nutritionRepository.setFoodDisliked(
+                foodKey = record.foodKey,
+                foodId = record.foodId,
+                foodName = record.foodName,
+                disliked = false,
+            )
+            emitFeedback("${record.foodName.ifBlank { "Besin" }} önerilere yeniden açıldı")
         }
     }
 

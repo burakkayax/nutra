@@ -14,6 +14,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.nutra.app.core.notification.WaterReminderScheduleCalculator
 import com.nutra.app.domain.model.ActivityLevel
 import com.nutra.app.domain.model.BiologicalSex
+import com.nutra.app.domain.model.DietaryProfile
 import com.nutra.app.domain.model.GoalType
 import com.nutra.app.domain.model.MacroGoals
 import com.nutra.app.domain.model.ThemePreference
@@ -32,6 +33,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -72,6 +75,10 @@ class UserPreferencesDataStore @Inject constructor(
         val WATER_REMINDER_END_HOUR = intPreferencesKey("water_reminder_end_hour")
         val WATER_REMINDER_END_MINUTE = intPreferencesKey("water_reminder_end_minute")
         val WATER_REMINDER_STOP_ON_GOAL = booleanPreferencesKey("water_reminder_stop_on_goal")
+
+        val DIETARY_PROFILE_JSON = stringPreferencesKey("dietary_profile_json")
+        val ADAPTIVE_METABOLISM_ENABLED = booleanPreferencesKey("adaptive_metabolism_enabled")
+        val LAST_ADAPTIVE_REVIEW_DATE_ISO = stringPreferencesKey("last_adaptive_review_date_iso")
     }
 
     private companion object {
@@ -79,6 +86,7 @@ class UserPreferencesDataStore @Inject constructor(
         val ACTIVITY_BY_NAME: Map<String, ActivityLevel> = ActivityLevel.entries.associateBy { it.name }
         val GOAL_BY_NAME: Map<String, GoalType> = GoalType.entries.associateBy { it.name }
         val THEME_BY_NAME: Map<String, ThemePreference> = ThemePreference.entries.associateBy { it.name }
+        val prefsJson = Json { ignoreUnknownKeys = true; coerceInputValues = true }
     }
 
     private val sharedProfileFlow: SharedFlow<UserProfile> = context.nutraDataStore.data
@@ -127,6 +135,11 @@ class UserPreferencesDataStore @Inject constructor(
             ),
         )
 
+        val dietaryProfile = prefs[Keys.DIETARY_PROFILE_JSON]
+            ?.takeIf { it.isNotBlank() }
+            ?.let { raw -> runCatching { prefsJson.decodeFromString<DietaryProfile>(raw) }.getOrNull() }
+            ?: DietaryProfile()
+
         return UserProfile(
             sex = sex,
             age = prefs[Keys.AGE] ?: 28,
@@ -142,6 +155,9 @@ class UserPreferencesDataStore @Inject constructor(
             geminiApiKey = prefs[Keys.GEMINI_API_KEY] ?: "",
             geminiModel = prefs[Keys.GEMINI_MODEL] ?: "gemini-2.5-flash",
             waterReminder = waterReminder,
+            dietaryProfile = dietaryProfile,
+            adaptiveMetabolismEnabled = prefs[Keys.ADAPTIVE_METABOLISM_ENABLED] ?: true,
+            lastAdaptiveReviewDateIso = prefs[Keys.LAST_ADAPTIVE_REVIEW_DATE_ISO]?.takeIf { it.isNotBlank() },
         )
     }
 
@@ -268,9 +284,44 @@ class UserPreferencesDataStore @Inject constructor(
             prefs[Keys.WATER_REMINDER_END_HOUR] = safeReminder.endHour
             prefs[Keys.WATER_REMINDER_END_MINUTE] = safeReminder.endMinute
             prefs[Keys.WATER_REMINDER_STOP_ON_GOAL] = safeReminder.stopWhenGoalReached
+            prefs[Keys.DIETARY_PROFILE_JSON] = prefsJson.encodeToString(sanitizeDietaryProfile(profile.dietaryProfile))
+            prefs[Keys.ADAPTIVE_METABOLISM_ENABLED] = profile.adaptiveMetabolismEnabled
+            val reviewDate = profile.lastAdaptiveReviewDateIso?.trim().orEmpty()
+            if (reviewDate.isNotEmpty()) {
+                prefs[Keys.LAST_ADAPTIVE_REVIEW_DATE_ISO] = reviewDate
+            } else {
+                prefs.remove(Keys.LAST_ADAPTIVE_REVIEW_DATE_ISO)
+            }
         }
         applySystemNightMode(profile.themePreference)
     }
+
+    suspend fun updateDietaryProfile(dietaryProfile: DietaryProfile) {
+        val sanitized = sanitizeDietaryProfile(dietaryProfile)
+        context.nutraDataStore.edit { prefs ->
+            prefs[Keys.DIETARY_PROFILE_JSON] = prefsJson.encodeToString(sanitized)
+        }
+    }
+
+    suspend fun updateAdaptiveMetabolismEnabled(enabled: Boolean) {
+        context.nutraDataStore.edit { prefs ->
+            prefs[Keys.ADAPTIVE_METABOLISM_ENABLED] = enabled
+        }
+    }
+
+    suspend fun recordAdaptiveReviewDate(dateIso: String) {
+        context.nutraDataStore.edit { prefs ->
+            prefs[Keys.LAST_ADAPTIVE_REVIEW_DATE_ISO] = dateIso
+        }
+    }
+
+    private fun sanitizeDietaryProfile(profile: DietaryProfile): DietaryProfile = profile.copy(
+        excludedKeywords = profile.excludedKeywords
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinctBy { it.lowercase() }
+            .take(40),
+    )
 
     suspend fun updateGeminiConfig(apiKey: String, model: String) {
         context.nutraDataStore.edit { prefs ->

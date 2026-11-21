@@ -106,10 +106,14 @@ import com.nutra.app.core.designsystem.NutraSnackbarTone
 import com.nutra.app.core.designsystem.NutraStepperButton
 import com.nutra.app.core.designsystem.NutraTheme
 import com.nutra.app.core.designsystem.rememberSkeletonPulseAlpha
+import com.nutra.app.domain.intelligence.MealRecommendation
 import com.nutra.app.domain.model.MealLogItem
 import com.nutra.app.domain.model.MealSummary
 import com.nutra.app.domain.model.MealType
 import com.nutra.app.domain.model.ServingUnitLabels
+import com.nutra.app.feature.intelligence.DashboardIntelligenceCard
+import com.nutra.app.feature.intelligence.IntelligenceStudioTab
+import com.nutra.app.feature.intelligence.IntelligenceUiState
 import com.nutra.app.feature.logging.AddFoodModalSheet
 import kotlinx.coroutines.delay
 import java.time.LocalDate
@@ -127,6 +131,9 @@ fun DashboardScreen(
     viewModel: DashboardViewModel,
     contentPadding: PaddingValues = PaddingValues(0.dp),
     scrollToTopTrigger: Int = 0,
+    intelligenceUiState: IntelligenceUiState? = null,
+    onOpenIntelligenceStudio: (MealType?, IntelligenceStudioTab) -> Unit = { _, _ -> },
+    onQuickLogIntelligenceRecommendation: (MealRecommendation) -> Unit = {},
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
@@ -234,6 +241,29 @@ fun DashboardScreen(
                         targetWaterMl = state.dailySummary.goals.waterMl,
                         onAddWater = viewModel::addWater,
                     )
+                }
+            }
+
+            if (intelligenceUiState != null && intelligenceUiState.report != null) {
+                item(key = "nutra_intelligence_card", contentType = "nutra_intelligence_card") {
+                    Box(modifier = Modifier.padding(bottom = NutraTheme.spacing.xl)) {
+                        DashboardIntelligenceCard(
+                            uiState = intelligenceUiState,
+                            onOpenStudio = {
+                                onOpenIntelligenceStudio(
+                                    intelligenceUiState.report.mealType,
+                                    IntelligenceStudioTab.RECOMMENDATIONS,
+                                )
+                            },
+                            onOpenBalancer = {
+                                onOpenIntelligenceStudio(
+                                    intelligenceUiState.report.mealType,
+                                    IntelligenceStudioTab.PORTION_BALANCER,
+                                )
+                            },
+                            onQuickLogTopRecommendation = onQuickLogIntelligenceRecommendation,
+                        )
+                    }
                 }
             }
 
@@ -373,6 +403,10 @@ fun DashboardScreen(
             onLookupBarcode = viewModel::lookupBarcode,
             onCustomFoodDraftChange = viewModel::updateCustomFoodDraft,
             onCreateAndLogCustomFood = viewModel::createAndLogCustomFood,
+            onOpenIntelligenceForMeal = { meal ->
+                viewModel.closeAddFoodModal()
+                onOpenIntelligenceStudio(meal, IntelligenceStudioTab.RECOMMENDATIONS)
+            },
         )
     }
 }

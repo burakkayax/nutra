@@ -114,6 +114,7 @@ import com.nutra.app.domain.model.GoalType
 import com.nutra.app.domain.model.MacroGoals
 import com.nutra.app.domain.model.WeightTrendPoint
 import com.nutra.app.domain.usecase.BodyMetricBounds
+import com.nutra.app.feature.metabolism.MetabolismSummaryCard
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import java.time.LocalDate
@@ -135,8 +136,10 @@ fun AnalyticsScreen(
     viewModel: AnalyticsViewModel,
     contentPadding: PaddingValues = PaddingValues(0.dp),
     scrollToTopTrigger: Int = 0,
+    onOpenMetabolismDetail: () -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val metabolismAnalysis by viewModel.metabolismAnalysis.collectAsStateWithLifecycle()
     val layoutDirection = LocalLayoutDirection.current
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
@@ -206,6 +209,18 @@ fun AnalyticsScreen(
                                     selectedItem = uiState.selectedRange,
                                     onItemSelected = viewModel::selectRange,
                                     labelProvider = { it.title },
+                                )
+                            }
+                        }
+
+                        val analysis = metabolismAnalysis
+                        if (analysis != null) {
+                            item(key = "adaptive_metabolism") {
+                                MetabolismSummaryCard(
+                                    analysis = analysis,
+                                    onOpenDetail = onOpenMetabolismDetail,
+                                    onApproveProposal = viewModel::approveCalorieProposal,
+                                    onDismissProposal = viewModel::dismissCalorieProposal,
                                 )
                             }
                         }

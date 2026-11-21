@@ -61,6 +61,67 @@ object AppModule {
         }
     }
 
+    val MIGRATION_4_5 = object : Migration(4, 5) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `goal_history` (
+                    `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    `effectiveDateIso` TEXT NOT NULL,
+                    `calories` INTEGER NOT NULL,
+                    `proteinGrams` INTEGER NOT NULL,
+                    `carbsGrams` INTEGER NOT NULL,
+                    `fatGrams` INTEGER NOT NULL,
+                    `goalType` TEXT NOT NULL,
+                    `targetWeightKg` REAL NOT NULL,
+                    `source` TEXT NOT NULL,
+                    `timestampMillis` INTEGER NOT NULL
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_goal_history_effectiveDateIso_timestampMillis` ON `goal_history` (`effectiveDateIso`, `timestampMillis`)",
+            )
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `food_feedback` (
+                    `foodKey` TEXT NOT NULL,
+                    `foodId` INTEGER,
+                    `foodName` TEXT NOT NULL,
+                    `status` TEXT NOT NULL,
+                    `acceptedCount` INTEGER NOT NULL,
+                    `dismissedCount` INTEGER NOT NULL,
+                    `lastSuggestedMillis` INTEGER NOT NULL,
+                    `lastAcceptedMillis` INTEGER NOT NULL,
+                    `updatedAtMillis` INTEGER NOT NULL,
+                    PRIMARY KEY(`foodKey`)
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_food_feedback_status` ON `food_feedback` (`status`)",
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_food_feedback_foodId` ON `food_feedback` (`foodId`)",
+            )
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `metabolism_snapshots` (
+                    `dateIso` TEXT NOT NULL,
+                    `estimatedTdeeKcal` INTEGER NOT NULL,
+                    `uncertaintyKcal` INTEGER NOT NULL,
+                    `priorTdeeKcal` INTEGER NOT NULL,
+                    `trendWeightKg` REAL NOT NULL,
+                    `confidenceScore` INTEGER NOT NULL,
+                    `qualityLevel` TEXT NOT NULL,
+                    `updatedAtMillis` INTEGER NOT NULL,
+                    PRIMARY KEY(`dateIso`)
+                )
+                """.trimIndent(),
+            )
+        }
+    }
+
     @Provides
     @Singleton
     fun provideNutraDatabase(
@@ -70,7 +131,7 @@ object AppModule {
         NutraDatabase::class.java,
         "nutra_database.db",
     )
-        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
         .addCallback(
             object : RoomDatabase.Callback() {
                 override fun onCreate(db: SupportSQLiteDatabase) {

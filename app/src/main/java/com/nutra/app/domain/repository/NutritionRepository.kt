@@ -3,8 +3,11 @@ package com.nutra.app.domain.repository
 import android.content.Context
 import androidx.room.withTransaction
 import com.nutra.app.core.database.DailyMealTotalsTuple
+import com.nutra.app.core.database.FoodFeedbackEntity
 import com.nutra.app.core.database.FoodItemEntity
+import com.nutra.app.core.database.GoalHistoryEntity
 import com.nutra.app.core.database.MealLogEntity
+import com.nutra.app.core.database.MetabolismSnapshotEntity
 import com.nutra.app.core.database.NutraDao
 import com.nutra.app.core.database.NutraDatabase
 import com.nutra.app.core.database.TurkishFoodSeedCatalog
@@ -12,14 +15,22 @@ import com.nutra.app.core.database.WaterLogEntity
 import com.nutra.app.core.database.WeightLogEntity
 import com.nutra.app.core.datastore.UserPreferencesDataStore
 import com.nutra.app.core.network.OpenFoodFactsService
+import com.nutra.app.domain.metabolism.DailyIntakeObservation
 import com.nutra.app.domain.model.AppResult
 import com.nutra.app.domain.model.ComboFoodEntry
 import com.nutra.app.domain.model.DailyAnalyticsPoint
 import com.nutra.app.domain.model.DailyNutritionSummary
+import com.nutra.app.domain.model.FoodFeedbackRecord
+import com.nutra.app.domain.model.FoodFeedbackStatus
 import com.nutra.app.domain.model.FoodItem
+import com.nutra.app.domain.model.GoalChangeSource
+import com.nutra.app.domain.model.GoalHistoryEntry
+import com.nutra.app.domain.model.GoalType
+import com.nutra.app.domain.model.MacroGoals
 import com.nutra.app.domain.model.MealLogItem
 import com.nutra.app.domain.model.MealSummary
 import com.nutra.app.domain.model.MealType
+import com.nutra.app.domain.model.MetabolismSnapshotRecord
 import com.nutra.app.domain.model.ServingUnitLabels
 import com.nutra.app.domain.model.UserProfile
 import com.nutra.app.domain.model.WeightEntry
@@ -54,6 +65,8 @@ data class NutraBackupPayload(
     val mealLogs: List<MealLogItem>,
     val waterLogs: Map<String, Int>,
     val weightEntries: List<WeightEntry>,
+    val goalHistory: List<GoalHistoryEntry> = emptyList(),
+    val foodFeedback: List<FoodFeedbackRecord> = emptyList(),
 )
 
 internal const val SUPPORTED_BACKUP_VERSION = 1
@@ -204,6 +217,165 @@ class NutritionRepository @Inject constructor(
             .map { list -> list.map { it.toDomain() } }
             .distinctUntilChanged()
             .flowOn(Dispatchers.Default)
+
+    fun observeMealLogsSince(startDateIso: String): Flow<List<MealLogItem>> =
+        nutraDao.observeMealLogsSince(startDateIso)
+            .map { list -> list.map { it.toDomain() } }
+            .distinctUntilChanged()
+            .flowOn(Dispatchers.Default)
+
+    fun observeDailyMetabolismIntake(
+        startDate: LocalDate,
+        endDate: LocalDate,
+    ): Flow<List<DailyIntakeObservation>> =
+        nutraDao.observeDailyMetabolismIntakeInRange(startDate.toString(), endDate.toString())
+            .map { tuples ->
+                tuples.map { t ->
+                    DailyIntakeObservation(
+                        dateIso = t.dateIso,
+                        calories = t.totalCalories,
+                        proteinGrams = t.totalProtein.toFloat(),
+                        carbsGrams = t.totalCarbs.toFloat(),
+                        fatGrams = t.totalFat.toFloat(),
+                        mealTypeCount = t.mealTypeCount,
+                        itemCount = t.itemCount,
+                    )
+                }
+            }
+            .distinctUntilChanged()
+            .flowOn(Dispatchers.Default)
+
+    fun observeGoalHistory(): Flow<List<GoalHistoryEntry>> =
+        nutraDao.observeGoalHistory()
+            .map { list -> list.map { it.toDomain() } }
+            .distinctUntilChanged()
+            .flowOn(Dispatchers.Default)
+
+    fun observeFoodFeedback(): Flow<List<FoodFeedbackRecord>> =
+        nutraDao.observeAllFoodFeedback()
+            .map { list -> list.map { it.toDomain() } }
+            .distinctUntilChanged()
+            .flowOn(Dispatchers.Default)
+
+    fun observeMetabolismSnapshots(): Flow<List<MetabolismSnapshotRecord>> =
+        nutraDao.observeMetabolismSnapshots()
+            .map { list -> list.map { it.toDomain() } }
+            .distinctUntilChanged()
+            .flowOn(Dispatchers.Default)
+
+    suspend fun recordGoalHistory(
+        goals: MacroGoals,
+        goalType: GoalType,
+        targetWeightKg: Float,
+        source: GoalChangeSource,
+        effectiveDateIso: String = LocalDate.now().toString(),
+    ) = withContext(Dispatchers.IO) {
+        nutraDao.insertGoalHistory(
+            GoalHistoryEntity(
+                effectiveDateIso = effectiveDateIso,
+                calories = goals.calories,
+                proteinGrams = goals.proteinGrams,
+                carbsGrams = goals.carbsGrams,
+                fatGrams = goals.fatGrams,
+                goalType = goalType.name,
+                targetWeightKg = targetWeightKg,
+                source = source.name,
+                timestampMillis = System.currentTimeMillis(),
+            ),
+        )
+    }
+
+    suspend fun approveAdaptiveCalorieProposal(
+        proposedGoals: MacroGoals,
+        profile: UserProfile,
+        todayIso: String = LocalDate.now().toString(),
+    ) = withContext(Dispatchers.IO) {
+        preferencesDataStore.updateGoals(proposedGoals)
+        preferencesDataStore.recordAdaptiveReviewDate(todayIso)
+        recordGoalHistory(
+            goals = proposedGoals,
+            goalType = profile.goalType,
+            targetWeightKg = profile.targetWeightKg,
+            source = GoalChangeSource.ADAPTIVE_APPROVED,
+            effectiveDateIso = todayIso,
+        )
+    }
+
+    suspend fun dismissAdaptiveCalorieProposal(
+        todayIso: String = LocalDate.now().toString(),
+    ) = withContext(Dispatchers.IO) {
+        preferencesDataStore.recordAdaptiveReviewDate(todayIso)
+    }
+
+    suspend fun recordRecommendationAccepted(
+        foodKeysWithIdsAndNames: List<Triple<String, Long?, String>>,
+    ) = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        database.withTransaction {
+            for ((key, fid, name) in foodKeysWithIdsAndNames) {
+                val existing = nutraDao.findFoodFeedbackByKey(key)
+                val updated = if (existing != null) {
+                    existing.copy(
+                        foodId = fid ?: existing.foodId,
+                        foodName = name.ifBlank { existing.foodName },
+                        acceptedCount = existing.acceptedCount + 1,
+                        lastAcceptedMillis = now,
+                        updatedAtMillis = now,
+                    )
+                } else {
+                    FoodFeedbackEntity(
+                        foodKey = key,
+                        foodId = fid,
+                        foodName = name,
+                        status = FoodFeedbackStatus.NEUTRAL.name,
+                        acceptedCount = 1,
+                        dismissedCount = 0,
+                        lastSuggestedMillis = now,
+                        lastAcceptedMillis = now,
+                        updatedAtMillis = now,
+                    )
+                }
+                nutraDao.upsertFoodFeedback(updated)
+            }
+        }
+    }
+
+    suspend fun setFoodDisliked(
+        foodKey: String,
+        foodId: Long?,
+        foodName: String,
+        disliked: Boolean,
+    ) = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        database.withTransaction {
+            val existing = nutraDao.findFoodFeedbackByKey(foodKey)
+            val nextStatus = if (disliked) FoodFeedbackStatus.DISLIKED.name else FoodFeedbackStatus.NEUTRAL.name
+            val updated = if (existing != null) {
+                existing.copy(
+                    foodId = foodId ?: existing.foodId,
+                    foodName = foodName.ifBlank { existing.foodName },
+                    status = nextStatus,
+                    dismissedCount = if (disliked) existing.dismissedCount + 1 else existing.dismissedCount,
+                    updatedAtMillis = now,
+                )
+            } else {
+                FoodFeedbackEntity(
+                    foodKey = foodKey,
+                    foodId = foodId,
+                    foodName = foodName,
+                    status = nextStatus,
+                    dismissedCount = if (disliked) 1 else 0,
+                    updatedAtMillis = now,
+                )
+            }
+            nutraDao.upsertFoodFeedback(updated)
+        }
+    }
+
+    suspend fun saveMetabolismSnapshots(snapshots: List<MetabolismSnapshotRecord>) = withContext(Dispatchers.IO) {
+        if (snapshots.isEmpty()) return@withContext
+        nutraDao.upsertMetabolismSnapshots(snapshots.map { MetabolismSnapshotEntity.fromDomain(it) })
+    }
 
     fun observeDailySummary(dateIso: String): Flow<DailyNutritionSummary> {
         val mealsFlow = nutraDao.observeMealLogsForDate(dateIso)
@@ -592,6 +764,8 @@ class NutritionRepository @Inject constructor(
                     val mealLogs = nutraDao.getAllMealLogsSnapshot().map { it.toDomain() }
                     val waterLogs = nutraDao.getAllWaterLogsSnapshot().associate { it.dateIso to it.waterMl }
                     val weightEntries = nutraDao.getAllWeightLogsSnapshot().map { it.toDomain() }
+                    val goalHistory = nutraDao.getAllGoalHistorySnapshot().map { it.toDomain() }
+                    val foodFeedback = nutraDao.getAllFoodFeedbackSnapshot().map { it.toDomain() }
                     NutraBackupPayload(
                         version = SUPPORTED_BACKUP_VERSION,
                         exportedAtDateIso = LocalDate.now().toString(),
@@ -600,6 +774,8 @@ class NutritionRepository @Inject constructor(
                         mealLogs = mealLogs,
                         waterLogs = waterLogs,
                         weightEntries = weightEntries,
+                        goalHistory = goalHistory,
+                        foodFeedback = foodFeedback,
                     )
                 }
                 AppResult.Success(backupJson.encodeToString(snapshot))
@@ -763,6 +939,24 @@ class NutritionRepository @Inject constructor(
                     if (weightEntities.isNotEmpty()) {
                         nutraDao.insertWeightLogs(weightEntities)
                     }
+
+                    nutraDao.deleteAllGoalHistory()
+                    val goalHistoryEntities = payload.goalHistory
+                        .filter { isValidBackupIsoDate(it.effectiveDateIso) }
+                        .map { GoalHistoryEntity.fromDomain(it.copy(id = 0L)) }
+                    if (goalHistoryEntities.isNotEmpty()) {
+                        nutraDao.insertGoalHistoryEntries(goalHistoryEntities)
+                    }
+
+                    nutraDao.deleteAllFoodFeedback()
+                    val feedbackEntities = payload.foodFeedback
+                        .filter { it.foodKey.isNotBlank() }
+                        .map { FoodFeedbackEntity.fromDomain(it) }
+                    if (feedbackEntities.isNotEmpty()) {
+                        nutraDao.upsertFoodFeedbackList(feedbackEntities)
+                    }
+
+                    nutraDao.deleteAllMetabolismSnapshots()
                 }
 
                 preferencesDataStore.restoreProfile(payload.userProfile)

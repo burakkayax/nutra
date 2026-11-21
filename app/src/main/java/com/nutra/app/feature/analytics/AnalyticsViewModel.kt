@@ -6,9 +6,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nutra.app.core.datastore.UserPreferencesDataStore
 import com.nutra.app.core.designsystem.NutraFormatters
+import com.nutra.app.domain.metabolism.AdaptiveMetabolismEngine
+import com.nutra.app.domain.metabolism.CalorieTargetProposal
+import com.nutra.app.domain.metabolism.MetabolismAnalysisResult
 import com.nutra.app.domain.model.DailyAnalyticsPoint
 import com.nutra.app.domain.model.GoalType
 import com.nutra.app.domain.model.MacroGoals
+import com.nutra.app.domain.model.MetabolismSnapshotRecord
 import com.nutra.app.domain.model.WeightTrendPoint
 import com.nutra.app.domain.repository.NutritionRepository
 import com.nutra.app.domain.usecase.WeightTrendCalculator
@@ -163,8 +167,9 @@ private data class AnalyticsDialogFeedbackState(
 class AnalyticsViewModel @Inject constructor(
     private val savedStateHandle: SavedStateHandle,
     private val nutritionRepository: NutritionRepository,
-    preferencesDataStore: UserPreferencesDataStore,
+    private val preferencesDataStore: UserPreferencesDataStore,
     private val weightTrendCalculator: WeightTrendCalculator,
+    private val adaptiveMetabolismEngine: AdaptiveMetabolismEngine,
 ) : ViewModel() {
 
     private companion object {
@@ -204,6 +209,35 @@ class AnalyticsViewModel @Inject constructor(
         .map { entries -> weightTrendCalculator.calculateTrend(entries) }
         .distinctUntilChanged()
         .flowOn(Dispatchers.Default)
+
+    private val metabolismIntakeFlow = todayFlow.flatMapLatest { end ->
+        nutritionRepository.observeDailyMetabolismIntake(
+            startDate = end.minusDays(AdaptiveMetabolismEngine.LOOKBACK_DAYS - 1),
+            endDate = end,
+        )
+    }
+
+    val metabolismAnalysis: StateFlow<MetabolismAnalysisResult?> = combine(
+        preferencesDataStore.userProfileFlow,
+        metabolismIntakeFlow,
+        nutritionRepository.observeWeightEntries(),
+        nutritionRepository.observeGoalHistory(),
+        todayFlow,
+    ) { profile, intakeDays, weights, goalHistory, today ->
+        adaptiveMetabolismEngine.analyze(
+            profile = profile,
+            intakeObservations = intakeDays,
+            weightEntries = weights,
+            goalHistory = goalHistory,
+            today = today,
+        )
+    }.distinctUntilChanged()
+        .flowOn(Dispatchers.Default)
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(30_000),
+            initialValue = null,
+        )
 
     private val weightRangeSummaryFlow = combine(
         allWeightTrendPointsFlow,
@@ -317,5 +351,41 @@ class AnalyticsViewModel @Inject constructor(
 
     fun clearFeedback() {
         feedbackFlow.value = null to feedbackSeq.get()
+    }
+
+    fun approveCalorieProposal(proposal: CalorieTargetProposal) {
+        viewModelScope.launch {
+            val profile = preferencesDataStore.getSnapshot()
+            val todayIso = LocalDate.now().toString()
+            nutritionRepository.approveAdaptiveCalorieProposal(
+                proposedGoals = proposal.proposedGoals,
+                profile = profile,
+                todayIso = todayIso,
+            )
+            metabolismAnalysis.value?.let { analysis ->
+                nutritionRepository.saveMetabolismSnapshots(
+                    listOf(
+                        MetabolismSnapshotRecord(
+                            dateIso = analysis.analysisDateIso,
+                            estimatedTdeeKcal = analysis.estimatedTdeeKcal,
+                            uncertaintyKcal = analysis.uncertaintyKcal,
+                            priorTdeeKcal = analysis.priorTdeeKcal,
+                            trendWeightKg = analysis.currentTrendWeightKg,
+                            confidenceScore = analysis.confidenceScore,
+                            qualityLevel = analysis.dataQuality.level.name,
+                            updatedAtMillis = System.currentTimeMillis(),
+                        ),
+                    ),
+                )
+            }
+            feedbackFlow.value = "Günlük kalori hedefi ${NutraFormatters.formatInt(proposal.proposedGoals.calories)} kcal olarak güncellendi" to feedbackSeq.incrementAndGet()
+        }
+    }
+
+    fun dismissCalorieProposal() {
+        viewModelScope.launch {
+            nutritionRepository.dismissAdaptiveCalorieProposal(LocalDate.now().toString())
+            feedbackFlow.value = "Mevcut kalori hedefin korundu" to feedbackSeq.incrementAndGet()
+        }
     }
 }

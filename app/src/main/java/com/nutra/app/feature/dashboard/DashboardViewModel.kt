@@ -700,6 +700,10 @@ class DashboardViewModel @Inject constructor(
         }
     }
 
+    fun showIntelligenceBanner(message: String) {
+        showStatusBanner(message)
+    }
+
     fun undoDeleteLoggedItem() {
         val deleted = bannerStateFlow.getAndUpdate { it.copy(lastDeletedItem = null) }.lastDeletedItem ?: return
         viewModelScope.launch {

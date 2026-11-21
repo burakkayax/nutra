@@ -5,9 +5,15 @@ import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.nutra.app.domain.model.FoodCategory
+import com.nutra.app.domain.model.FoodFeedbackRecord
+import com.nutra.app.domain.model.FoodFeedbackStatus
 import com.nutra.app.domain.model.FoodItem
+import com.nutra.app.domain.model.GoalChangeSource
+import com.nutra.app.domain.model.GoalHistoryEntry
+import com.nutra.app.domain.model.GoalType
 import com.nutra.app.domain.model.MealLogItem
 import com.nutra.app.domain.model.MealType
+import com.nutra.app.domain.model.MetabolismSnapshotRecord
 import com.nutra.app.domain.model.ServingUnit
 import com.nutra.app.domain.model.ServingUnitLabels
 import com.nutra.app.domain.model.WeightEntry
@@ -18,6 +24,9 @@ import kotlinx.serialization.json.Json
 private val entityJson = Json { ignoreUnknownKeys = true }
 private val FOOD_CATEGORY_BY_NAME: Map<String, FoodCategory> = FoodCategory.entries.associateBy { it.name }
 private val MEAL_TYPE_BY_NAME: Map<String, MealType> = MealType.entries.associateBy { it.name }
+private val GOAL_TYPE_BY_NAME: Map<String, GoalType> = GoalType.entries.associateBy { it.name }
+private val GOAL_SOURCE_BY_NAME: Map<String, GoalChangeSource> = GoalChangeSource.entries.associateBy { it.name }
+private val FEEDBACK_STATUS_BY_NAME: Map<String, FoodFeedbackStatus> = FoodFeedbackStatus.entries.associateBy { it.name }
 
 @Entity(
     tableName = "food_items",
@@ -274,4 +283,133 @@ data class WeightLogEntity(
         weightKg = weightKg,
         timestampMillis = timestampMillis,
     )
+}
+
+@Entity(
+    tableName = "goal_history",
+    indices = [Index(value = ["effectiveDateIso", "timestampMillis"])],
+)
+data class GoalHistoryEntity(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0L,
+    val effectiveDateIso: String,
+    val calories: Int,
+    val proteinGrams: Int,
+    val carbsGrams: Int,
+    val fatGrams: Int,
+    val goalType: String,
+    val targetWeightKg: Float,
+    val source: String,
+    val timestampMillis: Long,
+) {
+    fun toDomain(): GoalHistoryEntry = GoalHistoryEntry(
+        id = id,
+        effectiveDateIso = effectiveDateIso,
+        calories = calories,
+        proteinGrams = proteinGrams,
+        carbsGrams = carbsGrams,
+        fatGrams = fatGrams,
+        goalType = GOAL_TYPE_BY_NAME[goalType] ?: GoalType.MAINTAIN,
+        targetWeightKg = targetWeightKg,
+        source = GOAL_SOURCE_BY_NAME[source] ?: GoalChangeSource.MANUAL,
+        timestampMillis = timestampMillis,
+    )
+
+    companion object {
+        fun fromDomain(entry: GoalHistoryEntry): GoalHistoryEntity = GoalHistoryEntity(
+            id = entry.id,
+            effectiveDateIso = entry.effectiveDateIso,
+            calories = entry.calories,
+            proteinGrams = entry.proteinGrams,
+            carbsGrams = entry.carbsGrams,
+            fatGrams = entry.fatGrams,
+            goalType = entry.goalType.name,
+            targetWeightKg = entry.targetWeightKg,
+            source = entry.source.name,
+            timestampMillis = entry.timestampMillis,
+        )
+    }
+}
+
+@Entity(
+    tableName = "food_feedback",
+    indices = [
+        Index(value = ["status"]),
+        Index(value = ["foodId"]),
+    ],
+)
+data class FoodFeedbackEntity(
+    @PrimaryKey
+    val foodKey: String,
+    val foodId: Long? = null,
+    val foodName: String = "",
+    val status: String = FoodFeedbackStatus.NEUTRAL.name,
+    val acceptedCount: Int = 0,
+    val dismissedCount: Int = 0,
+    val lastSuggestedMillis: Long = 0L,
+    val lastAcceptedMillis: Long = 0L,
+    val updatedAtMillis: Long = 0L,
+) {
+    fun toDomain(): FoodFeedbackRecord = FoodFeedbackRecord(
+        foodKey = foodKey,
+        foodId = foodId,
+        foodName = foodName,
+        status = FEEDBACK_STATUS_BY_NAME[status] ?: FoodFeedbackStatus.NEUTRAL,
+        acceptedCount = acceptedCount,
+        dismissedCount = dismissedCount,
+        lastSuggestedMillis = lastSuggestedMillis,
+        lastAcceptedMillis = lastAcceptedMillis,
+        updatedAtMillis = updatedAtMillis,
+    )
+
+    companion object {
+        fun fromDomain(record: FoodFeedbackRecord): FoodFeedbackEntity = FoodFeedbackEntity(
+            foodKey = record.foodKey,
+            foodId = record.foodId,
+            foodName = record.foodName,
+            status = record.status.name,
+            acceptedCount = record.acceptedCount,
+            dismissedCount = record.dismissedCount,
+            lastSuggestedMillis = record.lastSuggestedMillis,
+            lastAcceptedMillis = record.lastAcceptedMillis,
+            updatedAtMillis = record.updatedAtMillis,
+        )
+    }
+}
+
+@Entity(tableName = "metabolism_snapshots")
+data class MetabolismSnapshotEntity(
+    @PrimaryKey
+    val dateIso: String,
+    val estimatedTdeeKcal: Int,
+    val uncertaintyKcal: Int,
+    val priorTdeeKcal: Int,
+    val trendWeightKg: Float,
+    val confidenceScore: Int,
+    val qualityLevel: String,
+    val updatedAtMillis: Long,
+) {
+    fun toDomain(): MetabolismSnapshotRecord = MetabolismSnapshotRecord(
+        dateIso = dateIso,
+        estimatedTdeeKcal = estimatedTdeeKcal,
+        uncertaintyKcal = uncertaintyKcal,
+        priorTdeeKcal = priorTdeeKcal,
+        trendWeightKg = trendWeightKg,
+        confidenceScore = confidenceScore,
+        qualityLevel = qualityLevel,
+        updatedAtMillis = updatedAtMillis,
+    )
+
+    companion object {
+        fun fromDomain(record: MetabolismSnapshotRecord): MetabolismSnapshotEntity = MetabolismSnapshotEntity(
+            dateIso = record.dateIso,
+            estimatedTdeeKcal = record.estimatedTdeeKcal,
+            uncertaintyKcal = record.uncertaintyKcal,
+            priorTdeeKcal = record.priorTdeeKcal,
+            trendWeightKg = record.trendWeightKg,
+            confidenceScore = record.confidenceScore,
+            qualityLevel = record.qualityLevel,
+            updatedAtMillis = record.updatedAtMillis,
+        )
+    }
 }

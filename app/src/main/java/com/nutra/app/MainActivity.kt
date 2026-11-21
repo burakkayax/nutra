@@ -118,9 +118,13 @@ import com.nutra.app.feature.analytics.AnalyticsScreen
 import com.nutra.app.feature.analytics.AnalyticsViewModel
 import com.nutra.app.feature.dashboard.DashboardScreen
 import com.nutra.app.feature.dashboard.DashboardViewModel
+import com.nutra.app.feature.intelligence.IntelligenceViewModel
+import com.nutra.app.feature.intelligence.NutraIntelligenceScreen
+import com.nutra.app.feature.metabolism.MetabolismDetailScreen
 import com.nutra.app.feature.onboarding.OnboardingScreen
 import com.nutra.app.feature.onboarding.OnboardingViewModel
 import com.nutra.app.feature.profile.DailyGoalsScreen
+import com.nutra.app.feature.profile.DietaryPreferencesScreen
 import com.nutra.app.feature.profile.EditBodyProfileScreen
 import com.nutra.app.feature.profile.ProfileScreen
 import com.nutra.app.feature.profile.ProfileViewModel
@@ -282,6 +286,7 @@ private enum class ProfileSubScreen {
     EDIT_BODY_PROFILE,
     DAILY_GOALS,
     WATER_REMINDER,
+    DIETARY_PREFERENCES,
 }
 
 private class TabLifecycleOwner : LifecycleOwner {
@@ -297,6 +302,8 @@ fun NutraAppRoot(
 ) {
     var activeTab by rememberSaveable { mutableStateOf(PrimaryDestination.DASHBOARD) }
     var profileSubScreen by rememberSaveable { mutableStateOf(ProfileSubScreen.NONE) }
+    var showIntelligenceStudio by rememberSaveable { mutableStateOf(false) }
+    var showMetabolismDetail by rememberSaveable { mutableStateOf(false) }
 
     Crossfade(
         targetState = onboardingCompleted,
@@ -364,16 +371,36 @@ fun NutraAppRoot(
             val showEditBodyProfile = activeTab == PrimaryDestination.PROFILE && profileSubScreen == ProfileSubScreen.EDIT_BODY_PROFILE
             val showDailyGoals = activeTab == PrimaryDestination.PROFILE && profileSubScreen == ProfileSubScreen.DAILY_GOALS
             val showWaterReminder = activeTab == PrimaryDestination.PROFILE && profileSubScreen == ProfileSubScreen.WATER_REMINDER
-            val hasProfileSubScreen = showEditBodyProfile || showDailyGoals || showWaterReminder
+            val showDietaryPreferences = activeTab == PrimaryDestination.PROFILE && profileSubScreen == ProfileSubScreen.DIETARY_PREFERENCES
+            val hasProfileSubScreen = showEditBodyProfile || showDailyGoals || showWaterReminder || showDietaryPreferences
+            val hasAnyOverlayScreen = hasProfileSubScreen || showIntelligenceStudio || showMetabolismDetail
             var dashboardScrollTopTick by remember { mutableIntStateOf(0) }
             var analyticsScrollTopTick by remember { mutableIntStateOf(0) }
             var profileScrollTopTick by remember { mutableIntStateOf(0) }
 
-            BackHandler(enabled = hasProfileSubScreen) {
+            val intelligenceViewModel: IntelligenceViewModel = viewModel()
+            val intelligenceState by intelligenceViewModel.uiState.collectAsStateWithLifecycle()
+            val dashboardSelectedDate by remember(dashboardViewModel) {
+                dashboardViewModel.uiState.map { it.selectedDate }.distinctUntilChanged()
+            }.collectAsStateWithLifecycle(initialValue = java.time.LocalDate.now())
+
+            LaunchedEffect(dashboardSelectedDate) {
+                intelligenceViewModel.syncDate(dashboardSelectedDate)
+            }
+
+            BackHandler(enabled = showIntelligenceStudio) {
+                showIntelligenceStudio = false
+            }
+
+            BackHandler(enabled = !showIntelligenceStudio && showMetabolismDetail) {
+                showMetabolismDetail = false
+            }
+
+            BackHandler(enabled = !showIntelligenceStudio && !showMetabolismDetail && hasProfileSubScreen) {
                 profileSubScreen = ProfileSubScreen.NONE
             }
 
-            BackHandler(enabled = !hasProfileSubScreen && activeTab != PrimaryDestination.DASHBOARD) {
+            BackHandler(enabled = !hasAnyOverlayScreen && activeTab != PrimaryDestination.DASHBOARD) {
                 activeTab = PrimaryDestination.DASHBOARD
             }
 
@@ -399,31 +426,42 @@ fun NutraAppRoot(
                         .fillMaxSize()
                         .windowInsetsPadding(contentInsets),
                 ) {
-                    TabSlotBox(isSelected = activeTab == PrimaryDestination.DASHBOARD && !hasProfileSubScreen) {
+                    TabSlotBox(isSelected = activeTab == PrimaryDestination.DASHBOARD && !hasAnyOverlayScreen) {
                         saveableStateHolder.SaveableStateProvider(PrimaryDestination.DASHBOARD) {
                             DashboardScreen(
                                 viewModel = dashboardViewModel,
                                 contentPadding = contentPadding,
                                 scrollToTopTrigger = dashboardScrollTopTick,
+                                intelligenceUiState = intelligenceState,
+                                onOpenIntelligenceStudio = { mealType, tab ->
+                                    intelligenceViewModel.openForMeal(mealType, tab)
+                                    showIntelligenceStudio = true
+                                },
+                                onQuickLogIntelligenceRecommendation = { rec ->
+                                    intelligenceViewModel.logRecommendation(rec) { msg ->
+                                        dashboardViewModel.showIntelligenceBanner(msg)
+                                    }
+                                },
                             )
                         }
                     }
 
                     if (mountAnalytics) {
-                        TabSlotBox(isSelected = activeTab == PrimaryDestination.ANALYTICS && !hasProfileSubScreen) {
+                        TabSlotBox(isSelected = activeTab == PrimaryDestination.ANALYTICS && !hasAnyOverlayScreen) {
                             saveableStateHolder.SaveableStateProvider(PrimaryDestination.ANALYTICS) {
                                 val analyticsViewModel: AnalyticsViewModel = viewModel()
                                 AnalyticsScreen(
                                     viewModel = analyticsViewModel,
                                     contentPadding = contentPadding,
                                     scrollToTopTrigger = analyticsScrollTopTick,
+                                    onOpenMetabolismDetail = { showMetabolismDetail = true },
                                 )
                             }
                         }
                     }
 
                     if (mountProfile) {
-                        TabSlotBox(isSelected = activeTab == PrimaryDestination.PROFILE && !hasProfileSubScreen) {
+                        TabSlotBox(isSelected = activeTab == PrimaryDestination.PROFILE && !hasAnyOverlayScreen) {
                             saveableStateHolder.SaveableStateProvider(PrimaryDestination.PROFILE) {
                                 val profileViewModel: ProfileViewModel = viewModel()
                                 ProfileScreen(
@@ -433,6 +471,7 @@ fun NutraAppRoot(
                                     onEditBodyProfile = { profileSubScreen = ProfileSubScreen.EDIT_BODY_PROFILE },
                                     onOpenDailyGoals = { profileSubScreen = ProfileSubScreen.DAILY_GOALS },
                                     onOpenWaterReminder = { profileSubScreen = ProfileSubScreen.WATER_REMINDER },
+                                    onOpenDietaryPreferences = { profileSubScreen = ProfileSubScreen.DIETARY_PREFERENCES },
                                 )
                             }
                         }
@@ -440,7 +479,7 @@ fun NutraAppRoot(
                 }
 
                 AnimatedVisibility(
-                    visible = !hasProfileSubScreen,
+                    visible = !hasAnyOverlayScreen,
                     enter = fadeIn(tween(180)) + slideInVertically(tween(200)) { it / 2 },
                     exit = fadeOut(tween(120)) + slideOutVertically(tween(140)) { it / 2 },
                     modifier = Modifier
@@ -451,6 +490,8 @@ fun NutraAppRoot(
                         selectedTab = activeTab,
                         onSelectTab = { dest ->
                             profileSubScreen = ProfileSubScreen.NONE
+                            showIntelligenceStudio = false
+                            showMetabolismDetail = false
                             if (dest == activeTab) {
                                 when (dest) {
                                     PrimaryDestination.DASHBOARD -> dashboardScrollTopTick++
@@ -521,12 +562,92 @@ fun NutraAppRoot(
                                 .background(NutraTheme.colors.background),
                         )
                     } else {
+                        val analyticsViewModel: AnalyticsViewModel = viewModel()
+                        val metabolismAnalysis by analyticsViewModel.metabolismAnalysis.collectAsStateWithLifecycle()
                         DailyGoalsScreen(
                             profile = profileState.profile,
                             onNavigateBack = { profileSubScreen = ProfileSubScreen.NONE },
                             onGoalsChange = { updatedGoals ->
                                 profileViewModel.updateDailyGoals(updatedGoals)
                             },
+                            metabolismAnalysis = metabolismAnalysis,
+                        )
+                    }
+                }
+
+                AnimatedVisibility(
+                    visible = showDietaryPreferences,
+                    enter = slideInHorizontally(tween(220)) { it / 4 } + fadeIn(tween(180)),
+                    exit = slideOutHorizontally(tween(180)) { it / 4 } + fadeOut(tween(140)),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .zIndex(3f)
+                        .background(NutraTheme.colors.background)
+                        .windowInsetsPadding(contentInsets),
+                ) {
+                    val profileViewModel: ProfileViewModel = viewModel()
+                    val profileState by profileViewModel.uiState.collectAsStateWithLifecycle()
+                    if (profileState.isLoading) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(NutraTheme.colors.background),
+                        )
+                    } else {
+                        DietaryPreferencesScreen(
+                            profile = profileState.profile,
+                            dislikedFoods = profileState.dislikedFoods,
+                            onNavigateBack = { profileSubScreen = ProfileSubScreen.NONE },
+                            onDietaryProfileChange = profileViewModel::updateDietaryProfile,
+                            onAdaptiveMetabolismEnabledChange = profileViewModel::updateAdaptiveMetabolismEnabled,
+                            onRestoreDislikedFood = profileViewModel::restoreDislikedFood,
+                        )
+                    }
+                }
+
+                AnimatedVisibility(
+                    visible = showIntelligenceStudio,
+                    enter = slideInHorizontally(tween(220)) { it / 4 } + fadeIn(tween(180)),
+                    exit = slideOutHorizontally(tween(180)) { it / 4 } + fadeOut(tween(140)),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .zIndex(4f)
+                        .background(NutraTheme.colors.background)
+                        .windowInsetsPadding(contentInsets),
+                ) {
+                    NutraIntelligenceScreen(
+                        viewModel = intelligenceViewModel,
+                        onNavigateBack = { showIntelligenceStudio = false },
+                        onLoggedMeal = { msg ->
+                            dashboardViewModel.showIntelligenceBanner(msg)
+                        },
+                    )
+                }
+
+                AnimatedVisibility(
+                    visible = showMetabolismDetail,
+                    enter = slideInHorizontally(tween(220)) { it / 4 } + fadeIn(tween(180)),
+                    exit = slideOutHorizontally(tween(180)) { it / 4 } + fadeOut(tween(140)),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .zIndex(4f)
+                        .background(NutraTheme.colors.background)
+                        .windowInsetsPadding(contentInsets),
+                ) {
+                    val analyticsViewModel: AnalyticsViewModel = viewModel()
+                    val analysis by analyticsViewModel.metabolismAnalysis.collectAsStateWithLifecycle()
+                    if (analysis != null) {
+                        MetabolismDetailScreen(
+                            analysis = analysis!!,
+                            onNavigateBack = { showMetabolismDetail = false },
+                            onApproveProposal = analyticsViewModel::approveCalorieProposal,
+                            onDismissProposal = analyticsViewModel::dismissCalorieProposal,
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(NutraTheme.colors.background),
                         )
                     }
                 }

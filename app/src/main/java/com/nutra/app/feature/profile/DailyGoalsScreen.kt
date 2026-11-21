@@ -41,6 +41,7 @@ import com.nutra.app.core.designsystem.NutraNumericInputDialog
 import com.nutra.app.core.designsystem.NutraSectionHeader
 import com.nutra.app.core.designsystem.NutraStackedRatioBar
 import com.nutra.app.core.designsystem.NutraTheme
+import com.nutra.app.domain.metabolism.MetabolismAnalysisResult
 import com.nutra.app.domain.model.MacroGoals
 import com.nutra.app.domain.model.UserProfile
 import com.nutra.app.domain.usecase.MacroGoalBounds
@@ -66,6 +67,7 @@ fun DailyGoalsScreen(
     profile: UserProfile,
     onNavigateBack: () -> Unit,
     onGoalsChange: (MacroGoals) -> Unit,
+    metabolismAnalysis: MetabolismAnalysisResult? = null,
 ) {
     val colors = NutraTheme.colors
     val calculator = remember { NutritionCalculatorUseCase() }
@@ -240,6 +242,18 @@ fun DailyGoalsScreen(
                         height = 8.dp,
                         contentDescription = "Hedef makro dağılımı: Protein %${(proteinRatio * 100f).roundToInt()}, Karbonhidrat %${(carbsRatio * 100f).roundToInt()}, Yağ %${(fatRatio * 100f).roundToInt()}",
                     )
+                    if (metabolismAnalysis != null) {
+                        NutraDivider()
+                        Text(
+                            text = if (metabolismAnalysis.isAdaptiveCalibrated) {
+                                "Adaptif TDEE tahmini: ~${NutraFormatters.formatInt(metabolismAnalysis.estimatedTdeeKcal)} ± ${NutraFormatters.formatInt(metabolismAnalysis.uncertaintyKcal)} kcal (Güven %${metabolismAnalysis.confidenceScore})"
+                            } else {
+                                "Formül TDEE tahmini: ~${NutraFormatters.formatInt(metabolismAnalysis.priorTdeeKcal)} kcal · Düzenli kayıtla kişiselleşir"
+                            },
+                            style = NutraTheme.typography.caption,
+                            color = colors.textSecondary,
+                        )
+                    }
                 }
 
                 // Calorie & macro steppers

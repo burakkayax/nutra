@@ -15,6 +15,16 @@ data class DailyMealTotalsTuple(
     val totalFat: Double,
 )
 
+data class DailyMetabolismIntakeTuple(
+    val dateIso: String,
+    val totalCalories: Int,
+    val totalProtein: Double,
+    val totalCarbs: Double,
+    val totalFat: Double,
+    val mealTypeCount: Int,
+    val itemCount: Int,
+)
+
 @Dao
 interface NutraDao {
 
@@ -91,6 +101,29 @@ interface NutraDao {
     @Query("SELECT * FROM meal_logs ORDER BY timestampMillis DESC LIMIT 600")
     fun observeRecentHistoricalMealLogs(): Flow<List<MealLogEntity>>
 
+    @Query("SELECT * FROM meal_logs WHERE dateIso >= :startDateIso ORDER BY dateIso ASC, timestampMillis ASC")
+    fun observeMealLogsSince(startDateIso: String): Flow<List<MealLogEntity>>
+
+    @Query(
+        """
+        SELECT dateIso,
+               COALESCE(SUM(calories), 0) AS totalCalories,
+               COALESCE(SUM(proteinGrams), 0.0) AS totalProtein,
+               COALESCE(SUM(carbsGrams), 0.0) AS totalCarbs,
+               COALESCE(SUM(fatGrams), 0.0) AS totalFat,
+               COUNT(DISTINCT mealType) AS mealTypeCount,
+               COUNT(*) AS itemCount
+        FROM meal_logs
+        WHERE dateIso BETWEEN :startDateIso AND :endDateIso
+        GROUP BY dateIso
+        ORDER BY dateIso ASC
+        """,
+    )
+    fun observeDailyMetabolismIntakeInRange(
+        startDateIso: String,
+        endDateIso: String,
+    ): Flow<List<DailyMetabolismIntakeTuple>>
+
     @Query("SELECT * FROM meal_logs ORDER BY timestampMillis ASC")
     suspend fun getAllMealLogsSnapshot(): List<MealLogEntity>
 
@@ -152,4 +185,55 @@ interface NutraDao {
 
     @Query("DELETE FROM weight_logs")
     suspend fun deleteAllWeightLogs()
+
+    // --- Goal History ---
+    @Query("SELECT * FROM goal_history ORDER BY effectiveDateIso ASC, timestampMillis ASC")
+    fun observeGoalHistory(): Flow<List<GoalHistoryEntity>>
+
+    @Query("SELECT * FROM goal_history ORDER BY effectiveDateIso ASC, timestampMillis ASC")
+    suspend fun getAllGoalHistorySnapshot(): List<GoalHistoryEntity>
+
+    @Query("SELECT COUNT(*) FROM goal_history")
+    suspend fun countGoalHistory(): Int
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertGoalHistory(entry: GoalHistoryEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertGoalHistoryEntries(entries: List<GoalHistoryEntity>)
+
+    @Query("DELETE FROM goal_history")
+    suspend fun deleteAllGoalHistory()
+
+    // --- Food Feedback ---
+    @Query("SELECT * FROM food_feedback")
+    fun observeAllFoodFeedback(): Flow<List<FoodFeedbackEntity>>
+
+    @Query("SELECT * FROM food_feedback")
+    suspend fun getAllFoodFeedbackSnapshot(): List<FoodFeedbackEntity>
+
+    @Query("SELECT * FROM food_feedback WHERE foodKey = :foodKey LIMIT 1")
+    suspend fun findFoodFeedbackByKey(foodKey: String): FoodFeedbackEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertFoodFeedback(entity: FoodFeedbackEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertFoodFeedbackList(entities: List<FoodFeedbackEntity>)
+
+    @Query("DELETE FROM food_feedback WHERE foodKey = :foodKey")
+    suspend fun deleteFoodFeedbackByKey(foodKey: String)
+
+    @Query("DELETE FROM food_feedback")
+    suspend fun deleteAllFoodFeedback()
+
+    // --- Metabolism Snapshots ---
+    @Query("SELECT * FROM metabolism_snapshots ORDER BY dateIso ASC")
+    fun observeMetabolismSnapshots(): Flow<List<MetabolismSnapshotEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertMetabolismSnapshots(snapshots: List<MetabolismSnapshotEntity>)
+
+    @Query("DELETE FROM metabolism_snapshots")
+    suspend fun deleteAllMetabolismSnapshots()
 }
