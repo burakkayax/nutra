@@ -10,16 +10,19 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Refresh
@@ -28,6 +31,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -57,11 +61,13 @@ import com.nutra.app.core.designsystem.NutraContentMaxWidth
 import com.nutra.app.core.designsystem.NutraDivider
 import com.nutra.app.core.designsystem.NutraDot
 import com.nutra.app.core.designsystem.NutraFormatters
-import com.nutra.app.core.designsystem.NutraIconButton
 import com.nutra.app.core.designsystem.NutraLinearProgress
 import com.nutra.app.core.designsystem.NutraSnackbarHost
 import com.nutra.app.core.designsystem.NutraSnackbarTone
+import com.nutra.app.core.designsystem.NutraStickyScreenHeader
+import com.nutra.app.core.designsystem.NutraStickySubScreenHeaderTopReservedPadding
 import com.nutra.app.core.designsystem.NutraTheme
+import com.nutra.app.core.designsystem.rememberHeaderCollapseFraction
 import com.nutra.app.domain.metabolism.CalorieTargetProposal
 import com.nutra.app.domain.metabolism.MetabolismAnalysisResult
 import com.nutra.app.domain.metabolism.MetabolismGuardrailState
@@ -256,64 +262,29 @@ fun MetabolismDetailScreen(
         }
     }
 
+    val listState = rememberLazyListState()
+    val headerCollapseFraction = rememberHeaderCollapseFraction(listState)
+    val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(colors.background),
     ) {
-        Column(
+        LazyColumn(
+            state = listState,
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .widthIn(max = NutraContentMaxWidth)
                 .fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = NutraTheme.spacing.screen,
+                end = NutraTheme.spacing.screen,
+                top = statusBarTop + NutraStickySubScreenHeaderTopReservedPadding,
+                bottom = 36.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
-            // Top bar
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = NutraTheme.spacing.screen)
-                    .padding(top = NutraTheme.spacing.section, bottom = NutraTheme.spacing.md),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(NutraTheme.spacing.md),
-            ) {
-                NutraIconButton(
-                    icon = Icons.AutoMirrored.Rounded.ArrowBack,
-                    contentDescription = "Geri",
-                    onClick = onNavigateBack,
-                    size = 44.dp,
-                    iconSize = 20.dp,
-                )
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    Text(
-                        text = "Adaptif Metabolizma",
-                        style = NutraTheme.typography.titleMedium,
-                        color = colors.textPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = "TDEE, kilo projeksiyonu ve plato analizi",
-                        style = NutraTheme.typography.caption,
-                        color = colors.textSecondary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-
-            LazyColumn(
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentPadding = PaddingValues(
-                    start = NutraTheme.spacing.screen,
-                    end = NutraTheme.spacing.screen,
-                    top = 4.dp,
-                    bottom = 36.dp,
-                ),
-                verticalArrangement = Arrangement.spacedBy(18.dp),
-            ) {
                 // 1. Guardrail notice if active
                 if (analysis.guardrailState != MetabolismGuardrailState.NORMAL_ADULT && analysis.guardrailNotice != null) {
                     item(key = "guardrail_banner") {
@@ -625,8 +596,15 @@ fun MetabolismDetailScreen(
                 item(key = "bottom_spacer") {
                     Spacer(Modifier.navigationBarsPadding())
                 }
-            }
         }
+
+        NutraStickyScreenHeader(
+            title = "Adaptif Metabolizma",
+            eyebrow = "TDEE, kilo projeksiyonu ve plato analizi",
+            collapseFractionState = headerCollapseFraction,
+            onNavigateBack = onNavigateBack,
+            modifier = Modifier.align(Alignment.TopCenter),
+        )
 
         NutraSnackbarHost(
             visible = feedbackMessage != null,
@@ -645,54 +623,20 @@ fun MetabolismDetailLoadingScreen(
     onNavigateBack: () -> Unit,
 ) {
     val colors = NutraTheme.colors
+    val collapseState = remember { mutableFloatStateOf(0f) }
     BackHandler(onBack = onNavigateBack)
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(colors.background),
     ) {
-        Column(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .widthIn(max = NutraContentMaxWidth)
-                .fillMaxSize(),
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = NutraTheme.spacing.screen)
-                    .padding(top = NutraTheme.spacing.section, bottom = NutraTheme.spacing.md),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(NutraTheme.spacing.md),
-            ) {
-                NutraIconButton(
-                    icon = Icons.AutoMirrored.Rounded.ArrowBack,
-                    contentDescription = "Geri",
-                    onClick = onNavigateBack,
-                    size = 44.dp,
-                    iconSize = 20.dp,
-                )
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    Text(
-                        text = "Adaptif Metabolizma",
-                        style = NutraTheme.typography.titleMedium,
-                        color = colors.textPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = "Metabolizma verileri hazırlanıyor...",
-                        style = NutraTheme.typography.caption,
-                        color = colors.textSecondary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-        }
+        NutraStickyScreenHeader(
+            title = "Adaptif Metabolizma",
+            eyebrow = "Metabolizma verileri hazırlanıyor...",
+            collapseFractionState = collapseState,
+            onNavigateBack = onNavigateBack,
+            modifier = Modifier.align(Alignment.TopCenter),
+        )
     }
 }
 

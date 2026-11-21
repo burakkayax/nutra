@@ -1,14 +1,11 @@
 package com.nutra.app.feature.logging
 
-import android.net.Uri
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.expandVertically
@@ -17,14 +14,14 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -54,14 +51,12 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
-import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
-import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -105,12 +100,10 @@ import com.nutra.app.core.designsystem.NutraDivider
 import com.nutra.app.core.designsystem.NutraDot
 import com.nutra.app.core.designsystem.NutraEmptyState
 import com.nutra.app.core.designsystem.NutraFormatters
-import com.nutra.app.core.designsystem.NutraIconBadge
 import com.nutra.app.core.designsystem.NutraIconButton
 import com.nutra.app.core.designsystem.NutraIcons
 import com.nutra.app.core.designsystem.NutraModalSheet
 import com.nutra.app.core.designsystem.NutraSectionHeader
-import com.nutra.app.core.designsystem.NutraSegmentedControl
 import com.nutra.app.core.designsystem.NutraSelectionIndicator
 import com.nutra.app.core.designsystem.NutraSkeletonBar
 import com.nutra.app.core.designsystem.NutraSnackbarHost
@@ -126,7 +119,6 @@ import com.nutra.app.domain.model.ServingUnitLabels
 import com.nutra.app.domain.model.SmartComboSuggestion
 import com.nutra.app.feature.dashboard.CustomFoodDraft
 import com.nutra.app.feature.dashboard.LoggingSheetUiState
-import com.nutra.app.feature.dashboard.LoggingTabMode
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
@@ -139,21 +131,12 @@ private fun sheetCardContainerColor(): Color {
 private val NON_ALL_FOOD_CATEGORIES = FoodCategory.entries.filter { it != FoodCategory.ALL }
 private val PORTION_GRAM_PRESETS = listOf(50, 100, 150, 200)
 private val PORTION_MULT_PRESETS = listOf(0.5f, 1f, 1.5f, 2f, 3f)
-private val AI_MULT_PRESETS = listOf(0.5f, 1f, 1.5f, 2f)
 
-private val AI_SAMPLE_PROMPTS = listOf(
-    "Kahvaltı tabağı" to "2 haşlanmış yumurta, 30g ezine beyaz peynir, 1 dilim tam buğday ekmeği",
-    "Tavuk & bulgur" to "1 kase mercimek çorbası, 150g ızgara tavuk göğsü, 1 porsiyon bulgur pilavı",
-    "Yulaflı yoğurt" to "1 kase süzme yoğurt, 4 yemek kaşığı yulaf ezmesi, 3 ceviz içi",
-)
-
-private val SAMPLE_BARCODES = listOf(
-    "8690526051222" to "Eti Burçak Yulaflı",
-    "8690559022374" to "Dardanel Aç Ye Mısırlı Ton Balığı",
-    "8690565018170" to "Pınar %1,5 Yarım Yağlı Uht Süt",
-    "8690504034032" to "Ülker Halley",
-    "8681630315010" to "Züber Noutos Fırınlanmış Nohut Cipsi",
-)
+private sealed interface AddFoodSheetPage {
+    data object Catalog : AddFoodSheetPage
+    data class Portion(val food: FoodItem) : AddFoodSheetPage
+    data object CustomFood : AddFoodSheetPage
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -163,33 +146,38 @@ fun AddFoodModalSheet(
     onDismiss: () -> Unit,
     onDismissSheetFeedback: () -> Unit,
     onSelectMealType: (MealType) -> Unit,
-    onSelectTab: (LoggingTabMode) -> Unit,
     onSearchQueryChange: (String) -> Unit,
     onSelectCategory: (FoodCategory) -> Unit,
     onSelectFavoritesOnly: () -> Unit,
     onSelectFoodForPortion: (FoodItem) -> Unit,
     onQuickAddFood: (FoodItem) -> Unit,
     onClosePortionPicker: () -> Unit,
+    onOpenCustomFoodCreator: () -> Unit,
+    onCloseCustomFoodCreator: () -> Unit,
     onToggleFavorite: (FoodItem) -> Unit,
     onConfirmLogFood: (FoodItem, String, Float, Float) -> Unit,
     onLogSmartCombo: (SmartComboSuggestion) -> Unit,
-    onAiPromptChange: (String) -> Unit,
-    onRunAiAnalysis: () -> Unit,
-    onAnalyzePhotoUri: (Uri) -> Unit,
-    onUpdateAiItemMultiplier: (String, Float) -> Unit,
-    onToggleAiItemIncluded: (String) -> Unit,
-    onCommitAiItems: () -> Unit,
-    onBarcodeInputChange: (String) -> Unit,
-    onLookupBarcode: (String?) -> Unit,
     onCustomFoodDraftChange: (CustomFoodDraft) -> Unit,
     onCreateAndLogCustomFood: (String, String, Float, Int, Float, Float, Float) -> Unit,
-    onOpenIntelligenceForMeal: ((MealType) -> Unit)? = null,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val catalogListState = rememberLazyListState()
     val activeMeal = state.activeLoggingMealType
     val portionFood = state.selectedFoodForPortion
     val showSmartCombos = state.shouldShowSmartCombos
+    val currentPage: AddFoodSheetPage = when {
+        portionFood != null -> AddFoodSheetPage.Portion(portionFood)
+        state.isCreatingCustomFood -> AddFoodSheetPage.CustomFood
+        else -> AddFoodSheetPage.Catalog
+    }
+
+    fun navigateBackFromSubpage() {
+        when (currentPage) {
+            is AddFoodSheetPage.Portion -> onClosePortionPicker()
+            AddFoodSheetPage.CustomFood -> onCloseCustomFoodCreator()
+            AddFoodSheetPage.Catalog -> Unit
+        }
+    }
 
     LaunchedEffect(state.sheetFeedbackEventId, state.sheetFeedbackMessage) {
         if (state.sheetFeedbackMessage != null) {
@@ -222,11 +210,9 @@ fun AddFoodModalSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
     ) {
-        BackHandler(enabled = portionFood != null) {
-            onClosePortionPicker()
+        BackHandler(enabled = currentPage !is AddFoodSheetPage.Catalog) {
+            navigateBackFromSubpage()
         }
-        val hasBottomActionBar = state.loggingTabMode == LoggingTabMode.CUSTOM ||
-            (state.loggingTabMode == LoggingTabMode.AI_ANALYZE && state.aiAnalyzedItems.isNotEmpty())
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -243,20 +229,24 @@ fun AddFoodModalSheet(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     AnimatedVisibility(
-                        visible = portionFood != null,
+                        visible = currentPage !is AddFoodSheetPage.Catalog,
                         enter = fadeIn(tween(150)) + expandHorizontally(tween(160)),
                         exit = fadeOut(tween(110)) + shrinkHorizontally(tween(140)),
                     ) {
                         NutraIconButton(
                             icon = Icons.AutoMirrored.Rounded.ArrowBack,
                             contentDescription = "Geri",
-                            onClick = onClosePortionPicker,
+                            onClick = ::navigateBackFromSubpage,
                             size = 40.dp,
                         )
                     }
 
                     Text(
-                        text = if (portionFood != null) "Porsiyon" else "Besin ekle",
+                        text = when (currentPage) {
+                            AddFoodSheetPage.Catalog -> "Besin ekle"
+                            is AddFoodSheetPage.Portion -> "Porsiyon"
+                            AddFoodSheetPage.CustomFood -> "Özel besin"
+                        },
                         style = NutraTheme.typography.titleMedium,
                         color = NutraTheme.colors.textPrimary,
                         maxLines = 1,
@@ -277,14 +267,20 @@ fun AddFoodModalSheet(
                     )
                 }
 
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(8.dp))
 
                 AnimatedContent(
-                    targetState = portionFood,
-                    contentKey = { it != null },
+                    targetState = currentPage,
+                    contentKey = { page ->
+                        when (page) {
+                            AddFoodSheetPage.Catalog -> 0
+                            is AddFoodSheetPage.Portion -> 1
+                            AddFoodSheetPage.CustomFood -> 2
+                        }
+                    },
                     transitionSpec = {
-                        val enteringPortion = targetState != null
-                        if (enteringPortion) {
+                        val enteringSubpage = targetState !is AddFoodSheetPage.Catalog
+                        if (enteringSubpage) {
                             (slideInHorizontally(tween(240)) { it / 4 } + fadeIn(tween(180))) togetherWith
                                 (slideOutHorizontally(tween(200)) { -it / 6 } + fadeOut(tween(140)))
                         } else {
@@ -295,87 +291,43 @@ fun AddFoodModalSheet(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth(),
-                    label = "SheetPortionTransition",
-                ) { selectedFood ->
-                    if (selectedFood != null) {
-                        PortionPickerContent(
-                            food = selectedFood,
-                            onToggleFavorite = { onToggleFavorite(selectedFood) },
+                    label = "SheetPageTransition",
+                ) { page ->
+                    when (page) {
+                        is AddFoodSheetPage.Portion -> PortionPickerContent(
+                            food = page.food,
+                            onToggleFavorite = { onToggleFavorite(page.food) },
                             onConfirm = { unitLabel, unitGrams, multiplier ->
-                                onConfirmLogFood(selectedFood, unitLabel, unitGrams, multiplier)
+                                onConfirmLogFood(page.food, unitLabel, unitGrams, multiplier)
                             },
                             modifier = Modifier.fillMaxSize(),
                         )
-                    } else {
-                        Column(modifier = Modifier.fillMaxSize()) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = NutraTheme.spacing.screen, vertical = 4.dp),
-                            ) {
-                                NutraSegmentedControl(
-                                    items = LoggingTabMode.entries,
-                                    selectedItem = state.loggingTabMode,
-                                    onItemSelected = onSelectTab,
-                                    labelProvider = { it.title },
-                                )
-                            }
-
-                            Spacer(Modifier.height(8.dp))
-
-                            AnimatedContent(
-                                targetState = state.loggingTabMode,
-                                transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(120)) },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxWidth(),
-                                label = "LoggingTabTransition",
-                            ) { tabMode ->
-                                when (tabMode) {
-                                    LoggingTabMode.CATALOG -> CatalogAndSmartComboTab(
-                                        state = state,
-                                        searchQuery = searchQuery,
-                                        activeMeal = activeMeal,
-                                        listState = catalogListState,
-                                        onSearchQueryChange = onSearchQueryChange,
-                                        onSelectCategory = onSelectCategory,
-                                        onSelectFavoritesOnly = onSelectFavoritesOnly,
-                                        onSelectFood = onSelectFoodForPortion,
-                                        onQuickAddFood = onQuickAddFood,
-                                        onToggleFavorite = onToggleFavorite,
-                                        onLogSmartCombo = onLogSmartCombo,
-                                        onOpenIntelligenceForMeal = onOpenIntelligenceForMeal,
-                                    )
-                                    LoggingTabMode.AI_ANALYZE -> AiAnalyzeTab(
-                                        state = state,
-                                        mealType = activeMeal,
-                                        onAiPromptChange = onAiPromptChange,
-                                        onRunAiAnalysis = onRunAiAnalysis,
-                                        onAnalyzePhotoUri = onAnalyzePhotoUri,
-                                        onUpdateMultiplier = onUpdateAiItemMultiplier,
-                                        onToggleIncluded = onToggleAiItemIncluded,
-                                        onCommitItems = onCommitAiItems,
-                                    )
-                                    LoggingTabMode.BARCODE -> BarcodeLookupTab(
-                                        state = state,
-                                        onBarcodeChange = onBarcodeInputChange,
-                                        onLookup = onLookupBarcode,
-                                    )
-                                    LoggingTabMode.CUSTOM -> CustomFoodCreatorTab(
-                                        mealType = activeMeal,
-                                        draft = state.customFoodDraft,
-                                        onDraftChange = onCustomFoodDraftChange,
-                                        onCreateAndLog = onCreateAndLogCustomFood,
-                                    )
-                                }
-                            }
-                        }
+                        AddFoodSheetPage.CustomFood -> CustomFoodCreatorTab(
+                            mealType = activeMeal,
+                            draft = state.customFoodDraft,
+                            onDraftChange = onCustomFoodDraftChange,
+                            onCreateAndLog = onCreateAndLogCustomFood,
+                        )
+                        AddFoodSheetPage.Catalog -> CatalogAndSmartComboTab(
+                            state = state,
+                            searchQuery = searchQuery,
+                            activeMeal = activeMeal,
+                            listState = catalogListState,
+                            onSearchQueryChange = onSearchQueryChange,
+                            onOpenCustomFoodCreator = onOpenCustomFoodCreator,
+                            onSelectCategory = onSelectCategory,
+                            onSelectFavoritesOnly = onSelectFavoritesOnly,
+                            onSelectFood = onSelectFoodForPortion,
+                            onQuickAddFood = onQuickAddFood,
+                            onToggleFavorite = onToggleFavorite,
+                            onLogSmartCombo = onLogSmartCombo,
+                        )
                     }
                 }
             }
 
             NutraSnackbarHost(
-                visible = state.sheetFeedbackMessage != null && portionFood == null,
+                visible = state.sheetFeedbackMessage != null && currentPage is AddFoodSheetPage.Catalog,
                 message = state.sheetFeedbackMessage.orEmpty(),
                 tone = NutraSnackbarTone.Success,
                 modifier = Modifier
@@ -383,7 +335,7 @@ fun AddFoodModalSheet(
                     .padding(
                         start = NutraTheme.spacing.screen,
                         end = NutraTheme.spacing.screen,
-                        bottom = if (hasBottomActionBar) 84.dp else 14.dp,
+                        bottom = 14.dp,
                     ),
             )
         }
@@ -497,13 +449,13 @@ private fun CatalogAndSmartComboTab(
     activeMeal: MealType,
     listState: LazyListState,
     onSearchQueryChange: (String) -> Unit,
+    onOpenCustomFoodCreator: () -> Unit,
     onSelectCategory: (FoodCategory) -> Unit,
     onSelectFavoritesOnly: () -> Unit,
     onSelectFood: (FoodItem) -> Unit,
     onQuickAddFood: (FoodItem) -> Unit,
     onToggleFavorite: (FoodItem) -> Unit,
     onLogSmartCombo: (SmartComboSuggestion) -> Unit,
-    onOpenIntelligenceForMeal: ((MealType) -> Unit)? = null,
 ) {
     val showSmartCombos = state.shouldShowSmartCombos
 
@@ -511,6 +463,7 @@ private fun CatalogAndSmartComboTab(
         CatalogSearchField(
             searchQuery = searchQuery,
             onSearchQueryChange = onSearchQueryChange,
+            onOpenCustomFoodCreator = onOpenCustomFoodCreator,
         )
 
         Spacer(Modifier.height(8.dp))
@@ -531,7 +484,6 @@ private fun CatalogAndSmartComboTab(
             onQuickAddFood = onQuickAddFood,
             onToggleFavorite = onToggleFavorite,
             onLogSmartCombo = onLogSmartCombo,
-            onOpenIntelligenceForMeal = onOpenIntelligenceForMeal,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth(),
@@ -543,35 +495,81 @@ private fun CatalogAndSmartComboTab(
 private fun CatalogSearchField(
     searchQuery: String,
     onSearchQueryChange: (String) -> Unit,
+    onOpenCustomFoodCreator: () -> Unit,
 ) {
     val keyboardController = LocalSoftwareKeyboardController.current
-    NutraTextField(
-        value = searchQuery,
-        onValueChange = onSearchQueryChange,
-        placeholder = "Besin, yemek veya marka ara...",
-        leadingIcon = Icons.Rounded.Search,
-        trailing = if (searchQuery.isNotEmpty()) {
-            {
-                NutraIconButton(
-                    icon = Icons.Rounded.Close,
-                    contentDescription = "Temizle",
-                    onClick = { onSearchQueryChange("") },
-                    size = 40.dp,
-                    iconSize = 16.dp,
-                    containerColor = NutraTheme.colors.surfaceElevated,
-                )
-            }
-        } else {
-            null
-        },
-        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-        keyboardActions = KeyboardActions(
-            onSearch = { keyboardController?.hide() },
-        ),
+    val haptic = LocalHapticFeedback.current
+    val addInteractionSource = remember { MutableInteractionSource() }
+    val isAddPressed by addInteractionSource.collectIsPressedAsState()
+    val addPressScaleState = animateFloatAsState(
+        targetValue = if (isAddPressed) 0.92f else 1f,
+        animationSpec = spring(dampingRatio = 0.72f, stiffness = 550f),
+        label = "customFoodAddPressScale",
+    )
+
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = NutraTheme.spacing.screen),
-    )
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        NutraTextField(
+            value = searchQuery,
+            onValueChange = onSearchQueryChange,
+            placeholder = "Besin, yemek veya marka ara...",
+            leadingIcon = Icons.Rounded.Search,
+            trailing = if (searchQuery.isNotEmpty()) {
+                {
+                    NutraIconButton(
+                        icon = Icons.Rounded.Close,
+                        contentDescription = "Temizle",
+                        onClick = { onSearchQueryChange("") },
+                        size = 40.dp,
+                        iconSize = 16.dp,
+                        containerColor = NutraTheme.colors.surfaceElevated,
+                    )
+                }
+            } else {
+                null
+            },
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            keyboardActions = KeyboardActions(
+                onSearch = { keyboardController?.hide() },
+            ),
+            modifier = Modifier.weight(1f),
+        )
+
+        Box(
+            modifier = Modifier
+                .size(52.dp)
+                .graphicsLayer {
+                    val s = addPressScaleState.value
+                    scaleX = s
+                    scaleY = s
+                }
+                .clip(NutraTheme.shapes.md)
+                .background(NutraTheme.colors.surfaceMuted)
+                .clickable(
+                    interactionSource = addInteractionSource,
+                    indication = LocalIndication.current,
+                    role = Role.Button,
+                    onClickLabel = "Özel besin oluştur",
+                ) {
+                    keyboardController?.hide()
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onOpenCustomFoodCreator()
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Add,
+                contentDescription = "Özel besin oluştur",
+                tint = NutraTheme.colors.textPrimary,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+    }
 }
 
 @Composable
@@ -643,7 +641,6 @@ private fun CatalogFoodResultsList(
     onToggleFavorite: (FoodItem) -> Unit,
     onLogSmartCombo: (SmartComboSuggestion) -> Unit,
     modifier: Modifier = Modifier,
-    onOpenIntelligenceForMeal: ((MealType) -> Unit)? = null,
 ) {
     LazyColumn(
         state = listState,
@@ -666,11 +663,6 @@ private fun CatalogFoodResultsList(
                 Column(modifier = Modifier.fillMaxWidth()) {
                     NutraSectionHeader(
                         title = "Sık birlikte",
-                        actionLabel = if (onOpenIntelligenceForMeal != null) "Akıllı öneri" else null,
-                        actionIcon = if (onOpenIntelligenceForMeal != null) NutraIcons.AutoAwesome else null,
-                        actionContainerColor = NutraTheme.colors.accentSoft,
-                        actionContentColor = NutraTheme.colors.onAccentSoft,
-                        onAction = onOpenIntelligenceForMeal?.let { cb -> { cb(activeMeal) } },
                         modifier = Modifier.padding(
                             start = NutraTheme.spacing.screen,
                             end = NutraTheme.spacing.screen,
@@ -774,7 +766,7 @@ private fun CatalogFoodResultsList(
                     NutraEmptyState(
                         icon = NutraIcons.SearchOff,
                         title = "Eşleşen besin bulunamadı",
-                        message = "Farklı bir arama terimi deneyebilir veya Özel sekmesinden yeni besin oluşturabilirsiniz.",
+                        message = "Farklı bir arama terimi deneyebilir veya + butonundan yeni besin oluşturabilirsiniz.",
                     )
                 }
             }
@@ -1497,440 +1489,6 @@ private fun CompactMultiplierPill(
             color = fg,
             maxLines = 1,
         )
-    }
-}
-
-@Composable
-private fun AiAnalyzeTab(
-    state: LoggingSheetUiState,
-    mealType: MealType,
-    onAiPromptChange: (String) -> Unit,
-    onRunAiAnalysis: () -> Unit,
-    onAnalyzePhotoUri: (Uri) -> Unit,
-    onUpdateMultiplier: (String, Float) -> Unit,
-    onToggleIncluded: (String) -> Unit,
-    onCommitItems: () -> Unit,
-) {
-    val haptic = LocalHapticFeedback.current
-    val keyboardController = LocalSoftwareKeyboardController.current
-
-    val photoPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia(),
-    ) { uri ->
-        if (uri != null) {
-            onAnalyzePhotoUri(uri)
-        }
-    }
-
-    val (selectedCount, totalSelectedCalories) = remember(state.aiAnalyzedItems) {
-        var count = 0
-        var cals = 0
-        for (item in state.aiAnalyzedItems) {
-            if (item.included) {
-                count++
-                cals += item.effectiveCalories
-            }
-        }
-        count to cals
-    }
-
-    Column(modifier = Modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = NutraTheme.spacing.screen),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    NutraIconBadge(
-                        icon = NutraIcons.AutoAwesome,
-                        size = 36.dp,
-                        iconSize = 18.dp,
-                    )
-                    Text(
-                        text = "AI besin analizi",
-                        style = NutraTheme.typography.titleSmall,
-                        color = NutraTheme.colors.textPrimary,
-                    )
-                }
-
-                NutraBadge(
-                    text = if (state.isGeminiKeyConfigured) "Gemini aktif" else "Cihaz içi NLU",
-                    color = if (state.isGeminiKeyConfigured) NutraTheme.colors.onAccentSoft else NutraTheme.colors.textSecondary,
-                    container = if (state.isGeminiKeyConfigured) NutraTheme.colors.accentSoft else NutraTheme.colors.surfaceMuted,
-                )
-            }
-
-            NutraTextField(
-                value = state.aiPromptText,
-                onValueChange = onAiPromptChange,
-                placeholder = "Örn: 2 haşlanmış yumurta, 40g beyaz peynir ve 1 dilim ekmek",
-                trailing = if (state.aiPromptText.isNotEmpty()) {
-                    {
-                        NutraIconButton(
-                            icon = Icons.Rounded.Close,
-                            contentDescription = "Temizle",
-                            onClick = { onAiPromptChange("") },
-                            size = 40.dp,
-                            iconSize = 16.dp,
-                            containerColor = NutraTheme.colors.surfaceElevated,
-                        )
-                    }
-                } else {
-                    null
-                },
-                singleLine = false,
-                minLines = 3,
-                maxLines = 5,
-            )
-
-            if (!state.isGeminiKeyConfigured) {
-                Text(
-                    text = "API anahtarı olmadan Türkçe metinleri cihaz içinde ayrıştırabilirsiniz. Yemek fotoğrafı analizi için Profil sekmesinden Gemini anahtarı ekleyin.",
-                    style = NutraTheme.typography.caption,
-                    color = NutraTheme.colors.textTertiary,
-                )
-            }
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                AI_SAMPLE_PROMPTS.forEach { (label, prompt) ->
-                    NutraChip(
-                        text = label,
-                        selected = state.aiPromptText == prompt,
-                        onClick = { onAiPromptChange(prompt) },
-                    )
-                }
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                NutraButton(
-                    text = "Analiz et",
-                    onClick = {
-                        keyboardController?.hide()
-                        onRunAiAnalysis()
-                    },
-                    style = NutraButtonStyle.Primary,
-                    size = NutraButtonSize.Medium,
-                    loading = state.aiAnalyzing && !state.aiPhotoAnalyzing,
-                    enabled = !state.aiAnalyzing && state.aiPromptText.isNotBlank(),
-                    modifier = Modifier.weight(1f),
-                )
-                NutraButton(
-                    text = "Fotoğraf",
-                    onClick = {
-                        keyboardController?.hide()
-                        photoPickerLauncher.launch(
-                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
-                        )
-                    },
-                    style = NutraButtonStyle.Secondary,
-                    size = NutraButtonSize.Medium,
-                    leadingIcon = if (state.isGeminiKeyConfigured) NutraIcons.PhotoCamera else Icons.Rounded.Lock,
-                    loading = state.aiAnalyzing && state.aiPhotoAnalyzing,
-                    enabled = !state.aiAnalyzing && state.isGeminiKeyConfigured,
-                )
-            }
-
-            if (state.aiErrorMessage != null) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(NutraTheme.shapes.md)
-                        .background(NutraTheme.colors.dangerSoft)
-                        .padding(14.dp),
-                ) {
-                    Text(
-                        text = state.aiErrorMessage,
-                        style = NutraTheme.typography.bodySmall,
-                        color = NutraTheme.colors.dangerText,
-                    )
-                }
-            }
-
-            if (state.aiAnalyzedItems.isNotEmpty()) {
-                NutraSectionHeader(
-                    title = "Ayrıştırılan besinler",
-                    supportingText = "$selectedCount seçili",
-                )
-
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    val pillUnselected = if (NutraTheme.colors.isDark) NutraTheme.colors.segmentThumb else NutraTheme.colors.surfaceMuted
-                    state.aiAnalyzedItems.forEach { item ->
-                        key(item.id) {
-                            NutraCard(
-                                color = sheetCardContainerColor(),
-                                shape = NutraTheme.shapes.md,
-                                contentPadding = PaddingValues(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(12.dp),
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .selectable(selected = item.included, role = Role.Checkbox) {
-                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                            onToggleIncluded(item.id)
-                                        },
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    NutraSelectionIndicator(
-                                        selected = item.included,
-                                        size = 22.dp,
-                                        iconSize = 13.dp,
-                                    )
-
-                                    Column(
-                                        modifier = Modifier.weight(1f),
-                                        verticalArrangement = Arrangement.spacedBy(2.dp),
-                                    ) {
-                                        Text(
-                                            text = item.name,
-                                            style = NutraTheme.typography.titleSmall,
-                                            color = if (item.included) NutraTheme.colors.textPrimary else NutraTheme.colors.textTertiary,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                        Text(
-                                            text = "${item.unitLabel} (${NutraFormatters.formatInt(item.effectiveGrams.roundToInt())} g) · P ${NutraFormatters.formatMacroGrams(item.effectiveProtein)}g · K ${NutraFormatters.formatMacroGrams(item.effectiveCarbs)}g · Y ${NutraFormatters.formatMacroGrams(item.effectiveFat)}g",
-                                            style = NutraTheme.typography.caption,
-                                            color = NutraTheme.colors.textSecondary,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                    }
-
-                                    Text(
-                                        text = "${NutraFormatters.formatInt(item.effectiveCalories)} kcal",
-                                        style = NutraTheme.typography.numberSmall,
-                                        color = if (item.included) NutraTheme.colors.textPrimary else NutraTheme.colors.textTertiary,
-                                    )
-                                }
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                ) {
-                                    AI_MULT_PRESETS.forEach { mult ->
-                                        CompactMultiplierPill(
-                                            text = "${NutraFormatters.formatMultiplier(mult)}x",
-                                            selected = item.multiplier == mult,
-                                            onClick = { onUpdateMultiplier(item.id, mult) },
-                                            modifier = Modifier.weight(1f),
-                                            unselectedColor = pillUnselected,
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(12.dp))
-        }
-
-        AnimatedVisibility(
-            visible = state.aiAnalyzedItems.isNotEmpty(),
-            enter = fadeIn(tween(180)) + slideInVertically(tween(200)) { it / 2 },
-            exit = fadeOut(tween(140)) + slideOutVertically(tween(160)) { it / 2 },
-        ) {
-            Column {
-                NutraDivider()
-                NutraBottomActionBar(includeNavigationInsets = false) {
-                    NutraButton(
-                        text = "${mealType.title} öğününe ekle · ${NutraFormatters.formatInt(totalSelectedCalories)} kcal",
-                        onClick = onCommitItems,
-                        style = NutraButtonStyle.Primary,
-                        size = NutraButtonSize.Medium,
-                        leadingIcon = Icons.Rounded.Check,
-                        enabled = selectedCount > 0,
-                        hapticFeedback = HapticFeedbackType.Confirm,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun BarcodeLookupTab(
-    state: LoggingSheetUiState,
-    onBarcodeChange: (String) -> Unit,
-    onLookup: (String?) -> Unit,
-) {
-    val haptic = LocalHapticFeedback.current
-    var showSamples by remember { mutableStateOf(false) }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = NutraTheme.spacing.screen),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            NutraIconBadge(
-                icon = NutraIcons.QrCodeScanner,
-                size = 36.dp,
-                iconSize = 18.dp,
-            )
-            Column {
-                Text(
-                    text = "Barkod sorgula",
-                    style = NutraTheme.typography.titleSmall,
-                    color = NutraTheme.colors.textPrimary,
-                )
-                Text(
-                    text = "Barkod numarasını girerek Open Food Facts ve yerel katalogda ara",
-                    style = NutraTheme.typography.caption,
-                    color = NutraTheme.colors.textSecondary,
-                )
-            }
-        }
-
-        NutraTextField(
-            value = state.barcodeInput,
-            onValueChange = { onBarcodeChange(it.filter { ch -> ch.isDigit() }) },
-            label = "EAN-13 / UPC barkod",
-            placeholder = "8690526051222",
-            trailing = if (state.barcodeInput.isNotEmpty()) {
-                {
-                    NutraIconButton(
-                        icon = Icons.Rounded.Close,
-                        contentDescription = "Temizle",
-                        onClick = { onBarcodeChange("") },
-                        size = 40.dp,
-                        iconSize = 16.dp,
-                        containerColor = NutraTheme.colors.surfaceElevated,
-                    )
-                }
-            } else {
-                null
-            },
-            keyboardOptions = KeyboardOptions(
-                keyboardType = KeyboardType.Number,
-                imeAction = ImeAction.Search,
-            ),
-            keyboardActions = KeyboardActions(
-                onSearch = {
-                    if (!state.barcodeLoading && state.barcodeInput.length >= 8) {
-                        onLookup(null)
-                    }
-                },
-            ),
-        )
-
-        NutraButton(
-            text = "Barkodu sorgula",
-            onClick = { onLookup(null) },
-            style = NutraButtonStyle.Primary,
-            size = NutraButtonSize.Medium,
-            loading = state.barcodeLoading,
-            enabled = !state.barcodeLoading && state.barcodeInput.length >= 8,
-            modifier = Modifier.fillMaxWidth(),
-        )
-
-        if (state.barcodeErrorMessage != null) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(NutraTheme.shapes.md)
-                    .background(NutraTheme.colors.dangerSoft)
-                    .padding(14.dp),
-            ) {
-                Text(
-                    text = state.barcodeErrorMessage,
-                    style = NutraTheme.typography.bodySmall,
-                    color = NutraTheme.colors.dangerText,
-                )
-            }
-        }
-
-        NutraSectionHeader(
-            title = "Örnek barkodlar",
-            actionLabel = if (showSamples) "Gizle" else "Göster",
-            actionContainerColor = sheetCardContainerColor(),
-            onAction = {
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                showSamples = !showSamples
-            },
-            modifier = Modifier.padding(top = 4.dp),
-        )
-
-        AnimatedVisibility(
-            visible = showSamples,
-            enter = expandVertically(tween(200)) + fadeIn(tween(160)),
-            exit = shrinkVertically(tween(160)) + fadeOut(tween(120)),
-        ) {
-            NutraCard(
-                color = sheetCardContainerColor(),
-                shape = NutraTheme.shapes.md,
-                contentPadding = PaddingValues(0.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                SAMPLE_BARCODES.forEachIndexed { idx, (code, title) ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable(role = Role.Button) { onLookup(code) }
-                            .padding(horizontal = 16.dp, vertical = 13.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        Column(
-                            modifier = Modifier.weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(2.dp),
-                        ) {
-                            Text(
-                                text = title,
-                                style = NutraTheme.typography.titleSmall,
-                                color = NutraTheme.colors.textPrimary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                text = code,
-                                style = NutraTheme.typography.caption,
-                                color = NutraTheme.colors.textTertiary,
-                            )
-                        }
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                            contentDescription = "Seç",
-                            tint = NutraTheme.colors.textTertiary,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    }
-                    if (idx < SAMPLE_BARCODES.lastIndex) {
-                        NutraDivider(startIndent = 16.dp, endIndent = 16.dp)
-                    }
-                }
-            }
-        }
-
-        Spacer(Modifier.height(16.dp))
     }
 }
 

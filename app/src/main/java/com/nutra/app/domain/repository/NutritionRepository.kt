@@ -14,7 +14,6 @@ import com.nutra.app.core.database.TurkishFoodSeedCatalog
 import com.nutra.app.core.database.WaterLogEntity
 import com.nutra.app.core.database.WeightLogEntity
 import com.nutra.app.core.datastore.UserPreferencesDataStore
-import com.nutra.app.core.network.OpenFoodFactsService
 import com.nutra.app.domain.metabolism.DailyIntakeObservation
 import com.nutra.app.domain.model.AppResult
 import com.nutra.app.domain.model.ComboFoodEntry
@@ -140,12 +139,10 @@ class NutritionRepository @Inject constructor(
     private val database: NutraDatabase,
     private val nutraDao: NutraDao,
     private val preferencesDataStore: UserPreferencesDataStore,
-    private val openFoodFactsService: dagger.Lazy<OpenFoodFactsService>,
 ) {
     private val seedMutex = Mutex()
     private val waterMutex = Mutex()
     private val favoriteMutex = Mutex()
-    private val barcodeMutex = Mutex()
     private val backupMutex = Mutex()
 
     @Volatile
@@ -734,23 +731,6 @@ class NutritionRepository @Inject constructor(
             normalizedName = normName,
             normalizedSearchText = norm,
         )
-    }
-
-    suspend fun findOrLookupBarcode(barcode: String): AppResult<FoodItem> = withContext(Dispatchers.IO) {
-        ensureCatalogSeeded()
-        val cleaned = barcode.trim()
-        barcodeMutex.withLock {
-            val localMatch = nutraDao.findFoodByBarcode(cleaned)
-            if (localMatch != null) {
-                return@withLock AppResult.Success(localMatch.toDomain())
-            }
-            val remoteResult = openFoodFactsService.get().lookupBarcode(cleaned)
-            if (remoteResult is AppResult.Success) {
-                val saved = createCustomFood(remoteResult.data)
-                return@withLock AppResult.Success(saved)
-            }
-            remoteResult
-        }
     }
 
     suspend fun getWaterMl(dateIso: String): Int = withContext(Dispatchers.IO) {

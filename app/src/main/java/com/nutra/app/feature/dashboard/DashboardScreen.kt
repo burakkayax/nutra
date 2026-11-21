@@ -75,7 +75,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalAccessibilityManager
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.Role
@@ -357,43 +356,27 @@ fun DashboardScreen(
     }
 
     if (state.activeLoggingMealType != null) {
-        val context = LocalContext.current
         val loggingState by viewModel.loggingUiState.collectAsStateWithLifecycle()
         val searchQuery by viewModel.searchQueryState.collectAsStateWithLifecycle()
-        val onRunAiAnalysis = remember(viewModel) { { viewModel.analyzeWithAi(null) } }
-        val onAnalyzePhotoUri = remember(viewModel, context) {
-            { uri: android.net.Uri -> viewModel.analyzePhotoWithAi(context.contentResolver, uri) }
-        }
         AddFoodModalSheet(
             state = loggingState,
             searchQuery = searchQuery,
             onDismiss = viewModel::closeAddFoodModal,
             onDismissSheetFeedback = viewModel::dismissSheetFeedback,
             onSelectMealType = viewModel::selectLoggingMealType,
-            onSelectTab = viewModel::selectLoggingTab,
             onSearchQueryChange = viewModel::updateSearchQuery,
             onSelectCategory = viewModel::selectCategory,
             onSelectFavoritesOnly = viewModel::selectFavoritesOnly,
             onSelectFoodForPortion = viewModel::openPortionPicker,
             onQuickAddFood = viewModel::quickLogDefaultFood,
             onClosePortionPicker = viewModel::closePortionPicker,
+            onOpenCustomFoodCreator = viewModel::openCustomFoodCreator,
+            onCloseCustomFoodCreator = viewModel::closeCustomFoodCreator,
             onToggleFavorite = viewModel::toggleFavorite,
             onConfirmLogFood = viewModel::logFoodWithPortion,
             onLogSmartCombo = viewModel::logSmartCombo,
-            onAiPromptChange = viewModel::updateAiPromptText,
-            onRunAiAnalysis = onRunAiAnalysis,
-            onAnalyzePhotoUri = onAnalyzePhotoUri,
-            onUpdateAiItemMultiplier = viewModel::updateAiItemMultiplier,
-            onToggleAiItemIncluded = viewModel::toggleAiItemIncluded,
-            onCommitAiItems = viewModel::commitAiAnalyzedItems,
-            onBarcodeInputChange = viewModel::updateBarcodeInput,
-            onLookupBarcode = viewModel::lookupBarcode,
             onCustomFoodDraftChange = viewModel::updateCustomFoodDraft,
             onCreateAndLogCustomFood = viewModel::createAndLogCustomFood,
-            onOpenIntelligenceForMeal = { meal ->
-                viewModel.closeAddFoodModal()
-                onOpenIntelligenceStudio(meal, IntelligenceStudioTab.RECOMMENDATIONS)
-            },
         )
     }
 }

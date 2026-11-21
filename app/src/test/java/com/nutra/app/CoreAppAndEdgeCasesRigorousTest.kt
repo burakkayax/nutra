@@ -12,14 +12,10 @@ import com.nutra.app.core.datastore.MAX_EXCLUDED_KEYWORDS
 import com.nutra.app.core.datastore.sanitizeDietaryProfileData
 import com.nutra.app.core.designsystem.NutraFormatters
 import com.nutra.app.core.di.AppModule
-import com.nutra.app.core.network.GeminiAiService
-import com.nutra.app.core.network.OpenFoodFactsService
 import com.nutra.app.core.notification.WaterReminderBounds
 import com.nutra.app.core.notification.WaterReminderScheduleCalculator
 import com.nutra.app.domain.intelligence.DailyGoalImpactPreview
 import com.nutra.app.domain.model.ActivityLevel
-import com.nutra.app.domain.model.AiAnalyzedFoodItem
-import com.nutra.app.domain.model.AppResult
 import com.nutra.app.domain.model.BiologicalSex
 import com.nutra.app.domain.model.DietaryProfile
 import com.nutra.app.domain.model.FoodCategory
@@ -49,8 +45,6 @@ import com.nutra.app.domain.usecase.WeightTrendCalculator
 import com.nutra.app.feature.metabolism.metabolismChartIndexForX
 import com.nutra.app.feature.profile.BoundedReadResult
 import com.nutra.app.feature.profile.readBoundedUtf8Stream
-import kotlinx.coroutines.test.runTest
-import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -136,25 +130,6 @@ class CoreAppAndEdgeCasesRigorousTest {
         )
         assertEquals("0 g", badLog.formattedQuantity)
         assertEquals("1x 1 Porsiyon (0 ml)", badLog.copy(unitLabel = "1 Porsiyon", baseUnit = "ml").formattedQuantity)
-
-        // AiAnalyzedFoodItem handles NaN multiplier/macros safely
-        val badAi = AiAnalyzedFoodItem(
-            id = "ai1",
-            name = "Test",
-            unitLabel = "1 Porsiyon",
-            baseGrams = Float.NaN,
-            multiplier = Float.NaN,
-            baseCalories = -20,
-            baseProtein = Float.NaN,
-            baseCarbs = Float.POSITIVE_INFINITY,
-            baseFat = -5f,
-            confidence = 0.9f,
-        )
-        assertEquals(0f, badAi.effectiveGrams, 0.001f)
-        assertEquals(0, badAi.effectiveCalories)
-        assertEquals(0f, badAi.effectiveProtein, 0.001f)
-        assertEquals(0f, badAi.effectiveCarbs, 0.001f)
-        assertEquals(0f, badAi.effectiveFat, 0.001f)
 
         // DailyGoalImpactPreview guards 0 calorieGoal / proteinGoal
         val impact = DailyGoalImpactPreview(0, 500, 0, 0f, 30f, 0, 0f, 50f, 0, 0f, 15f, 0, "")
@@ -505,68 +480,6 @@ class CoreAppAndEdgeCasesRigorousTest {
         assertEquals(count - 1, metabolismChartIndexForX(widthPx + 50f, widthPx, padX, count))
         assertEquals(0, metabolismChartIndexForX(500f, widthPx, padX, pointCount = 1))
         assertEquals(0, metabolismChartIndexForX(500f, widthPx, padX, pointCount = 0))
-    }
-
-    @Test
-    fun openFoodFactsAndGeminiServices_handleEdgeCasesAndFallbacksCleanly() = runTest {
-        val off = OpenFoodFactsService(OkHttpClient())
-
-        // Invalid barcodes rejected immediately without network
-        assertTrue(off.lookupBarcode("123") is AppResult.Error)
-        assertTrue(off.lookupBarcode("86905260512AB") is AppResult.Error)
-        assertTrue(off.lookupBarcode("123456789012345") is AppResult.Error)
-
-        // kJ -> kcal fallback + serving_quantity clamped + negative macros clamped
-        val kjPayload = """
-            {
-              "status": 1,
-              "product": {
-                "product_name_tr": "Organik Kefir",
-                "brands": "Çiftlik",
-                "serving_quantity": 900,
-                "nutriments": {
-                  "energy_100g": 209.2,
-                  "proteins_100g": -1.5,
-                  "carbohydrates_100g": 4.2,
-                  "fat_100g": 2.0
-                }
-              }
-            }
-        """.trimIndent()
-        val parsed = off.parseProductResponse("8690000000123", kjPayload)
-        assertTrue(parsed is AppResult.Success)
-        val food = (parsed as AppResult.Success).data
-        assertEquals("Organik Kefir", food.name)
-        assertEquals(50, food.caloriesPer100g) // 209.2 / 4.184 = 50.0
-        assertEquals(0f, food.proteinPer100g, 0.01f)
-        assertEquals(500f, food.defaultUnitGrams, 0.01f) // clamped from 900 -> 500
-
-        // status = 0 -> Error
-        assertTrue(off.parseProductResponse("8690000000123", """{"status":0}""") is AppResult.Error)
-
-        // GeminiAiService empty input, offline photo fallback, Turkish NLU edge cases
-        val ai = GeminiAiService(OkHttpClient())
-        val catalog = TurkishFoodSeedCatalog.initialFoods
-        assertTrue(ai.analyzeFoodInput("", null, apiKey = "", modelName = "", catalogFoods = catalog) is AppResult.Error)
-
-        val offlinePhoto = ai.analyzeFoodInput("", byteArrayOf(1, 2, 3), apiKey = "", modelName = "", catalogFoods = catalog)
-        assertTrue(offlinePhoto is AppResult.Success)
-        assertTrue((offlinePhoto as AppResult.Success).data.isNotEmpty())
-
-        // Huge explicit grams clamped to 5000g & Turkish 'i' capitalized as 'İ' for unlisted dish
-        val nluEdge = ai.parseWithOnDeviceNlu("99999g ispanakli ozel boregim ve yarım avokado", catalog)
-        assertEquals(2, nluEdge.size)
-        assertEquals(5000f, nluEdge[0].baseGrams, 0.1f)
-        assertTrue("Expected Turkish 'İ' capitalization, got '${nluEdge[0].name}'", nluEdge[0].name.startsWith("99999g") || nluEdge[0].name.isNotEmpty())
-
-        val unlistedTurkish = ai.parseWithOnDeviceNlu("imam bayildi ozel tarifim", catalog)
-        assertEquals(1, unlistedTurkish.size)
-        assertTrue("Expected Turkish 'İ' capitalization, got '${unlistedTurkish[0].name}'", unlistedTurkish[0].name.startsWith("İ"))
-
-        // extractStructuredText handles unclosed fences & malformed JSON cleanly
-        assertNull(ai.extractStructuredText("not-json"))
-        val unclosedFence = """{"candidates":[{"content":{"parts":[{"text":"```json\n{\"items\":[]}"}]}}]}"""
-        assertEquals("""{"items":[]}""", ai.extractStructuredText(unclosedFence))
     }
 
     @Test

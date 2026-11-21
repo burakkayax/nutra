@@ -12,12 +12,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -33,20 +32,21 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.nutra.app.core.designsystem.NutraCard
 import com.nutra.app.core.designsystem.NutraContentMaxWidth
 import com.nutra.app.core.designsystem.NutraDivider
 import com.nutra.app.core.designsystem.NutraFormatters
-import com.nutra.app.core.designsystem.NutraIconButton
 import com.nutra.app.core.designsystem.NutraMetricStepperRow
 import com.nutra.app.core.designsystem.NutraNumericInputDialog
 import com.nutra.app.core.designsystem.NutraSectionHeader
 import com.nutra.app.core.designsystem.NutraSegmentedControl
 import com.nutra.app.core.designsystem.NutraSelectableCard
+import com.nutra.app.core.designsystem.NutraStickyScreenHeader
+import com.nutra.app.core.designsystem.NutraStickySubScreenHeaderTopReservedPadding
 import com.nutra.app.core.designsystem.NutraSwitch
 import com.nutra.app.core.designsystem.NutraTheme
+import com.nutra.app.core.designsystem.rememberHeaderCollapseFraction
 import com.nutra.app.domain.model.ActivityLevel
 import com.nutra.app.domain.model.BiologicalSex
 import com.nutra.app.domain.model.GoalType
@@ -136,6 +136,9 @@ fun EditBodyProfileScreen(
 
     BackHandler(onBack = onNavigateBack)
 
+    val scrollState = rememberScrollState()
+    val headerCollapseFraction = rememberHeaderCollapseFraction(scrollState)
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -145,53 +148,14 @@ fun EditBodyProfileScreen(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .widthIn(max = NutraContentMaxWidth)
-                .fillMaxSize(),
+                .fillMaxSize()
+                .verticalScroll(scrollState)
+                .statusBarsPadding()
+                .padding(horizontal = NutraTheme.spacing.screen)
+                .padding(top = NutraStickySubScreenHeaderTopReservedPadding, bottom = NutraTheme.spacing.xxl),
+            verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.xxl),
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = NutraTheme.spacing.screen)
-                    .padding(top = NutraTheme.spacing.section, bottom = NutraTheme.spacing.md),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(NutraTheme.spacing.md),
-            ) {
-                NutraIconButton(
-                    icon = Icons.AutoMirrored.Rounded.ArrowBack,
-                    contentDescription = "Geri",
-                    onClick = onNavigateBack,
-                    size = 44.dp,
-                    iconSize = 20.dp,
-                )
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    Text(
-                        text = "Profili düzenle",
-                        style = NutraTheme.typography.titleMedium,
-                        color = colors.textPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = "Ölçülerini ve aktivite düzeyini güncel tut",
-                        style = NutraTheme.typography.caption,
-                        color = colors.textSecondary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = NutraTheme.spacing.screen)
-                    .padding(top = NutraTheme.spacing.md, bottom = NutraTheme.spacing.xxl),
-                verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.xxl),
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.md)) {
+            Column(verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.md)) {
                     NutraSectionHeader(title = "Cinsiyet")
                     NutraSegmentedControl(
                         items = BiologicalSex.entries,
@@ -430,8 +394,15 @@ fun EditBodyProfileScreen(
                 }
 
                 Spacer(Modifier.navigationBarsPadding())
-            }
         }
+
+        NutraStickyScreenHeader(
+            title = "Profili düzenle",
+            eyebrow = "Ölçülerini ve aktivite düzeyini güncel tut",
+            collapseFractionState = headerCollapseFraction,
+            onNavigateBack = onNavigateBack,
+            modifier = Modifier.align(Alignment.TopCenter),
+        )
     }
 
     val editingBodyField = activeBodyField

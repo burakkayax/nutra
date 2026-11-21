@@ -2,9 +2,6 @@ package com.nutra.app
 
 import com.nutra.app.core.database.FoodItemEntity
 import com.nutra.app.core.designsystem.NutraFormatters
-import com.nutra.app.core.network.GeminiAiService
-import com.nutra.app.core.network.OpenFoodFactsService
-import com.nutra.app.domain.model.AppResult
 import com.nutra.app.domain.model.ComboFoodEntry
 import com.nutra.app.domain.model.DailyAnalyticsPoint
 import com.nutra.app.domain.model.DailyNutritionSummary
@@ -24,7 +21,6 @@ import com.nutra.app.feature.analytics.AnalyticsUiState
 import com.nutra.app.feature.analytics.filterWeightTrendForRange
 import com.nutra.app.feature.analytics.summarizeAnalyticsRange
 import com.nutra.app.feature.dashboard.DashboardUiState
-import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -96,38 +92,6 @@ class NutraOptimizationTest {
     }
 
     @Test
-    fun openFoodFactsParser_handlesJsonNullAndUnexpectedTypesWithoutCrashing() {
-        val service = OpenFoodFactsService(OkHttpClient())
-        val payload = """
-            {
-              "status": 1,
-              "product": {
-                "product_name_tr": null,
-                "product_name": "Yulaf Sütü",
-                "brands": ["Organik", "Test"],
-                "serving_quantity": null,
-                "nutriments": {
-                  "energy-kcal_100g": 45.2,
-                  "proteins_100g": 1.1,
-                  "carbohydrates_100g": null,
-                  "fat_100g": 1.5
-                }
-              }
-            }
-        """.trimIndent()
-
-        val result = service.parseProductResponse("8690000000001", payload)
-        assertTrue(result is AppResult.Success)
-        val food = (result as AppResult.Success).data
-        assertEquals("Yulaf Sütü", food.name)
-        assertEquals("Paketli Ürün", food.subtitle)
-        assertEquals(45, food.caloriesPer100g)
-        assertEquals(1.1f, food.proteinPer100g, 0.01f)
-        assertEquals(20f, food.carbsPer100g, 0.01f)
-        assertEquals(1.5f, food.fatPer100g, 0.01f)
-    }
-
-    @Test
     fun contextualMealRanker_preparedStatsProduceIdenticalOrdering() {
         val engine = ContextualMealRankerAndComboEngine()
         val foods = listOf(
@@ -173,45 +137,6 @@ class NutraOptimizationTest {
             engine.rankFoodsForMeal(foods, logs, MealType.BREAKFAST, "tavuk", FoodCategory.ALL),
             engine.rankFoodsWithStats(foods, stats, MealType.BREAKFAST, "tavuk", FoodCategory.ALL),
         )
-    }
-
-    @Test
-    fun geminiService_extractStructuredTextSkipsThoughtPartsAndStripsMarkdownFences() {
-        val service = GeminiAiService(OkHttpClient())
-        val responseWithThought = """
-            {
-              "candidates": [
-                {
-                  "content": {
-                    "parts": [
-                      { "thought": true, "text": "Let me estimate the plate macros carefully..." },
-                      { "text": "```json\n{\"items\":[{\"name\":\"Yumurta\"}]}\n```" }
-                    ]
-                  }
-                }
-              ]
-            }
-        """.trimIndent()
-
-        assertEquals(
-            "{\"items\":[{\"name\":\"Yumurta\"}]}",
-            service.extractStructuredText(responseWithThought),
-        )
-
-        val thoughtOnlyResponse = """
-            {
-              "candidates": [
-                {
-                  "content": {
-                    "parts": [
-                      { "thought": true, "text": "Internal reasoning only" }
-                    ]
-                  }
-                }
-              ]
-            }
-        """.trimIndent()
-        assertNull(service.extractStructuredText(thoughtOnlyResponse))
     }
 
     @Test

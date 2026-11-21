@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
@@ -21,7 +22,6 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Refresh
@@ -38,7 +38,6 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.nutra.app.core.datastore.MAX_EXCLUDED_KEYWORDS
 import com.nutra.app.core.designsystem.NutraCard
@@ -48,9 +47,12 @@ import com.nutra.app.core.designsystem.NutraDivider
 import com.nutra.app.core.designsystem.NutraIconButton
 import com.nutra.app.core.designsystem.NutraSectionHeader
 import com.nutra.app.core.designsystem.NutraSelectableCard
+import com.nutra.app.core.designsystem.NutraStickyScreenHeader
+import com.nutra.app.core.designsystem.NutraStickySubScreenHeaderTopReservedPadding
 import com.nutra.app.core.designsystem.NutraSwitch
 import com.nutra.app.core.designsystem.NutraTextField
 import com.nutra.app.core.designsystem.NutraTheme
+import com.nutra.app.core.designsystem.rememberHeaderCollapseFraction
 import com.nutra.app.domain.metabolism.AdaptiveMetabolismEngine
 import com.nutra.app.domain.model.AllergenTag
 import com.nutra.app.domain.model.DietStyle
@@ -89,6 +91,9 @@ fun DietaryPreferencesScreen(
 
     BackHandler(onBack = onNavigateBack)
 
+    val scrollState = rememberScrollState()
+    val headerCollapseFraction = rememberHeaderCollapseFraction(scrollState)
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -98,55 +103,15 @@ fun DietaryPreferencesScreen(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .widthIn(max = NutraContentMaxWidth)
-                .fillMaxSize(),
+                .fillMaxSize()
+                .verticalScroll(scrollState)
+                .statusBarsPadding()
+                .padding(horizontal = NutraTheme.spacing.screen)
+                .padding(top = NutraStickySubScreenHeaderTopReservedPadding, bottom = NutraTheme.spacing.xxl),
+            verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.xxl),
         ) {
-            // Top bar matching DailyGoalsScreen & EditBodyProfileScreen
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = NutraTheme.spacing.screen)
-                    .padding(top = NutraTheme.spacing.section, bottom = NutraTheme.spacing.md),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(NutraTheme.spacing.md),
-            ) {
-                NutraIconButton(
-                    icon = Icons.AutoMirrored.Rounded.ArrowBack,
-                    contentDescription = "Geri",
-                    onClick = onNavigateBack,
-                    size = 44.dp,
-                    iconSize = 20.dp,
-                )
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    Text(
-                        text = "Beslenme tercihleri",
-                        style = NutraTheme.typography.titleMedium,
-                        color = colors.textPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = "Alerjenler, beslenme düzeni ve güvenlik ayarları",
-                        style = NutraTheme.typography.caption,
-                        color = colors.textSecondary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = NutraTheme.spacing.screen)
-                    .padding(top = NutraTheme.spacing.md, bottom = NutraTheme.spacing.xxl),
-                verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.xxl),
-            ) {
-                // 1. Diet style
-                Column(verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.md)) {
+            // 1. Diet style
+            Column(verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.md)) {
                     NutraSectionHeader(title = "Beslenme düzeni")
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         DietStyle.entries.forEach { style ->
@@ -166,10 +131,7 @@ fun DietaryPreferencesScreen(
 
                 // 2. Allergens
                 Column(verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.md)) {
-                    NutraSectionHeader(
-                        title = "Alerjenler ve kaçınılan gruplar",
-                        supportingText = if (dietary.excludedAllergens.isEmpty()) "Yok" else "${dietary.excludedAllergens.size} seçili",
-                    )
+                    NutraSectionHeader(title = "Alerjenler ve kaçınılan gruplar")
                     NutraCard(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text(
                             text = "Seçilen alerjenleri içeren besinler Nutra Intelligence önerilerinden hariç tutulur.",
@@ -311,7 +273,7 @@ fun DietaryPreferencesScreen(
                                     color = colors.textPrimary,
                                 )
                                 Text(
-                                    text = "Kilo trendine göre kalori hedefi önerisi göster (onayın olmadan değişmez)",
+                                    text = "Kilo trendine göre kalori hedefi önerisi göster",
                                     style = NutraTheme.typography.bodySmall,
                                     color = colors.textSecondary,
                                 )
@@ -373,7 +335,14 @@ fun DietaryPreferencesScreen(
                 }
 
                 Spacer(Modifier.navigationBarsPadding())
-            }
         }
+
+        NutraStickyScreenHeader(
+            title = "Beslenme tercihleri",
+            eyebrow = "Diyet ve tercihlerinizi ayarlayın",
+            collapseFractionState = headerCollapseFraction,
+            onNavigateBack = onNavigateBack,
+            modifier = Modifier.align(Alignment.TopCenter),
+        )
     }
 }

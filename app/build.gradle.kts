@@ -104,8 +104,6 @@ dependencies {
     ksp(libs.hilt.compiler)
     compileOnly(libs.errorprone.annotations)
 
-    implementation(libs.okhttp)
-
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.kotlinx.serialization.json)

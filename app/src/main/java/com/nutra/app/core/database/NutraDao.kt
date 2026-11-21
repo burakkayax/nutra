@@ -56,9 +56,6 @@ interface NutraDao {
     @Query("SELECT * FROM food_items WHERE id = :foodId LIMIT 1")
     suspend fun findFoodById(foodId: Long): FoodItemEntity?
 
-    @Query("SELECT * FROM food_items WHERE barcode = :barcode LIMIT 1")
-    suspend fun findFoodByBarcode(barcode: String): FoodItemEntity?
-
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertFoods(foods: List<FoodItemEntity>)
 

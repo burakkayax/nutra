@@ -6,7 +6,6 @@ import androidx.compose.ui.unit.Velocity
 import com.nutra.app.core.database.TurkishFoodSeedCatalog
 import com.nutra.app.core.designsystem.NutraFormatters
 import com.nutra.app.core.designsystem.createModalSheetNestedScrollGuard
-import com.nutra.app.core.network.GeminiAiService
 import com.nutra.app.domain.model.FoodCategory
 import com.nutra.app.domain.model.FoodItem
 import com.nutra.app.domain.model.MacroGoals
@@ -22,7 +21,6 @@ import com.nutra.app.domain.usecase.NutritionCalculatorUseCase
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -85,32 +83,6 @@ class NutraAuditFixesTest {
     }
 
     @Test
-    fun onDeviceNluParser_preservesTurkishDecimalCommaAndCaseInsensitiveConnectors() {
-        val aiService = GeminiAiService(OkHttpClient())
-        val catalog = TurkishFoodSeedCatalog.initialFoods
-
-        val bulgur = catalog.first { it.name.equals("Bulgur Pilavı", ignoreCase = true) }
-        val decimalItems = aiService.parseWithOnDeviceNlu(
-            text = "1,5 porsiyon bulgur pilavı",
-            catalogFoods = catalog,
-        )
-        assertEquals(1, decimalItems.size)
-        assertTrue(decimalItems.first().name.contains("Bulgur"))
-        assertEquals(bulgur.defaultUnitGrams * 1.5f, decimalItems.first().baseGrams, 0.5f)
-
-        val connectedItems = aiService.parseWithOnDeviceNlu(
-            text = "2 haşlanmış yumurta VE 150g ızgara tavuk göğsü artı 1 muz",
-            catalogFoods = catalog,
-        )
-        assertEquals(3, connectedItems.size)
-        assertTrue(connectedItems[0].name.contains("Yumurta"))
-        assertEquals(100f, connectedItems[0].baseGrams, 0.1f)
-        assertTrue(connectedItems[1].name.contains("Tavuk"))
-        assertEquals(150f, connectedItems[1].baseGrams, 0.1f)
-        assertTrue(connectedItems[2].name.contains("Muz"))
-    }
-
-    @Test
     fun contextualCombos_produceValidSuggestionsAcrossAllMeals() {
         val engine = ContextualMealRankerAndComboEngine()
         val catalog = TurkishFoodSeedCatalog.initialFoods.mapIndexed { idx, item ->
@@ -138,8 +110,6 @@ class NutraAuditFixesTest {
             userProfile = UserProfile(
                 themePreference = ThemePreference.DARK,
                 useDynamicColor = true,
-                geminiApiKey = "test-key",
-                geminiModel = "gemini-2.5-flash",
                 onboardingCompleted = true,
                 goals = MacroGoals(calories = 2200, proteinGrams = 160, carbsGrams = 220, fatGrams = 75, waterMl = 2800),
             ),

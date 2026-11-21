@@ -417,7 +417,6 @@ private fun HapticScrubbingCalorieChartCard(
             scrubbedIndexState = scrubbedIndexState,
             targetCalories = targetCalories,
             averageCalories = averageCalories,
-            onScrub = onScrub,
         )
 
         if (!hasAnyCalories) {
@@ -479,7 +478,6 @@ private fun CalorieChartHeader(
     scrubbedIndexState: State<Int?>,
     targetCalories: Int,
     averageCalories: Int,
-    onScrub: (Int?) -> Unit,
 ) {
     val colors = NutraTheme.colors
     val scrubbedIndex = scrubbedIndexState.value
@@ -488,49 +486,33 @@ private fun CalorieChartHeader(
     val displayedCalories = scrubbedPoint?.calories ?: averageCalories
     val displayedTargetCalories = scrubbedPoint?.targetCalories ?: targetCalories
 
-    Row(
+    Column(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
+        Text(
+            text = if (scrubbedDateLabel != null) {
+                "$scrubbedDateLabel · Kalori"
+            } else {
+                "Kalori"
+            },
+            style = NutraTheme.typography.caption,
+            color = if (scrubbedPoint != null) colors.accent else colors.textSecondary,
+        )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Text(
-                text = if (scrubbedDateLabel != null) {
-                    "$scrubbedDateLabel · Kalori"
-                } else {
-                    "Kalori"
-                },
-                style = NutraTheme.typography.caption,
-                color = if (scrubbedPoint != null) colors.accent else colors.textSecondary,
+                text = NutraFormatters.formatInt(displayedCalories),
+                style = NutraTheme.typography.numberLarge,
+                color = colors.textPrimary,
+                modifier = Modifier.alignByBaseline(),
             )
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Text(
-                    text = NutraFormatters.formatInt(displayedCalories),
-                    style = NutraTheme.typography.numberLarge,
-                    color = colors.textPrimary,
-                    modifier = Modifier.alignByBaseline(),
-                )
-                Text(
-                    text = "/ ${NutraFormatters.formatInt(displayedTargetCalories)} kcal",
-                    style = NutraTheme.typography.body,
-                    color = colors.textSecondary,
-                    modifier = Modifier.alignByBaseline(),
-                )
-            }
-        }
-
-        if (scrubbedPoint != null) {
-            NutraButton(
-                text = "Ortalama",
-                onClick = { onScrub(null) },
-                style = NutraButtonStyle.Secondary,
-                size = NutraButtonSize.Small,
-                leadingIcon = Icons.Rounded.Refresh,
+            Text(
+                text = "/ ${NutraFormatters.formatInt(displayedTargetCalories)} kcal",
+                style = NutraTheme.typography.body,
+                color = colors.textSecondary,
+                modifier = Modifier.alignByBaseline(),
             )
         }
     }
@@ -569,7 +551,6 @@ private fun HapticScrubbingWaterChartCard(
             scrubbedIndexState = scrubbedIndexState,
             targetWaterMl = targetWaterMl,
             averageWaterMl = averageWaterMl,
-            onScrub = onScrub,
         )
 
         if (!hasAnyWater) {
@@ -629,7 +610,6 @@ private fun WaterChartHeader(
     scrubbedIndexState: State<Int?>,
     targetWaterMl: Int,
     averageWaterMl: Int,
-    onScrub: (Int?) -> Unit,
 ) {
     val colors = NutraTheme.colors
     val scrubbedIndex = scrubbedIndexState.value
@@ -637,49 +617,33 @@ private fun WaterChartHeader(
     val scrubbedDateLabel = scrubbedPoint?.let { NutraFormatters.formatShortDate(it.dateIso, todayIso) }
     val displayedWaterMl = scrubbedPoint?.waterMl ?: averageWaterMl
 
-    Row(
+    Column(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
+        Text(
+            text = if (scrubbedDateLabel != null) {
+                "$scrubbedDateLabel · Su"
+            } else {
+                "Su"
+            },
+            style = NutraTheme.typography.caption,
+            color = if (scrubbedPoint != null) colors.accent else colors.textSecondary,
+        )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Text(
-                text = if (scrubbedDateLabel != null) {
-                    "$scrubbedDateLabel · Su"
-                } else {
-                    "Su"
-                },
-                style = NutraTheme.typography.caption,
-                color = if (scrubbedPoint != null) colors.accent else colors.textSecondary,
+                text = NutraFormatters.formatInt(displayedWaterMl),
+                style = NutraTheme.typography.numberLarge,
+                color = colors.textPrimary,
+                modifier = Modifier.alignByBaseline(),
             )
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Text(
-                    text = NutraFormatters.formatInt(displayedWaterMl),
-                    style = NutraTheme.typography.numberLarge,
-                    color = colors.textPrimary,
-                    modifier = Modifier.alignByBaseline(),
-                )
-                Text(
-                    text = "/ ${NutraFormatters.formatInt(targetWaterMl)} ml",
-                    style = NutraTheme.typography.body,
-                    color = colors.textSecondary,
-                    modifier = Modifier.alignByBaseline(),
-                )
-            }
-        }
-
-        if (scrubbedPoint != null) {
-            NutraButton(
-                text = "Ortalama",
-                onClick = { onScrub(null) },
-                style = NutraButtonStyle.Secondary,
-                size = NutraButtonSize.Small,
-                leadingIcon = Icons.Rounded.Refresh,
+            Text(
+                text = "/ ${NutraFormatters.formatInt(targetWaterMl)} ml",
+                style = NutraTheme.typography.body,
+                color = colors.textSecondary,
+                modifier = Modifier.alignByBaseline(),
             )
         }
     }

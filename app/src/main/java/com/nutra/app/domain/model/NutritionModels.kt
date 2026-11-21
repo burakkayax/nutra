@@ -363,8 +363,6 @@ data class UserProfile(
     val onboardingCompleted: Boolean = false,
     val themePreference: ThemePreference = ThemePreference.SYSTEM,
     val useDynamicColor: Boolean = false,
-    val geminiApiKey: String = "",
-    val geminiModel: String = "gemini-2.5-flash",
     val waterReminder: WaterReminderSettings = WaterReminderSettings(),
     val dietaryProfile: DietaryProfile = DietaryProfile(),
     val adaptiveMetabolismEnabled: Boolean = true,
@@ -474,33 +472,6 @@ data class SmartComboSuggestion(
         totalCarbs = c.toFloat()
         totalFat = f.toFloat()
         itemsPreview = items.joinToString(" · ") { it.foodName }
-    }
-}
-
-@Immutable
-data class AiAnalyzedFoodItem(
-    val id: String,
-    val name: String,
-    val unitLabel: String,
-    val baseGrams: Float,
-    val multiplier: Float = 1f,
-    val baseCalories: Int,
-    val baseProtein: Float,
-    val baseCarbs: Float,
-    val baseFat: Float,
-    val confidence: Float = 0.92f,
-    val included: Boolean = true,
-) {
-    private val safeMultiplier: Float get() = if (multiplier.isFinite() && multiplier > 0f) multiplier else 1f
-    val effectiveGrams: Float get() = if (baseGrams.isFinite() && baseGrams > 0f) baseGrams * safeMultiplier else 0f
-    val effectiveCalories: Int get() = (baseCalories.coerceAtLeast(0).toDouble() * safeMultiplier).roundToInt().coerceAtLeast(0)
-    val effectiveProtein: Float get() = scaleBaseMacro(baseProtein, safeMultiplier)
-    val effectiveCarbs: Float get() = scaleBaseMacro(baseCarbs, safeMultiplier)
-    val effectiveFat: Float get() = scaleBaseMacro(baseFat, safeMultiplier)
-
-    private fun scaleBaseMacro(base: Float, mult: Float): Float {
-        if (!base.isFinite() || base <= 0f) return 0f
-        return ((base.toDouble() * mult * 10.0).roundToInt() / 10f).coerceAtLeast(0f)
     }
 }
 

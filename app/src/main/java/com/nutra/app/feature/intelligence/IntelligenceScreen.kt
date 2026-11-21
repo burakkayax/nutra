@@ -18,21 +18,24 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Close
@@ -52,6 +55,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nutra.app.core.designsystem.NutraBadge
@@ -71,7 +75,10 @@ import com.nutra.app.core.designsystem.NutraLinearProgress
 import com.nutra.app.core.designsystem.NutraSnackbarHost
 import com.nutra.app.core.designsystem.NutraSnackbarTone
 import com.nutra.app.core.designsystem.NutraStepperButton
+import com.nutra.app.core.designsystem.NutraStickyScreenHeader
+import com.nutra.app.core.designsystem.NutraStickySubScreenHeaderTopReservedPadding
 import com.nutra.app.core.designsystem.NutraTheme
+import com.nutra.app.core.designsystem.rememberHeaderCollapseFraction
 import com.nutra.app.domain.intelligence.MealRecommendation
 import com.nutra.app.domain.intelligence.RecommendedFoodPortion
 import com.nutra.app.domain.model.MealType
@@ -236,8 +243,17 @@ fun NutraIntelligenceScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val colors = NutraTheme.colors
+    val listState = rememberLazyListState()
+    val headerCollapseFraction = rememberHeaderCollapseFraction(listState)
+    val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val mealChipsListState = rememberLazyListState()
 
     BackHandler(onBack = onNavigateBack)
+
+    LaunchedEffect(state.selectedMealType) {
+        val targetIdx = MealType.entries.indexOf(state.selectedMealType).coerceAtLeast(0)
+        mealChipsListState.animateScrollToItem(targetIdx)
+    }
 
     LaunchedEffect(state.feedbackEventId, state.feedbackMessage) {
         if (state.feedbackMessage != null) {
@@ -251,81 +267,45 @@ fun NutraIntelligenceScreen(
             .fillMaxSize()
             .background(colors.background),
     ) {
-        Column(
+        Box(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .widthIn(max = NutraContentMaxWidth)
                 .fillMaxSize(),
         ) {
-            // Top bar
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = NutraTheme.spacing.screen)
-                    .padding(top = NutraTheme.spacing.section, bottom = NutraTheme.spacing.md),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(NutraTheme.spacing.md),
-            ) {
-                NutraIconButton(
-                    icon = Icons.AutoMirrored.Rounded.ArrowBack,
-                    contentDescription = "Geri",
-                    onClick = onNavigateBack,
-                    size = 44.dp,
-                    iconSize = 20.dp,
-                )
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    Text(
-                        text = "Nutra Intelligence",
-                        style = NutraTheme.typography.titleMedium,
-                        color = colors.textPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = "Kişiselleştirilmiş öğün ve porsiyon",
-                        style = NutraTheme.typography.caption,
-                        color = colors.textSecondary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-
-            // Meal selector chips
-            val mealChipsListState = rememberLazyListState()
-            LaunchedEffect(state.selectedMealType) {
-                val targetIdx = MealType.entries.indexOf(state.selectedMealType).coerceAtLeast(0)
-                mealChipsListState.animateScrollToItem(targetIdx)
-            }
-            LazyRow(
-                state = mealChipsListState,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = NutraTheme.spacing.screen),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                items(MealType.entries, key = { it.name }) { meal ->
-                    NutraChip(
-                        text = meal.title,
-                        selected = meal == state.selectedMealType,
-                        onClick = { viewModel.selectMealType(meal) },
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(12.dp))
-
-            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                RecommendationsTabContent(
-                    state = state,
-                    viewModel = viewModel,
-                    onLoggedMeal = onLoggedMeal,
-                )
-            }
+            RecommendationsTabContent(
+                state = state,
+                viewModel = viewModel,
+                listState = listState,
+                topPadding = statusBarTop + NutraStickySubScreenHeaderTopReservedPadding + 52.dp,
+                onLoggedMeal = onLoggedMeal,
+            )
         }
+
+        NutraStickyScreenHeader(
+            title = "Nutra Intelligence",
+            eyebrow = "Kişiselleştirilmiş öğün ve porsiyon",
+            collapseFractionState = headerCollapseFraction,
+            onNavigateBack = onNavigateBack,
+            modifier = Modifier.align(Alignment.TopCenter),
+            bottomContent = {
+                LazyRow(
+                    state = mealChipsListState,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(MealType.entries, key = { it.name }) { meal ->
+                        NutraChip(
+                            text = meal.title,
+                            selected = meal == state.selectedMealType,
+                            onClick = { viewModel.selectMealType(meal) },
+                        )
+                    }
+                }
+            },
+        )
 
         NutraSnackbarHost(
             visible = state.feedbackMessage != null,
@@ -343,13 +323,20 @@ fun NutraIntelligenceScreen(
 private fun RecommendationsTabContent(
     state: IntelligenceUiState,
     viewModel: IntelligenceViewModel,
+    listState: LazyListState,
+    topPadding: Dp,
     onLoggedMeal: (MealType, String) -> Unit,
 ) {
     val colors = NutraTheme.colors
     val report = state.report
 
     if (report == null) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = topPadding),
+            contentAlignment = Alignment.Center,
+        ) {
             Text(
                 text = "Öneriler hazırlanıyor...",
                 style = NutraTheme.typography.body,
@@ -360,11 +347,12 @@ private fun RecommendationsTabContent(
     }
 
     LazyColumn(
+        state = listState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(
             start = NutraTheme.spacing.screen,
             end = NutraTheme.spacing.screen,
-            top = 4.dp,
+            top = topPadding,
             bottom = 36.dp,
         ),
         verticalArrangement = Arrangement.spacedBy(14.dp),

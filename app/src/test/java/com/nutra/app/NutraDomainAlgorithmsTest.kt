@@ -1,7 +1,6 @@
 package com.nutra.app
 
 import com.nutra.app.core.database.TurkishFoodSeedCatalog
-import com.nutra.app.core.network.GeminiAiService
 import com.nutra.app.domain.model.ActivityLevel
 import com.nutra.app.domain.model.BiologicalSex
 import com.nutra.app.domain.model.FoodCategory
@@ -15,7 +14,6 @@ import com.nutra.app.domain.usecase.MacroGoalBounds
 import com.nutra.app.domain.usecase.NutritionCalculatorUseCase
 import com.nutra.app.domain.usecase.TurkishTextNormalizer
 import com.nutra.app.domain.usecase.WeightTrendCalculator
-import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -178,23 +176,5 @@ class NutraDomainAlgorithmsTest {
         )
         assertTrue(combos.isNotEmpty())
         assertEquals(2, combos.first().coOccurrenceCount)
-    }
-
-    @Test
-    fun onDeviceNluParser_splitsNaturalLanguageIntoAccurateFoodItems() {
-        val aiService = GeminiAiService(OkHttpClient())
-        val catalog = TurkishFoodSeedCatalog.initialFoods
-
-        val items = aiService.parseWithOnDeviceNlu(
-            text = "2 haşlanmış yumurta, 30g ezine beyaz peynir ve 1 ince dilim tam buğday ekmeği",
-            catalogFoods = catalog,
-        )
-
-        assertEquals(3, items.size)
-        assertTrue(items[0].name.contains("Yumurta"))
-        assertEquals(100f, items[0].baseGrams, 0.1f)
-        assertTrue(items[1].name.contains("Ezine"))
-        assertEquals(30f, items[1].baseGrams, 0.1f)
-        assertTrue(items[2].name.contains("Tam Buğday"))
     }
 }

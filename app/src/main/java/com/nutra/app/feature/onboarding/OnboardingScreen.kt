@@ -3,6 +3,8 @@ package com.nutra.app.feature.onboarding
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -10,8 +12,8 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,6 +22,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -28,7 +31,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.widthIn
@@ -39,10 +41,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.Check
-import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Refresh
-import androidx.compose.material3.Icon
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -53,9 +53,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -266,7 +268,7 @@ fun OnboardingScreen(
                     },
                     style = NutraButtonStyle.Primary,
                     size = NutraButtonSize.Large,
-                    trailingIcon = if (isLast) Icons.Rounded.Check else Icons.AutoMirrored.Rounded.ArrowForward,
+                    trailingIcon = if (isLast) null else Icons.AutoMirrored.Rounded.ArrowForward,
                     loading = isLast && state.isCompleting,
                     enabled = !state.isCompleting,
                     hapticFeedback = if (isLast) HapticFeedbackType.Confirm else HapticFeedbackType.TextHandleMove,
@@ -281,12 +283,12 @@ fun OnboardingScreen(
             onDismissRequest = { showSkipDialog = false },
             title = "Kurulumu atla?",
             message = "Varsayılan günlük hedeflerle (${NutraFormatters.formatInt(state.customGoals.calories)} kcal) hemen başlayabilir, ölçülerini daha sonra Profil sekmesinden güncelleyebilirsin.",
-            confirmText = "Hemen başla",
+            confirmText = "Atla",
             onConfirm = {
                 showSkipDialog = false
                 viewModel.completeOnboarding(onOnboardingFinished)
             },
-            dismissText = "Devam et",
+            dismissText = "Geri",
             onDismiss = { showSkipDialog = false },
         )
     }
@@ -589,8 +591,16 @@ private fun DailyPlanReviewStep(
 
         // Hero calorie summary card
         NutraCard {
+            val pillInteractionSource = remember { MutableInteractionSource() }
+            val isPillPressed by pillInteractionSource.collectIsPressedAsState()
+            val pillPressScaleState = animateFloatAsState(
+                targetValue = if (isPillPressed) 0.97f else 1f,
+                animationSpec = spring(dampingRatio = 0.72f, stiffness = 550f),
+                label = "caloriePillPressScale",
+            )
+
             Text(
-                text = "Günlük kalori hedefi",
+                text = "Günlük kalori hedefi (kcal/gün)",
                 style = NutraTheme.typography.label,
                 color = colors.textSecondary,
                 textAlign = TextAlign.Center,
@@ -601,56 +611,54 @@ private fun DailyPlanReviewStep(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = NutraTheme.spacing.md),
-                horizontalArrangement = Arrangement.spacedBy(NutraTheme.spacing.md, Alignment.CenterHorizontally),
+                horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 NutraStepperButton(
                     icon = NutraIcons.Remove,
                     contentDescription = "50 kcal azalt",
                     onClick = { onAdjustCalories(-50) },
-                    size = 44.dp,
+                    size = 48.dp,
                 )
 
-                Box(
-                    modifier = Modifier.weight(1f),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .clip(NutraTheme.shapes.md)
-                            .background(colors.surfaceMuted)
-                            .border(1.dp, colors.divider, NutraTheme.shapes.md)
-                            .clickable(role = Role.Button, onClickLabel = "Kalori hedefini yaz") {
+                Surface(
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onEditField(OnboardingNumericField.CALORIES)
+                    },
+                    interactionSource = pillInteractionSource,
+                    modifier = Modifier
+                        .widthIn(min = 144.dp)
+                        .heightIn(min = 48.dp)
+                        .graphicsLayer {
+                            val s = pillPressScaleState.value
+                            scaleX = s
+                            scaleY = s
+                        }
+                        .semantics {
+                            onClick(label = "Kalori hedefini yaz") {
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 onEditField(OnboardingNumericField.CALORIES)
+                                true
                             }
-                            .padding(horizontal = 16.dp, vertical = 10.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
+                        },
+                    shape = NutraTheme.shapes.pill,
+                    color = colors.surfaceMuted,
+                    contentColor = colors.textPrimary,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .defaultMinSize(minHeight = 48.dp)
+                            .padding(horizontal = 24.dp),
+                        contentAlignment = Alignment.Center,
                     ) {
                         Text(
                             text = NutraFormatters.formatInt(goals.calories),
-                            style = NutraTheme.typography.numberHero,
-                            color = colors.textPrimary,
+                            style = NutraTheme.typography.numberLarge,
+                            textAlign = TextAlign.Center,
                             maxLines = 1,
                             softWrap = false,
                         )
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            Text(
-                                text = "kcal / gün",
-                                style = NutraTheme.typography.caption,
-                                color = colors.accent,
-                                maxLines = 1,
-                            )
-                            Icon(
-                                imageVector = Icons.Rounded.Edit,
-                                contentDescription = null,
-                                tint = colors.accent,
-                                modifier = Modifier.size(12.dp),
-                            )
-                        }
                     }
                 }
 
@@ -658,7 +666,7 @@ private fun DailyPlanReviewStep(
                     icon = Icons.Rounded.Add,
                     contentDescription = "50 kcal artır",
                     onClick = { onAdjustCalories(50) },
-                    size = 44.dp,
+                    size = 48.dp,
                 )
             }
 

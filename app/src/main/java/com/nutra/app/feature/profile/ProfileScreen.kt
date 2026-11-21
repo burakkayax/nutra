@@ -4,7 +4,6 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,12 +21,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
-import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -37,22 +33,15 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -60,13 +49,11 @@ import com.nutra.app.core.designsystem.NutraButton
 import com.nutra.app.core.designsystem.NutraButtonSize
 import com.nutra.app.core.designsystem.NutraButtonStyle
 import com.nutra.app.core.designsystem.NutraCard
-import com.nutra.app.core.designsystem.NutraChip
 import com.nutra.app.core.designsystem.NutraContentMaxWidth
 import com.nutra.app.core.designsystem.NutraDialog
 import com.nutra.app.core.designsystem.NutraDivider
 import com.nutra.app.core.designsystem.NutraFormatters
 import com.nutra.app.core.designsystem.NutraIconBadge
-import com.nutra.app.core.designsystem.NutraIconButton
 import com.nutra.app.core.designsystem.NutraIcons
 import com.nutra.app.core.designsystem.NutraListRow
 import com.nutra.app.core.designsystem.NutraSectionHeader
@@ -77,7 +64,6 @@ import com.nutra.app.core.designsystem.NutraSnackbarTone
 import com.nutra.app.core.designsystem.NutraStickyHeaderTopReservedPadding
 import com.nutra.app.core.designsystem.NutraStickyScreenHeader
 import com.nutra.app.core.designsystem.NutraSwitch
-import com.nutra.app.core.designsystem.NutraTextField
 import com.nutra.app.core.designsystem.NutraTheme
 import com.nutra.app.core.designsystem.rememberHeaderCollapseFraction
 import com.nutra.app.core.designsystem.rememberSkeletonPulseAlpha
@@ -85,12 +71,6 @@ import com.nutra.app.core.notification.WaterReminderScheduleCalculator
 import com.nutra.app.domain.model.ThemePreference
 import kotlinx.coroutines.delay
 import java.time.LocalDate
-
-private val GEMINI_MODEL_PRESETS = listOf(
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-2.5-pro",
-)
 
 @Composable
 fun ProfileScreen(
@@ -116,7 +96,6 @@ fun ProfileScreen(
     val listState = rememberLazyListState()
     val headerCollapseFraction = rememberHeaderCollapseFraction(listState)
 
-    var showGeminiDialog by remember { mutableStateOf(false) }
     var pendingImportUri by remember { mutableStateOf<Uri?>(null) }
 
     LaunchedEffect(scrollToTopTrigger) {
@@ -378,38 +357,12 @@ fun ProfileScreen(
                 }
             }
 
-            // 4. AI & Backup management
-            item(key = "ai_and_data") {
+            // 4. Backup & data management
+            item(key = "data_backup") {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    NutraSectionHeader(title = "Yapay zeka ve veri")
+                    NutraSectionHeader(title = "Veri ve yedekleme")
 
                     NutraCard(contentPadding = PaddingValues(horizontal = NutraTheme.spacing.card, vertical = NutraTheme.spacing.sm)) {
-                        NutraListRow(
-                            title = "Gemini AI bağlantısı",
-                            subtitle = if (profile.geminiApiKey.isNotBlank()) {
-                                "Özel anahtar aktif · ${profile.geminiModel}"
-                            } else {
-                                "Cihaz içi akıllı ayrıştırıcı aktif"
-                            },
-                            leading = {
-                                NutraIconBadge(
-                                    icon = NutraIcons.AutoAwesome,
-                                    tint = colors.textPrimary,
-                                    container = colors.surfaceMuted,
-                                )
-                            },
-                            trailing = {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                                    contentDescription = null,
-                                    tint = colors.textTertiary,
-                                )
-                            },
-                            onClick = { showGeminiDialog = true },
-                        )
-
-                        NutraDivider(startIndent = 54.dp)
-
                         NutraListRow(
                             title = "Verileri dışa aktar",
                             subtitle = if (state.isBackupBusy) "İşleniyor..." else "Kayıtları JSON yedeği olarak indir",
@@ -530,18 +483,6 @@ fun ProfileScreen(
             destructive = true,
         )
     }
-
-    if (showGeminiDialog) {
-        GeminiConfigDialog(
-            initialApiKey = profile.geminiApiKey,
-            initialModel = profile.geminiModel,
-            onDismiss = { showGeminiDialog = false },
-            onSave = { apiKey, model ->
-                viewModel.saveGeminiConfig(apiKey, model)
-                showGeminiDialog = false
-            },
-        )
-    }
 }
 
 @Composable
@@ -611,100 +552,5 @@ private fun BodyStatColumn(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-    }
-}
-
-@Composable
-private fun GeminiConfigDialog(
-    initialApiKey: String,
-    initialModel: String,
-    onDismiss: () -> Unit,
-    onSave: (apiKey: String, model: String) -> Unit,
-) {
-    val focusManager = LocalFocusManager.current
-    val keyboardController = LocalSoftwareKeyboardController.current
-    var apiKeyInput by rememberSaveable(initialApiKey) { mutableStateOf(initialApiKey) }
-    var modelInput by rememberSaveable(initialModel) { mutableStateOf(initialModel) }
-    var showApiKey by remember { mutableStateOf(false) }
-
-    NutraDialog(
-        onDismissRequest = onDismiss,
-        title = "Gemini AI bağlantısı",
-        message = "İsteğe bağlı Gemini API anahtarınla fotoğraf ve serbest metin analizi yapabilirsin. Boş bırakılırsa cihaz içi ayrıştırıcı çalışır.",
-        confirmText = "Kaydet",
-        onConfirm = { onSave(apiKeyInput, modelInput) },
-        dismissText = "Vazgeç",
-        onDismiss = onDismiss,
-    ) {
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            NutraTextField(
-                value = apiKeyInput,
-                onValueChange = { apiKeyInput = it },
-                label = "Gemini API anahtarı",
-                placeholder = "AIza...",
-                trailing = if (apiKeyInput.isNotEmpty()) {
-                    {
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            NutraIconButton(
-                                icon = if (showApiKey) NutraIcons.VisibilityOff else NutraIcons.Visibility,
-                                contentDescription = if (showApiKey) "Anahtarı gizle" else "Anahtarı göster",
-                                onClick = { showApiKey = !showApiKey },
-                                size = 40.dp,
-                                iconSize = 18.dp,
-                                containerColor = NutraTheme.colors.surfaceElevated,
-                            )
-                            NutraIconButton(
-                                icon = Icons.Rounded.Close,
-                                contentDescription = "Temizle",
-                                onClick = { apiKeyInput = "" },
-                                size = 40.dp,
-                                iconSize = 16.dp,
-                                containerColor = NutraTheme.colors.surfaceElevated,
-                            )
-                        }
-                    }
-                } else {
-                    null
-                },
-                visualTransformation = if (showApiKey) VisualTransformation.None else PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-                keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Next) }),
-                singleLine = true,
-            )
-            NutraTextField(
-                value = modelInput,
-                onValueChange = { modelInput = it },
-                label = "Model",
-                placeholder = "gemini-2.5-flash",
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(
-                    onDone = {
-                        keyboardController?.hide()
-                        onSave(apiKeyInput, modelInput)
-                    },
-                ),
-                singleLine = true,
-            )
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                GEMINI_MODEL_PRESETS.forEach { preset ->
-                    NutraChip(
-                        text = preset,
-                        selected = modelInput.trim().equals(preset, ignoreCase = true),
-                        onClick = { modelInput = preset },
-                    )
-                }
-            }
-        }
     }
 }

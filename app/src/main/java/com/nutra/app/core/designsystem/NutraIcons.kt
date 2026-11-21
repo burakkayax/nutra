@@ -49,26 +49,11 @@ object NutraIcons {
     val SearchOff: ImageVector
         @Composable get() = ImageVector.vectorResource(R.drawable.ic_search_off_rounded)
 
-    val AutoAwesome: ImageVector
-        @Composable get() = ImageVector.vectorResource(R.drawable.ic_auto_awesome_rounded)
-
-    val PhotoCamera: ImageVector
-        @Composable get() = ImageVector.vectorResource(R.drawable.ic_photo_camera_rounded)
-
-    val QrCodeScanner: ImageVector
-        @Composable get() = ImageVector.vectorResource(R.drawable.ic_qr_code_scanner_rounded)
-
     val FileDownload: ImageVector
         @Composable get() = ImageVector.vectorResource(R.drawable.ic_file_download_rounded)
 
     val FileUpload: ImageVector
         @Composable get() = ImageVector.vectorResource(R.drawable.ic_file_upload_rounded)
-
-    val Visibility: ImageVector
-        @Composable get() = ImageVector.vectorResource(R.drawable.ic_visibility_rounded)
-
-    val VisibilityOff: ImageVector
-        @Composable get() = ImageVector.vectorResource(R.drawable.ic_visibility_off_rounded)
 
     val TrendingDown: ImageVector
         @Composable get() = ImageVector.vectorResource(R.drawable.ic_trending_down_rounded)

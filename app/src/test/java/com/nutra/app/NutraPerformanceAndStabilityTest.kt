@@ -2,8 +2,6 @@ package com.nutra.app
 
 import com.nutra.app.core.database.TurkishFoodSeedCatalog
 import com.nutra.app.core.designsystem.NutraFormatters
-import com.nutra.app.core.network.GeminiAiService
-import com.nutra.app.core.network.await
 import com.nutra.app.domain.model.FoodCategory
 import com.nutra.app.domain.model.MealLogItem
 import com.nutra.app.domain.model.MealType
@@ -17,21 +15,6 @@ import com.nutra.app.domain.usecase.WeightTrendCalculator
 import com.nutra.app.feature.analytics.resolveNearestXIndex
 import com.nutra.app.feature.profile.BoundedReadResult
 import com.nutra.app.feature.profile.readBoundedUtf8Stream
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.test.runTest
-import okhttp3.Call
-import okhttp3.Callback
-import okhttp3.EventListener
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Protocol
-import okhttp3.Request
-import okhttp3.Response
-import okhttp3.ResponseBody
-import okio.BufferedSource
-import okio.Buffer
-import okio.Timeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -40,9 +23,7 @@ import org.junit.Test
 import java.io.ByteArrayInputStream
 import java.text.NumberFormat
 import java.time.LocalDate
-import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
-import kotlin.reflect.KClass
 
 class NutraPerformanceAndStabilityTest {
 
@@ -153,7 +134,7 @@ class NutraPerformanceAndStabilityTest {
     }
 
     @Test
-    fun contextualRankerAndNlu_workAccuratelyOnLargeSyntheticCatalog() {
+    fun contextualRanker_worksAccuratelyOnLargeSyntheticCatalog() {
         val baseCatalog = TurkishFoodSeedCatalog.initialFoods.mapIndexed { idx, f ->
             f.copy(
                 id = idx + 1L,
@@ -190,12 +171,6 @@ class NutraPerformanceAndStabilityTest {
         val combos = engine.buildSmartComboSuggestions(MealType.BREAKFAST, emptyList(), history, largeCatalog)
         assertTrue(combos.isNotEmpty())
         assertEquals(2, combos.first().coOccurrenceCount)
-
-        val aiService = GeminiAiService(OkHttpClient())
-        val parsed = aiService.parseWithOnDeviceNlu("2 haşlanmış yumurta ve 40g ezine beyaz peynir", largeCatalog)
-        assertEquals(2, parsed.size)
-        assertTrue(parsed[0].name.contains("Yumurta"))
-        assertTrue(parsed[1].name.contains("Ezine"))
     }
 
     @Test
@@ -233,64 +208,5 @@ class NutraPerformanceAndStabilityTest {
 
         val blank = readBoundedUtf8Stream(ByteArrayInputStream("   \n\t ".toByteArray()), maxBytes = 1024)
         assertEquals(BoundedReadResult.EmptyOrFailed, blank)
-    }
-
-    @OptIn(ExperimentalCoroutinesApi::class)
-    @Test
-    fun okHttpCallAwait_closesResponseWhenCoroutineCancelledBeforeDelivery() = runTest {
-        val bodyClosed = AtomicBoolean(false)
-        val callCancelled = AtomicBoolean(false)
-        var capturedCallback: Callback? = null
-
-        val fakeRequest = Request.Builder().url("https://example.com").build()
-        val fakeCall = object : Call {
-            override fun request(): Request = fakeRequest
-            override fun execute(): Response = error("Unused")
-            override fun enqueue(responseCallback: Callback) {
-                capturedCallback = responseCallback
-            }
-            override fun cancel() {
-                callCancelled.set(true)
-            }
-            override fun isExecuted(): Boolean = capturedCallback != null
-            override fun isCanceled(): Boolean = callCancelled.get()
-            override fun timeout(): Timeout = Timeout.NONE
-            override fun clone(): Call = this
-            override fun addEventListener(eventListener: EventListener) = Unit
-            override fun <T : Any> tag(type: KClass<T>): T? = null
-            override fun <T> tag(type: Class<out T>): T? = null
-            override fun <T : Any> tag(type: KClass<T>, computeIfAbsent: () -> T): T = computeIfAbsent()
-            override fun <T : Any> tag(type: Class<T>, computeIfAbsent: () -> T): T = computeIfAbsent()
-        }
-
-        val fakeBody = object : ResponseBody() {
-            override fun contentType() = "application/json".toMediaType()
-            override fun contentLength(): Long = 2L
-            override fun source(): BufferedSource = Buffer().writeUtf8("{}")
-            override fun close() {
-                bodyClosed.set(true)
-            }
-        }
-        val fakeResponse = Response.Builder()
-            .request(fakeRequest)
-            .protocol(Protocol.HTTP_1_1)
-            .code(200)
-            .message("OK")
-            .body(fakeBody)
-            .build()
-
-        val job = launch {
-            fakeCall.await()
-        }
-        testScheduler.runCurrent()
-        assertNotNull(capturedCallback)
-
-        job.cancel()
-        testScheduler.runCurrent()
-        assertTrue("Call.cancel() should be invoked on coroutine cancellation", callCancelled.get())
-
-        // Simulate late callback arriving after cancellation
-        capturedCallback!!.onResponse(fakeCall, fakeResponse)
-        assertTrue("Late OkHttp ResponseBody must be closed to avoid connection leaks", bodyClosed.get())
     }
 }

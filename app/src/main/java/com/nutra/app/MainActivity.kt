@@ -80,7 +80,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -423,8 +422,6 @@ fun NutraAppRoot(
 
                 val horizontalContentInsets = WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal)
                     .union(WindowInsets.navigationBars.only(WindowInsetsSides.Horizontal))
-                val contentInsets = WindowInsets.statusBars
-                    .union(horizontalContentInsets)
 
                 Box(
                     modifier = Modifier
@@ -518,7 +515,7 @@ fun NutraAppRoot(
                         .fillMaxSize()
                         .zIndex(3f)
                         .background(NutraTheme.colors.background)
-                        .windowInsetsPadding(contentInsets),
+                        .windowInsetsPadding(horizontalContentInsets),
                 ) {
                     val profileViewModel: ProfileViewModel = viewModel()
                     val profileState by profileViewModel.uiState.collectAsStateWithLifecycle()
@@ -556,7 +553,7 @@ fun NutraAppRoot(
                         .fillMaxSize()
                         .zIndex(3f)
                         .background(NutraTheme.colors.background)
-                        .windowInsetsPadding(contentInsets),
+                        .windowInsetsPadding(horizontalContentInsets),
                 ) {
                     val profileViewModel: ProfileViewModel = viewModel()
                     val profileState by profileViewModel.uiState.collectAsStateWithLifecycle()
@@ -588,7 +585,7 @@ fun NutraAppRoot(
                         .fillMaxSize()
                         .zIndex(3f)
                         .background(NutraTheme.colors.background)
-                        .windowInsetsPadding(contentInsets),
+                        .windowInsetsPadding(horizontalContentInsets),
                 ) {
                     val profileViewModel: ProfileViewModel = viewModel()
                     val profileState by profileViewModel.uiState.collectAsStateWithLifecycle()
@@ -618,7 +615,7 @@ fun NutraAppRoot(
                         .fillMaxSize()
                         .zIndex(4f)
                         .background(NutraTheme.colors.background)
-                        .windowInsetsPadding(contentInsets),
+                        .windowInsetsPadding(horizontalContentInsets),
                 ) {
                     NutraIntelligenceScreen(
                         viewModel = intelligenceViewModel,
@@ -637,7 +634,7 @@ fun NutraAppRoot(
                         .fillMaxSize()
                         .zIndex(4f)
                         .background(NutraTheme.colors.background)
-                        .windowInsetsPadding(contentInsets),
+                        .windowInsetsPadding(horizontalContentInsets),
                 ) {
                     val analyticsViewModel: AnalyticsViewModel = viewModel()
                     val analysis by analyticsViewModel.metabolismAnalysis.collectAsStateWithLifecycle()
@@ -668,7 +665,7 @@ fun NutraAppRoot(
                         .fillMaxSize()
                         .zIndex(3f)
                         .background(NutraTheme.colors.background)
-                        .windowInsetsPadding(contentInsets),
+                        .windowInsetsPadding(horizontalContentInsets),
                 ) {
                     val profileViewModel: ProfileViewModel = viewModel()
                     val profileState by profileViewModel.uiState.collectAsStateWithLifecycle()
@@ -859,24 +856,22 @@ private fun NutraBottomBar(
             .padding(start = 24.dp, end = 24.dp, top = 20.dp, bottom = 12.dp),
         contentAlignment = Alignment.Center,
     ) {
+        val pillShape = NutraTheme.shapes.pill
         Surface(
             modifier = Modifier
                 .widthIn(max = 328.dp)
                 .fillMaxWidth()
                 .heightIn(min = 64.dp)
-                .then(
+                .graphicsLayer {
+                    alpha = 0.96f
                     if (shadowElevation > 0.dp) {
-                        Modifier.shadow(
-                            elevation = shadowElevation,
-                            shape = NutraTheme.shapes.pill,
-                            ambientColor = shadowTint,
-                            spotColor = shadowTint,
-                        )
-                    } else {
-                        Modifier
-                    },
-                ),
-            shape = NutraTheme.shapes.pill,
+                        this.shadowElevation = shadowElevation.toPx()
+                        this.shape = pillShape
+                        this.ambientShadowColor = shadowTint
+                        this.spotShadowColor = shadowTint
+                    }
+                },
+            shape = pillShape,
             color = if (colors.isDark) colors.surfaceElevated else colors.surface,
             shadowElevation = 0.dp,
             border = borderStroke,

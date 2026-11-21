@@ -18,6 +18,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -63,6 +64,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Warning
@@ -99,6 +101,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
@@ -235,6 +238,11 @@ fun NutraCard(
  */
 val NutraStickyHeaderTopReservedPadding: Dp = 108.dp
 
+/**
+ * Compact expanded vertical space reserved at the top of sub-screens with a back button.
+ */
+val NutraStickySubScreenHeaderTopReservedPadding: Dp = 85.dp
+
 private val HeaderCollapseSpring = spring<Float>(dampingRatio = 0.92f, stiffness = 520f)
 
 /**
@@ -266,19 +274,55 @@ fun rememberHeaderCollapseFraction(
     )
 }
 
+/**
+ * Tracks a smooth, spring-animated 0f..1f header collapse progress from [scrollState]
+ * over the first [collapseRangeDp] of scroll.
+ */
+@Composable
+fun rememberHeaderCollapseFraction(
+    scrollState: ScrollState,
+    collapseRangeDp: Dp = 56.dp,
+): State<Float> {
+    val density = LocalDensity.current
+    val rangePx = remember(density, collapseRangeDp) {
+        with(density) { collapseRangeDp.toPx().coerceAtLeast(1f) }
+    }
+    val rawFraction by remember(scrollState, rangePx) {
+        derivedStateOf {
+            (scrollState.value.toFloat() / rangePx).coerceIn(0f, 1f)
+        }
+    }
+    return animateFloatAsState(
+        targetValue = rawFraction,
+        animationSpec = HeaderCollapseSpring,
+        label = "headerCollapseFractionScroll",
+    )
+}
+
 private fun Modifier.headerScaleCollapse(
     scale: Float,
     originX: Float = 0f,
+    scaleWidth: Boolean = false,
 ): Modifier = if (scale >= 0.999f) {
     this
 } else {
     this
         .layout { measurable, constraints ->
             val placeable = measurable.measure(constraints)
+            val scaledWidth = if (scaleWidth) {
+                (placeable.width * scale).roundToInt().coerceAtLeast(0)
+            } else {
+                placeable.width
+            }
             val scaledHeight = (placeable.height * scale).roundToInt().coerceAtLeast(0)
-            layout(placeable.width, scaledHeight) {
+            layout(scaledWidth, scaledHeight) {
+                val xOffset = if (scaleWidth && originX > 0.5f) {
+                    scaledWidth - placeable.width
+                } else {
+                    0
+                }
                 val yOffset = ((scaledHeight - placeable.height) / 2f).roundToInt()
-                placeable.placeRelative(0, yOffset)
+                placeable.placeRelative(xOffset, yOffset)
             }
         }
         .graphicsLayer {
@@ -298,6 +342,7 @@ fun NutraStickyScreenHeader(
     modifier: Modifier = Modifier,
     eyebrow: String? = null,
     eyebrowColor: Color = NutraTheme.colors.textSecondary,
+    onNavigateBack: (() -> Unit)? = null,
     horizontalPadding: PaddingValues = PaddingValues(horizontal = NutraTheme.spacing.screen),
     actions: @Composable RowScope.() -> Unit = {},
     bottomContent: (@Composable ColumnScope.() -> Unit)? = null,
@@ -305,22 +350,42 @@ fun NutraStickyScreenHeader(
     val colors = NutraTheme.colors
     val layoutDirection = LocalLayoutDirection.current
     val fraction = collapseFractionState.value.coerceIn(0f, 1f)
-    val topPad = (28f - 13f * fraction).dp
-    val bottomPad = (18f - 4f * fraction).dp
-    val bgAlpha = 1f - 0.06f * fraction
-    val dividerAlpha = (fraction * 0.75f).coerceIn(0f, 1f)
+    val isSubScreen = onNavigateBack != null
+    val topPad = if (isSubScreen) 16.dp else (26f - 14f * fraction).dp
+    val bottomPad = if (isSubScreen) 12.dp else (16f - 8f * fraction).dp
+    val bgAlpha = 1f - 0.05f * fraction
 
     Column(
         modifier = modifier
             .fillMaxWidth()
             .drawBehind {
-                drawRect(color = colors.background.copy(alpha = bgAlpha))
-                if (dividerAlpha > 0.01f) {
-                    val strokePx = 1.dp.toPx()
+                val baseColor = colors.background.copy(alpha = bgAlpha)
+                if (fraction <= 0.005f) {
+                    drawRect(color = baseColor)
+                } else {
+                    val innerFadePx = (4.dp.toPx() * fraction).coerceAtMost(size.height * 0.15f)
+                    val outerFeatherPx = 8.dp.toPx() * fraction
+                    val totalHeight = (size.height + outerFeatherPx).coerceAtLeast(1f)
+                    val fadeStart = ((size.height - innerFadePx) / totalHeight).coerceIn(0.65f, 0.96f)
+                    val span = (1f - fadeStart).coerceAtLeast(0.03f)
+
                     drawRect(
-                        color = colors.divider.copy(alpha = dividerAlpha),
-                        topLeft = Offset(0f, size.height - strokePx),
-                        size = Size(size.width, strokePx),
+                        brush = Brush.verticalGradient(
+                            colorStops = arrayOf(
+                                0.00f to baseColor,
+                                fadeStart to baseColor,
+                                (fadeStart + span * 0.18f) to colors.background.copy(alpha = bgAlpha * 0.96f),
+                                (fadeStart + span * 0.36f) to colors.background.copy(alpha = bgAlpha * 0.85f),
+                                (fadeStart + span * 0.54f) to colors.background.copy(alpha = bgAlpha * 0.64f),
+                                (fadeStart + span * 0.72f) to colors.background.copy(alpha = bgAlpha * 0.36f),
+                                (fadeStart + span * 0.88f) to colors.background.copy(alpha = bgAlpha * 0.12f),
+                                1.00f to colors.background.copy(alpha = 0f),
+                            ),
+                            startY = 0f,
+                            endY = totalHeight,
+                        ),
+                        topLeft = Offset.Zero,
+                        size = Size(size.width, totalHeight),
                     )
                 }
             },
@@ -342,7 +407,8 @@ fun NutraStickyScreenHeader(
                 title = title,
                 eyebrow = eyebrow,
                 eyebrowColor = eyebrowColor,
-                collapseFraction = fraction,
+                onNavigateBack = onNavigateBack,
+                collapseFraction = if (isSubScreen) 0f else fraction,
                 actions = actions,
             )
             if (bottomContent != null) {
@@ -353,7 +419,7 @@ fun NutraStickyScreenHeader(
 }
 
 /**
- * Large screen title with optional eyebrow (small line above) and trailing actions.
+ * Large screen title with optional eyebrow (small line above), optional back button, and trailing actions.
  */
 @Composable
 fun NutraScreenHeader(
@@ -361,44 +427,91 @@ fun NutraScreenHeader(
     modifier: Modifier = Modifier,
     eyebrow: String? = null,
     eyebrowColor: Color = NutraTheme.colors.textSecondary,
+    onNavigateBack: (() -> Unit)? = null,
     collapseFraction: Float = 0f,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
-    val clamped = collapseFraction.coerceIn(0f, 1f)
+    val isSubScreen = onNavigateBack != null
+    val clamped = if (isSubScreen) 0f else collapseFraction.coerceIn(0f, 1f)
     val eyebrowScale = 1f - 0.10f * clamped
     val titleScale = 1f - 0.16f * clamped
     val actionScale = 1f - 0.08f * clamped
-    val baseEyebrowStyle = NutraTheme.typography.body
-    val baseTitleStyle = remember {
-        DefaultNutraTypography.titleLarge.copy(fontSize = 30.sp, lineHeight = 36.sp)
+    val baseEyebrowStyle = remember(isSubScreen) {
+        if (isSubScreen) {
+            DefaultNutraTypography.caption.copy(fontSize = 12.8.sp, lineHeight = 16.sp)
+        } else {
+            DefaultNutraTypography.body
+        }
     }
+    val baseTitleStyle = remember(isSubScreen) {
+        if (isSubScreen) {
+            DefaultNutraTypography.titleLarge.copy(fontSize = 21.4.sp, lineHeight = 25.5.sp, letterSpacing = (-0.45).sp)
+        } else {
+            DefaultNutraTypography.titleLarge.copy(fontSize = 30.sp, lineHeight = 36.sp)
+        }
+    }
+    val verticalGap = if (isSubScreen) 2.dp else (3f - 1f * clamped).dp
 
     Row(
         modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy((3f - 1f * clamped).dp),
-        ) {
-            if (eyebrow != null) {
-                Text(
-                    text = eyebrow,
-                    style = baseEyebrowStyle,
-                    color = eyebrowColor,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.headerScaleCollapse(scale = eyebrowScale, originX = 0f),
+        if (onNavigateBack != null) {
+            Box(
+                modifier = Modifier.padding(end = 12.dp),
+            ) {
+                NutraIconButton(
+                    icon = Icons.AutoMirrored.Rounded.ArrowBack,
+                    contentDescription = "Geri",
+                    onClick = onNavigateBack,
+                    size = 41.dp,
+                    iconSize = 19.dp,
                 )
             }
-            Text(
-                text = title,
-                style = baseTitleStyle,
-                color = NutraTheme.colors.textPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.headerScaleCollapse(scale = titleScale, originX = 0f),
-            )
+        }
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(verticalGap),
+        ) {
+            if (isSubScreen) {
+                Text(
+                    text = title,
+                    style = baseTitleStyle,
+                    color = NutraTheme.colors.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.headerScaleCollapse(scale = titleScale, originX = 0f),
+                )
+                if (eyebrow != null) {
+                    Text(
+                        text = eyebrow,
+                        style = baseEyebrowStyle,
+                        color = eyebrowColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.headerScaleCollapse(scale = eyebrowScale, originX = 0f),
+                    )
+                }
+            } else {
+                if (eyebrow != null) {
+                    Text(
+                        text = eyebrow,
+                        style = baseEyebrowStyle,
+                        color = eyebrowColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.headerScaleCollapse(scale = eyebrowScale, originX = 0f),
+                    )
+                }
+                Text(
+                    text = title,
+                    style = baseTitleStyle,
+                    color = NutraTheme.colors.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.headerScaleCollapse(scale = titleScale, originX = 0f),
+                )
+            }
         }
         Row(
             modifier = Modifier.headerScaleCollapse(scale = actionScale, originX = 1f),

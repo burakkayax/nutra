@@ -76,8 +76,6 @@ class UserPreferencesDataStore @Inject constructor(
         val ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
         val THEME_PREFERENCE = stringPreferencesKey("theme_preference")
         val USE_DYNAMIC_COLOR = booleanPreferencesKey("use_dynamic_color")
-        val GEMINI_API_KEY = stringPreferencesKey("gemini_api_key")
-        val GEMINI_MODEL = stringPreferencesKey("gemini_model")
 
         val WATER_REMINDER_ENABLED = booleanPreferencesKey("water_reminder_enabled")
         val WATER_REMINDER_INTERVAL_MINUTES = intPreferencesKey("water_reminder_interval_minutes")
@@ -163,8 +161,6 @@ class UserPreferencesDataStore @Inject constructor(
             onboardingCompleted = prefs[Keys.ONBOARDING_COMPLETED] ?: false,
             themePreference = themePref,
             useDynamicColor = prefs[Keys.USE_DYNAMIC_COLOR] ?: false,
-            geminiApiKey = prefs[Keys.GEMINI_API_KEY] ?: "",
-            geminiModel = prefs[Keys.GEMINI_MODEL] ?: "gemini-2.5-flash",
             waterReminder = waterReminder,
             dietaryProfile = dietaryProfile,
             adaptiveMetabolismEnabled = prefs[Keys.ADAPTIVE_METABOLISM_ENABLED] ?: true,
@@ -288,8 +284,6 @@ class UserPreferencesDataStore @Inject constructor(
             prefs[Keys.ONBOARDING_COMPLETED] = true
             prefs[Keys.THEME_PREFERENCE] = profile.themePreference.name
             prefs[Keys.USE_DYNAMIC_COLOR] = profile.useDynamicColor
-            prefs[Keys.GEMINI_API_KEY] = profile.geminiApiKey.trim()
-            prefs[Keys.GEMINI_MODEL] = profile.geminiModel.trim().ifEmpty { "gemini-2.5-flash" }
             val safeReminder = WaterReminderScheduleCalculator.sanitize(profile.waterReminder)
             prefs[Keys.WATER_REMINDER_ENABLED] = safeReminder.enabled
             prefs[Keys.WATER_REMINDER_INTERVAL_MINUTES] = safeReminder.intervalMinutes
@@ -333,13 +327,6 @@ class UserPreferencesDataStore @Inject constructor(
         (if (weightKg.isFinite()) weightKg else fallback).coerceIn(30f, 300f)
 
     private fun sanitizeDietaryProfile(profile: DietaryProfile): DietaryProfile = sanitizeDietaryProfileData(profile)
-
-    suspend fun updateGeminiConfig(apiKey: String, model: String) {
-        context.nutraDataStore.edit { prefs ->
-            prefs[Keys.GEMINI_API_KEY] = apiKey.trim()
-            prefs[Keys.GEMINI_MODEL] = model.trim().ifEmpty { "gemini-2.5-flash" }
-        }
-    }
 
     suspend fun updateWaterReminder(settings: WaterReminderSettings) {
         val safe = WaterReminderScheduleCalculator.sanitize(settings)

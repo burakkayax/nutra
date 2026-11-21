@@ -6,6 +6,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -243,7 +244,6 @@ class NutraAndroid17InstrumentedTest {
             assertEquals(621, dao.countCatalogSeedFoods())
             val tuna = dao.getCatalogSeedFoods().firstOrNull { it.catalogCode == "TR0001" }
             assertNotNull("Expected TR0001 seeded via AssetManager", tuna)
-            assertNotNull(dao.findFoodByBarcode("8690526051222"))
 
             // Log meals and verify daily totals + metabolism intake aggregation queries
             dao.insertMealLog(
@@ -309,8 +309,8 @@ class NutraAndroid17InstrumentedTest {
         if (composeRule.onAllNodesWithText("Atla").fetchSemanticsNodes().isNotEmpty()) {
             composeRule.onNodeWithText("Atla").performClick()
             composeRule.waitForIdle()
-            if (composeRule.onAllNodesWithText("Hemen başla").fetchSemanticsNodes().isNotEmpty()) {
-                composeRule.onNodeWithText("Hemen başla").performClick()
+            if (composeRule.onAllNodesWithText("Kurulumu atla?").fetchSemanticsNodes().isNotEmpty()) {
+                composeRule.onAllNodesWithText("Atla").onLast().performClick()
             }
             composeRule.waitUntil(timeoutMillis = 10_000L) {
                 composeRule.onAllNodesWithText("Bugün").fetchSemanticsNodes().isNotEmpty()

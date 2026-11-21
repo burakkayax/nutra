@@ -531,13 +531,6 @@ class ProfileViewModel @Inject constructor(
         }
     }
 
-    fun saveGeminiConfig(apiKey: String, model: String) {
-        viewModelScope.launch {
-            preferencesDataStore.updateGeminiConfig(apiKey, model)
-            emitFeedback("AI yapılandırması kaydedildi")
-        }
-    }
-
     fun exportBackupToUri(contentResolver: ContentResolver, uri: Uri) {
         if (!isBackupBusyFlow.compareAndSet(false, true)) return
         viewModelScope.launch {
