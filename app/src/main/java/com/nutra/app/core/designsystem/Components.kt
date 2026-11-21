@@ -1441,6 +1441,8 @@ fun NutraBadge(
         style = NutraTheme.typography.labelSmall,
         color = color,
         maxLines = 1,
+        softWrap = false,
+        overflow = TextOverflow.Ellipsis,
         modifier = modifier
             .clip(NutraTheme.shapes.pill)
             .background(container)

@@ -5,6 +5,7 @@ import com.nutra.app.domain.model.AllergenTag
 import com.nutra.app.domain.model.ComboFoodEntry
 import com.nutra.app.domain.model.FoodItem
 import com.nutra.app.domain.model.MealType
+import kotlin.math.roundToInt
 
 enum class MealRole {
     MAIN_PROTEIN,
@@ -179,10 +180,10 @@ data class DailyGoalImpactPreview(
     val impactSummary: String,
 ) {
     val caloriePercentAfter: Int
-        get() = ((caloriesAfter.toFloat() / calorieGoal.coerceAtLeast(1)) * 100f).toInt().coerceAtLeast(0)
+        get() = ((caloriesAfter.toFloat() / calorieGoal.coerceAtLeast(1)) * 100f).roundToInt().coerceAtLeast(0)
 
     val proteinPercentAfter: Int
-        get() = ((proteinAfter / proteinGoal.coerceAtLeast(1)) * 100f).toInt().coerceAtLeast(0)
+        get() = ((proteinAfter / proteinGoal.coerceAtLeast(1)) * 100f).roundToInt().coerceAtLeast(0)
 }
 
 enum class RecommendationStyleTag(val label: String) {

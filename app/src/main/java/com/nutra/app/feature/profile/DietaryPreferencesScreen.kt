@@ -214,7 +214,7 @@ fun DietaryPreferencesScreen(
                             NutraTextField(
                                 value = keywordInput,
                                 onValueChange = { keywordInput = it },
-                                placeholder = "Örn. mantar, brokoli, sakatat...",
+                                placeholder = "Örn. mantar, brokoli...",
                                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                                 keyboardActions = KeyboardActions(onDone = { addExcludedKeyword() }),
                                 modifier = Modifier.weight(1f),

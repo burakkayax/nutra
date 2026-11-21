@@ -43,6 +43,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.nutra.app.core.designsystem.NutraBadge
@@ -109,34 +110,38 @@ fun MetabolismSummaryCard(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            NutraIconBadge(
-                icon = NutraIcons.InsightsRounded,
-                tint = colors.onAccentSoft,
-                container = colors.accentSoft,
-            )
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Text(
-                    text = "Adaptif Metabolizma",
-                    style = NutraTheme.typography.titleSmall,
-                    color = colors.textPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                NutraIconBadge(
+                    icon = NutraIcons.InsightsRounded,
+                    tint = colors.onAccentSoft,
+                    container = colors.accentSoft,
+                    size = 38.dp,
+                    iconSize = 19.dp,
                 )
-                Text(
-                    text = "Tahmini günlük enerji harcaması",
-                    style = NutraTheme.typography.caption,
-                    color = colors.textSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Text(
+                        text = "Adaptif Metabolizma",
+                        style = NutraTheme.typography.titleSmall,
+                        color = colors.textPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = "Tahmini günlük enerji harcaması",
+                        style = NutraTheme.typography.caption,
+                        color = colors.textSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
             NutraBadge(
                 text = analysis.dataQuality.level.title,
@@ -331,7 +336,7 @@ fun MetabolismDetailScreen(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        text = "Enerji harcaması, kilo projeksiyonu ve plato analizi",
+                        text = "TDEE, kilo projeksiyonu ve plato analizi",
                         style = NutraTheme.typography.caption,
                         color = colors.textSecondary,
                         maxLines = 1,
@@ -376,13 +381,16 @@ fun MetabolismDetailScreen(
                     NutraCard(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
-                                text = "Tahmini günlük harcama (TDEE)",
+                                text = "Tahmini harcama (TDEE)",
                                 style = NutraTheme.typography.caption,
                                 color = colors.textSecondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
                             )
                             NutraBadge(
                                 text = "${analysis.dataQuality.level.title} · %${analysis.confidenceScore}",
@@ -454,23 +462,30 @@ fun MetabolismDetailScreen(
                                     .clip(NutraTheme.shapes.md)
                                     .background(colors.surfaceMuted)
                                     .padding(14.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                                ) {
                                     Text("Mevcut hedef", style = NutraTheme.typography.caption, color = colors.textTertiary)
                                     Text(
                                         text = "${NutraFormatters.formatInt(proposal.currentGoals.calories)} kcal",
                                         style = NutraTheme.typography.numberMedium,
                                         color = colors.textSecondary,
+                                        maxLines = 1,
                                     )
                                     Text(
-                                        text = "P ${proposal.currentGoals.proteinGrams}g · K ${proposal.currentGoals.carbsGrams}g · Y ${proposal.currentGoals.fatGrams}g",
+                                        text = "P ${proposal.currentGoals.proteinGrams} · K ${proposal.currentGoals.carbsGrams} · Y ${proposal.currentGoals.fatGrams}g",
                                         style = NutraTheme.typography.caption,
                                         color = colors.textTertiary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
                                     )
                                 }
                                 Column(
+                                    modifier = Modifier.weight(1f),
                                     horizontalAlignment = Alignment.End,
                                     verticalArrangement = Arrangement.spacedBy(2.dp),
                                 ) {
@@ -479,11 +494,15 @@ fun MetabolismDetailScreen(
                                         text = "${NutraFormatters.formatInt(proposal.proposedGoals.calories)} kcal",
                                         style = NutraTheme.typography.numberMedium,
                                         color = colors.textPrimary,
+                                        maxLines = 1,
                                     )
                                     Text(
-                                        text = "P ${proposal.proposedGoals.proteinGrams}g · K ${proposal.proposedGoals.carbsGrams}g · Y ${proposal.proposedGoals.fatGrams}g",
+                                        text = "P ${proposal.proposedGoals.proteinGrams} · K ${proposal.proposedGoals.carbsGrams} · Y ${proposal.proposedGoals.fatGrams}g",
                                         style = NutraTheme.typography.caption,
                                         color = colors.textSecondary,
+                                        textAlign = TextAlign.End,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
                                     )
                                 }
                             }
@@ -513,7 +532,7 @@ fun MetabolismDetailScreen(
                                     modifier = Modifier.weight(1f),
                                 )
                                 NutraButton(
-                                    text = "Şimdilik kalsın",
+                                    text = "Kalsın",
                                     onClick = onDismissProposal,
                                     style = NutraButtonStyle.Secondary,
                                     size = NutraButtonSize.Medium,

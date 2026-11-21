@@ -816,12 +816,19 @@ class AdaptiveMetabolismEngine @Inject constructor(
         }
 
         val finalSd = sqrt(stateVar)
-        val roundedTdee = ((stateMean + 5.0) / 10.0).toInt() * 10
-        val roundedUncertainty = (((finalSd * CREDIBLE_Z_80) + 5.0) / 10.0).toInt() * 10
+        val roundedTdee = (((stateMean + 5.0) / 10.0).toInt() * 10).coerceIn(1100, 5500)
+        val roundedUncertainty = ((((finalSd * CREDIBLE_Z_80) + 5.0) / 10.0).toInt() * 10).coerceIn(70, 360)
+        if (history.isNotEmpty()) {
+            val lastIdx = history.lastIndex
+            history[lastIdx] = history[lastIdx].copy(
+                estimatedTdeeKcal = roundedTdee,
+                uncertaintyKcal = roundedUncertainty,
+            )
+        }
 
         return KalmanTdeeResult(
-            estimatedTdeeKcal = roundedTdee.coerceIn(1100, 5500),
-            uncertaintyKcal = roundedUncertainty.coerceIn(70, 360),
+            estimatedTdeeKcal = roundedTdee,
+            uncertaintyKcal = roundedUncertainty,
             posteriorSd = finalSd,
             updatesCount = updatesCount,
             history = history,

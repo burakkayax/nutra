@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
@@ -99,39 +100,39 @@ fun DashboardIntelligenceCard(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            NutraIconBadge(
-                icon = NutraIcons.AutoAwesome,
-                tint = colors.onAccentSoft,
-                container = colors.accentSoft,
-            )
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                NutraIconBadge(
+                    icon = NutraIcons.AutoAwesome,
+                    tint = colors.onAccentSoft,
+                    container = colors.accentSoft,
+                    size = 36.dp,
+                    iconSize = 18.dp,
+                )
                 Text(
                     text = "Nutra Intelligence",
                     style = NutraTheme.typography.titleSmall,
                     color = colors.textPrimary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
                 )
-                Text(
-                    text = "${cardState.mealType.title} · ~${NutraFormatters.formatInt(cardState.targetCalories)} kcal · ${NutraFormatters.formatInt(cardState.targetProteinGrams.roundToInt())} g protein",
-                    style = NutraTheme.typography.caption,
+                NutraBadge(
+                    text = cardState.maturity.title,
                     color = colors.textSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                    container = colors.surfaceMuted,
                 )
             }
-            NutraBadge(
-                text = cardState.maturity.title,
+            Text(
+                text = "${cardState.mealType.title} · ~${NutraFormatters.formatInt(cardState.targetCalories)} kcal · ${NutraFormatters.formatInt(cardState.targetProteinGrams.roundToInt())} g protein",
+                style = NutraTheme.typography.caption,
                 color = colors.textSecondary,
-                container = colors.surfaceMuted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
 
@@ -278,7 +279,7 @@ fun NutraIntelligenceScreen(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        text = "Kişiselleştirilmiş öğün ve porsiyon motoru",
+                        text = "Kişiselleştirilmiş öğün ve porsiyon",
                         style = NutraTheme.typography.caption,
                         color = colors.textSecondary,
                         maxLines = 1,
@@ -310,7 +311,13 @@ fun NutraIntelligenceScreen(
                     labelProvider = { it.title },
                 )
 
+                val mealChipsListState = rememberLazyListState()
+                LaunchedEffect(state.selectedMealType) {
+                    val targetIdx = MealType.entries.indexOf(state.selectedMealType).coerceAtLeast(0)
+                    mealChipsListState.animateScrollToItem(targetIdx)
+                }
                 LazyRow(
+                    state = mealChipsListState,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     items(MealType.entries, key = { it.name }) { meal ->
@@ -393,13 +400,16 @@ private fun RecommendationsTabContent(
             NutraCard(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
                         text = "${report.mealType.title} hedef bütçesi",
                         style = NutraTheme.typography.titleSmall,
                         color = colors.textPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
                     )
                     NutraBadge(
                         text = report.eatingProfile.maturity.title,
@@ -418,7 +428,7 @@ private fun RecommendationsTabContent(
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     BudgetMetricPill(
                         label = "Kalori",
@@ -572,12 +582,13 @@ private fun RecommendationDetailCard(
                 .fillMaxWidth()
                 .clip(NutraTheme.shapes.sm)
                 .background(colors.surfaceMuted)
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+                .padding(horizontal = 10.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            MacroInlineTag("Protein", "${NutraFormatters.formatMacroGrams(recommendation.totalProtein)} g", colors.protein)
-            MacroInlineTag("Karb.", "${NutraFormatters.formatMacroGrams(recommendation.totalCarbs)} g", colors.carbs)
-            MacroInlineTag("Yağ", "${NutraFormatters.formatMacroGrams(recommendation.totalFat)} g", colors.fat)
+            MacroInlineTag("P", "${NutraFormatters.formatMacroGrams(recommendation.totalProtein)}g", colors.protein)
+            MacroInlineTag("K", "${NutraFormatters.formatMacroGrams(recommendation.totalCarbs)}g", colors.carbs)
+            MacroInlineTag("Y", "${NutraFormatters.formatMacroGrams(recommendation.totalFat)}g", colors.fat)
             MacroInlineTag("Uyum", "%${recommendation.fitScore}", colors.accent)
         }
 
@@ -891,13 +902,16 @@ private fun PortionBalancerTabContent(
                 NutraCard(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            text = "Optimize edilen porsiyonlar",
+                            text = "Önerilen porsiyonlar",
                             style = NutraTheme.typography.titleSmall,
                             color = colors.textPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
                         )
                         NutraBadge(
                             text = "${NutraFormatters.formatInt(optimized.totalCalories)} kcal · %${optimized.fitScore}",
@@ -1059,19 +1073,21 @@ private fun BudgetMetricPill(
         modifier = modifier
             .clip(NutraTheme.shapes.sm)
             .background(colors.surfaceMuted)
-            .padding(horizontal = 8.dp, vertical = 8.dp),
+            .padding(horizontal = 6.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         Row(
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            NutraDot(color = accent, size = 6.dp)
+            NutraDot(color = accent, size = 5.dp)
             Text(
                 text = label,
                 style = NutraTheme.typography.caption,
                 color = colors.textSecondary,
                 maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
             )
         }
         Text(
@@ -1079,6 +1095,7 @@ private fun BudgetMetricPill(
             style = NutraTheme.typography.labelSmall,
             color = colors.textPrimary,
             maxLines = 1,
+            softWrap = false,
             overflow = TextOverflow.Ellipsis,
         )
     }
@@ -1092,7 +1109,7 @@ private fun MacroInlineTag(
 ) {
     val colors = NutraTheme.colors
     Row(
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         NutraDot(color = dotColor, size = 6.dp)
@@ -1100,6 +1117,8 @@ private fun MacroInlineTag(
             text = "$label $value",
             style = NutraTheme.typography.caption,
             color = colors.textPrimary,
+            maxLines = 1,
+            softWrap = false,
         )
     }
 }

@@ -1210,14 +1210,16 @@ private fun MealCardHeaderRow(
             Row(
                 modifier = Modifier
                     .weight(1f)
-                    .padding(end = 10.dp),
+                    .padding(end = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 NutraIconBadge(
                     icon = mealIcon,
                     tint = NutraTheme.colors.textPrimary,
                     container = NutraTheme.colors.surfaceMuted,
+                    size = 38.dp,
+                    iconSize = 19.dp,
                 )
 
                 Column(
@@ -1234,6 +1236,7 @@ private fun MealCardHeaderRow(
                             color = NutraTheme.colors.textPrimary,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
                         )
                         if (hasItems) {
                             Icon(
@@ -1263,21 +1266,23 @@ private fun MealCardHeaderRow(
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 if (hasItems) {
                     Text(
                         text = "${NutraFormatters.formatInt(totalCalories)} kcal",
                         style = NutraTheme.typography.numberSmall,
                         color = NutraTheme.colors.textPrimary,
+                        maxLines = 1,
+                        softWrap = false,
                     )
                 }
                 NutraIconButton(
                     icon = Icons.Rounded.Add,
                     contentDescription = "${mealType.title} besin ekle",
                     onClick = onAddFoodClick,
-                    size = 44.dp,
-                    iconSize = 20.dp,
+                    size = 40.dp,
+                    iconSize = 19.dp,
                     containerColor = NutraTheme.colors.surfaceMuted,
                     contentColor = NutraTheme.colors.textPrimary,
                 )
