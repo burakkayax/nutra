@@ -1,7 +1,8 @@
 package com.nutra.app.feature.onboarding
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -45,23 +46,33 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.nutra.app.core.designsystem.InlinePredictiveBackHandler
 import com.nutra.app.core.designsystem.NutraButton
 import com.nutra.app.core.designsystem.NutraButtonSize
 import com.nutra.app.core.designsystem.NutraButtonStyle
@@ -81,10 +92,14 @@ import com.nutra.app.core.designsystem.NutraSelectableCard
 import com.nutra.app.core.designsystem.NutraStackedRatioBar
 import com.nutra.app.core.designsystem.NutraStepperButton
 import com.nutra.app.core.designsystem.NutraTheme
+import com.nutra.app.core.designsystem.predictiveBackBackground
+import com.nutra.app.core.designsystem.predictiveBackForeground
+import com.nutra.app.core.designsystem.rememberInlinePredictiveBackState
 import com.nutra.app.domain.model.ActivityLevel
 import com.nutra.app.domain.model.BiologicalSex
 import com.nutra.app.domain.model.GoalType
 import com.nutra.app.domain.usecase.BodyMetricBounds
+import kotlinx.collections.immutable.toImmutableList
 import kotlin.math.roundToInt
 
 private enum class OnboardingNumericField(
@@ -97,8 +112,8 @@ private enum class OnboardingNumericField(
 ) {
     AGE("Yaş", "yaş", "14 – 95 yaş", BodyMetricBounds.MIN_AGE.toDouble(), BodyMetricBounds.MAX_AGE.toDouble(), false),
     HEIGHT("Boy", "cm", "130 – 225 cm", BodyMetricBounds.MIN_HEIGHT_CM.toDouble(), BodyMetricBounds.MAX_HEIGHT_CM.toDouble(), false),
-    CURRENT_WEIGHT("Mevcut kilo", "kg", "35,0 – 250,0 kg", BodyMetricBounds.MIN_WEIGHT_KG.toDouble(), BodyMetricBounds.MAX_WEIGHT_KG.toDouble(), true),
-    TARGET_WEIGHT("Hedef kilo", "kg", "35,0 – 250,0 kg", BodyMetricBounds.MIN_WEIGHT_KG.toDouble(), BodyMetricBounds.MAX_WEIGHT_KG.toDouble(), true),
+    CURRENT_WEIGHT("Mevcut kilo", "kg", "30,0 – 300,0 kg", BodyMetricBounds.MIN_WEIGHT_KG.toDouble(), BodyMetricBounds.MAX_WEIGHT_KG.toDouble(), true),
+    TARGET_WEIGHT("Hedef kilo", "kg", "30,0 – 300,0 kg", BodyMetricBounds.MIN_WEIGHT_KG.toDouble(), BodyMetricBounds.MAX_WEIGHT_KG.toDouble(), true),
     CALORIES("Günlük kalori hedefi", "kcal", "1.000 – 6.000 kcal", 1000.0, 6000.0, false),
     PROTEIN("Protein hedefi", "g", "30 – 400 g", 30.0, 400.0, false),
     CARBS("Karbonhidrat hedefi", "g", "20 – 600 g", 20.0, 600.0, false),
@@ -113,11 +128,29 @@ fun OnboardingScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val colors = NutraTheme.colors
+    val density = LocalDensity.current.density
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val reducedMotion = NutraTheme.reducedMotion
     var activeField by remember { mutableStateOf<OnboardingNumericField?>(null) }
     var showSkipDialog by remember { mutableStateOf(false) }
 
-    BackHandler(enabled = state.stepIndex > 0) {
-        viewModel.previousStep()
+    val stepBackState = rememberInlinePredictiveBackState()
+    var suppressNextStepTransition by remember { mutableStateOf(false) }
+
+    InlinePredictiveBackHandler(
+        enabled = state.stepIndex > 0,
+        state = stepBackState,
+        onCommit = {
+            suppressNextStepTransition = true
+            viewModel.previousStep()
+        },
+    )
+
+    LaunchedEffect(state.stepIndex) {
+        if (suppressNextStepTransition) {
+            withFrameNanos { }
+            suppressNextStepTransition = false
+        }
     }
 
     val rootInsets = WindowInsets.statusBars
@@ -155,7 +188,10 @@ fun OnboardingScreen(
                         NutraIconButton(
                             icon = Icons.AutoMirrored.Rounded.ArrowBack,
                             contentDescription = "Geri",
-                            onClick = viewModel::previousStep,
+                            onClick = {
+                                stepBackState.resetImmediately()
+                                viewModel.previousStep()
+                            },
                             size = 42.dp,
                             iconSize = 20.dp,
                         )
@@ -190,7 +226,7 @@ fun OnboardingScreen(
                     repeat(3) { idx ->
                         val filled = idx <= state.stepIndex
                         val barColorState = animateColorAsState(
-                            targetValue = if (filled) colors.ink else colors.surfaceMuted,
+                            targetValue = if (filled) colors.ink else colors.controlBorder.copy(alpha = 0.45f),
                             animationSpec = tween(220),
                             label = "stepBar$idx",
                         )
@@ -205,46 +241,98 @@ fun OnboardingScreen(
                 }
             }
 
-            // Step content
-            AnimatedContent(
-                targetState = state.stepIndex,
-                modifier = Modifier.weight(1f),
-                transitionSpec = {
-                    val forward = targetState >= initialState
-                    (slideInHorizontally(tween(240)) { if (forward) it / 4 else -it / 4 } +
-                        fadeIn(tween(200))) togetherWith
-                        (slideOutHorizontally(tween(200)) { if (forward) -it / 6 else it / 6 } +
-                            fadeOut(tween(150)))
-                },
-                label = "onboardingStep",
-            ) { step ->
-                when (step) {
-                    0 -> GoalSelectionStep(
-                        selectedGoal = state.goalType,
-                        onSelectGoal = viewModel::selectGoalType,
-                    )
+            // Step content (renders previous step behind shrinking current step during Predictive Back)
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .onSizeChanged { size ->
+                        if (size.width > 0) {
+                            stepBackState.containerWidthPx = size.width.toFloat()
+                        }
+                    },
+            ) {
+                if (stepBackState.isActive && state.stepIndex > 0) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .predictiveBackBackground(
+                                transformProvider = {
+                                    stepBackState.currentTransform(
+                                        density = density,
+                                        deviceCornerRadiusPx = 0f,
+                                        isDarkTheme = colors.isDark,
+                                        reducedMotion = reducedMotion,
+                                        isRtl = isRtl,
+                                    )
+                                },
+                            )
+                            .clearAndSetSemantics {}
+                            .pointerInput(Unit) {
+                                awaitPointerEventScope {
+                                    while (true) {
+                                        awaitPointerEvent(PointerEventPass.Initial).changes.forEach { it.consume() }
+                                    }
+                                }
+                            },
+                    ) {
+                        OnboardingStepBody(
+                            step = state.stepIndex - 1,
+                            state = state,
+                            viewModel = viewModel,
+                            onEditField = {},
+                        )
+                    }
 
-                    1 -> BodyMetricsStep(
-                        state = state,
-                        onSelectSex = viewModel::selectSex,
-                        onAdjustAge = viewModel::adjustAge,
-                        onAdjustHeight = viewModel::adjustHeight,
-                        onAdjustCurrentWeight = viewModel::adjustCurrentWeight,
-                        onAdjustTargetWeight = viewModel::adjustTargetWeight,
-                        onSelectActivity = viewModel::selectActivityLevel,
-                        onEditField = { activeField = it },
-                    )
-
-                    else -> DailyPlanReviewStep(
-                        state = state,
-                        onAdjustCalories = viewModel::adjustCustomCalories,
-                        onAdjustProtein = viewModel::adjustCustomProtein,
-                        onAdjustCarbs = viewModel::adjustCustomCarbs,
-                        onAdjustFat = viewModel::adjustCustomFat,
-                        onAdjustWater = viewModel::adjustCustomWater,
-                        onReset = viewModel::resetToMifflinFormula,
-                        onEditField = { activeField = it },
-                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .predictiveBackForeground(
+                                transformProvider = {
+                                    stepBackState.currentTransform(
+                                        density = density,
+                                        deviceCornerRadiusPx = 0f,
+                                        isDarkTheme = colors.isDark,
+                                        reducedMotion = reducedMotion,
+                                        isRtl = isRtl,
+                                    )
+                                },
+                                borderColor = colors.textPrimary,
+                                ambientShadowColor = colors.ink,
+                            )
+                            .background(colors.background),
+                    ) {
+                        OnboardingStepBody(
+                            step = state.stepIndex,
+                            state = state,
+                            viewModel = viewModel,
+                            onEditField = { activeField = it },
+                        )
+                    }
+                } else {
+                    AnimatedContent(
+                        targetState = state.stepIndex,
+                        modifier = Modifier.fillMaxSize(),
+                        transitionSpec = {
+                            if (suppressNextStepTransition || reducedMotion) {
+                                EnterTransition.None togetherWith ExitTransition.None
+                            } else {
+                                val forward = targetState >= initialState
+                                (slideInHorizontally(tween(240)) { if (forward) it / 4 else -it / 4 } +
+                                    fadeIn(tween(200))) togetherWith
+                                    (slideOutHorizontally(tween(200)) { if (forward) -it / 6 else it / 6 } +
+                                        fadeOut(tween(150)))
+                            }
+                        },
+                        label = "onboardingStep",
+                    ) { step ->
+                        OnboardingStepBody(
+                            step = step,
+                            state = state,
+                            viewModel = viewModel,
+                            onEditField = { activeField = it },
+                        )
+                    }
                 }
             }
 
@@ -260,6 +348,7 @@ fun OnboardingScreen(
                 NutraButton(
                     text = if (isLast) "Başlayalım" else "Devam",
                     onClick = {
+                        stepBackState.resetImmediately()
                         if (isLast) {
                             viewModel.completeOnboarding(onOnboardingFinished)
                         } else {
@@ -282,11 +371,11 @@ fun OnboardingScreen(
         NutraDialog(
             onDismissRequest = { showSkipDialog = false },
             title = "Kurulumu atla?",
-            message = "Varsayılan günlük hedeflerle (${NutraFormatters.formatInt(state.customGoals.calories)} kcal) hemen başlayabilir, ölçülerini daha sonra Profil sekmesinden güncelleyebilirsin.",
+            message = "Varsayılan günlük hedeflerle (${NutraFormatters.formatInt(state.customGoals.calories)} kcal) hemen başlayabilir, ölçülerini ve ilk tartını daha sonra Profil veya İlerleme sekmesinden ekleyebilirsin.",
             confirmText = "Atla",
             onConfirm = {
                 showSkipDialog = false
-                viewModel.completeOnboarding(onOnboardingFinished)
+                viewModel.skipOnboarding(onOnboardingFinished)
             },
             dismissText = "Geri",
             onDismiss = { showSkipDialog = false },
@@ -334,6 +423,44 @@ fun OnboardingScreen(
 }
 
 @Composable
+private fun OnboardingStepBody(
+    step: Int,
+    state: OnboardingUiState,
+    viewModel: OnboardingViewModel,
+    onEditField: (OnboardingNumericField) -> Unit,
+) {
+    when (step) {
+        0 -> GoalSelectionStep(
+            selectedGoal = state.goalType,
+            isAdolescentObservationMode = state.isAdolescentObservationMode,
+            onSelectGoal = viewModel::selectGoalType,
+        )
+
+        1 -> BodyMetricsStep(
+            state = state,
+            onSelectSex = viewModel::selectSex,
+            onAdjustAge = viewModel::adjustAge,
+            onAdjustHeight = viewModel::adjustHeight,
+            onAdjustCurrentWeight = viewModel::adjustCurrentWeight,
+            onAdjustTargetWeight = viewModel::adjustTargetWeight,
+            onSelectActivity = viewModel::selectActivityLevel,
+            onEditField = onEditField,
+        )
+
+        else -> DailyPlanReviewStep(
+            state = state,
+            onAdjustCalories = viewModel::adjustCustomCalories,
+            onAdjustProtein = viewModel::adjustCustomProtein,
+            onAdjustCarbs = viewModel::adjustCustomCarbs,
+            onAdjustFat = viewModel::adjustCustomFat,
+            onAdjustWater = viewModel::adjustCustomWater,
+            onReset = viewModel::resetToMifflinFormula,
+            onEditField = onEditField,
+        )
+    }
+}
+
+@Composable
 private fun StepHeadline(
     stepNumber: Int,
     title: String,
@@ -352,7 +479,7 @@ private fun StepHeadline(
             Text(
                 text = "Adım $stepNumber / 3",
                 style = NutraTheme.typography.labelSmall,
-                color = colors.accent,
+                color = colors.onAccentSoft,
             )
             trailing?.invoke()
         }
@@ -374,6 +501,7 @@ private fun StepHeadline(
 @Composable
 private fun GoalSelectionStep(
     selectedGoal: GoalType,
+    isAdolescentObservationMode: Boolean,
     onSelectGoal: (GoalType) -> Unit,
 ) {
     Column(
@@ -387,11 +515,20 @@ private fun GoalSelectionStep(
         StepHeadline(
             stepNumber = 1,
             title = "Nasıl bir hedefle başlıyoruz?",
-            subtitle = "Kalori ve makro hedeflerini buna göre hesaplayacağız.",
+            subtitle = if (isAdolescentObservationMode) {
+                "18 yaş altı için otomatik kalori açığı kapalıdır; dengeli takip ve gözlem modu uygulanır."
+            } else {
+                "Kalori ve makro hedeflerini buna göre hesaplayacağız."
+            },
         )
+
+        if (isAdolescentObservationMode) {
+            AdolescentObservationBanner()
+        }
 
         Column(verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.md)) {
             GoalType.entries.forEach { goal ->
+                val isRestricted = isAdolescentObservationMode && goal != GoalType.MAINTAIN
                 val icon = when (goal) {
                     GoalType.LOSE_WEIGHT -> NutraIcons.TrendingDown
                     GoalType.MAINTAIN -> NutraIcons.TrendingFlat
@@ -399,13 +536,35 @@ private fun GoalSelectionStep(
                 }
                 NutraSelectableCard(
                     title = goal.title,
-                    subtitle = goal.subtitle,
+                    subtitle = if (isRestricted) "18 yaş altında hekim/diyetisyen gözetimi gerektirir" else goal.subtitle,
                     icon = icon,
                     selected = goal == selectedGoal,
-                    onClick = { onSelectGoal(goal) },
+                    onClick = { if (!isRestricted) onSelectGoal(goal) },
+                    modifier = if (isRestricted) Modifier.graphicsLayer { alpha = 0.45f } else Modifier,
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun AdolescentObservationBanner() {
+    val colors = NutraTheme.colors
+    NutraCard(
+        color = colors.surfaceMuted,
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            text = "18 yaş altı gözlem ve takip modu",
+            style = NutraTheme.typography.label,
+            color = colors.textPrimary,
+        )
+        Text(
+            text = "Büyüme döneminde otomatik kalori açığı veya fazlası hesaplanmaz. Günlük öğün takibini koruma düzeyinde yapabilir, kişisel hedefler için bir hekim veya diyetisyene danışabilirsin.",
+            style = NutraTheme.typography.bodySmall,
+            color = colors.textSecondary,
+        )
     }
 }
 
@@ -452,7 +611,7 @@ private fun BodyMetricsStep(
         Column(verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.md)) {
             NutraSectionHeader(title = "Cinsiyet")
             NutraSegmentedControl(
-                items = BiologicalSex.entries,
+                items = remember { BiologicalSex.entries.toImmutableList() },
                 selectedItem = state.sex,
                 onItemSelected = onSelectSex,
                 labelProvider = { it.title },
@@ -471,6 +630,13 @@ private fun BodyMetricsStep(
                         onValueClick = { onEditField(OnboardingNumericField.AGE) },
                         valueMinWidth = 80.dp,
                     )
+                    if (state.isAdolescentObservationMode) {
+                        Text(
+                            text = "18 yaş altı için otomatik kalori açığı kapalıdır; hedef dengeli gözlem (Kilo Koruma) olarak ayarlanır.",
+                            style = NutraTheme.typography.caption,
+                            color = NutraTheme.colors.warningText,
+                        )
+                    }
                     NutraDivider()
                     NutraMetricStepperRow(
                         label = "Boy",
@@ -572,7 +738,11 @@ private fun DailyPlanReviewStep(
         StepHeadline(
             stepNumber = 3,
             title = "Günlük planın hazır",
-            subtitle = "Mifflin-St Jeor hesaplamasına göre önerilen hedeflerini istersen özelleştir.",
+            subtitle = if (state.isAdolescentObservationMode) {
+                "18 yaş altı gözlem modu: Referans denge hedefleri gösteriliyor. Kişisel beslenme planı için hekim veya diyetisyene danış."
+            } else {
+                "Mifflin-St Jeor hesaplamasına göre önerilen hedeflerini istersen özelleştir."
+            },
             trailing = if (state.isCustomized) {
                 {
                     NutraButton(

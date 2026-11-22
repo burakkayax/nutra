@@ -30,7 +30,6 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
 import java.time.LocalDate
 import kotlin.math.abs
 
@@ -291,22 +290,24 @@ class NutraMetabolismEngineTest {
             WeightEntry(i + 1L, today.minusDays(d.toLong()).toString(), 55.0f, 1000L + i)
         }
         val floorResult = engine.analyze(petiteFemale, lowIntakes, flatLowWeights, today = today)
-        floorResult.calorieProposal?.let { prop ->
-            assertTrue("Female calorie proposal must respect >= 1200 floor, got ${prop.proposedGoals.calories}", prop.proposedGoals.calories >= AdaptiveMetabolismEngine.FEMALE_MIN_CALORIES)
-        }
+        assertNotNull("Expected a bounded calorie proposal for confirmed 28-day plateau at 1320 kcal", floorResult.calorieProposal)
+        val prop = floorResult.calorieProposal!!
+        assertTrue(
+            "Female calorie proposal must respect >= 1200 floor, got ${prop.proposedGoals.calories}",
+            prop.proposedGoals.calories >= AdaptiveMetabolismEngine.FEMALE_MIN_CALORIES,
+        )
     }
 
     @Test
-    fun closedLoopIntegration_runsEndToEndOnReal30DayBackupFixture() {
-        val localBackup = listOf(
-            File("nutra_test_yedek.json"),
-            File("../nutra_test_yedek.json"),
-        ).firstOrNull { it.isFile } ?: return
+    fun closedLoopIntegration_runsEndToEndOnCommitted30DaySyntheticBackupFixture() {
+        val stream = javaClass.classLoader?.getResourceAsStream("synthetic_metabolism_30d.json")
+        assertNotNull("Committed fixture synthetic_metabolism_30d.json must exist on test classpath", stream)
+        val rawJson = stream!!.bufferedReader(Charsets.UTF_8).use { it.readText() }
 
         val json = Json { ignoreUnknownKeys = true }
-        val payload = json.decodeFromString<NutraBackupPayload>(localBackup.readText(Charsets.UTF_8))
+        val payload = json.decodeFromString<NutraBackupPayload>(rawJson)
 
-        // 1. Aggregate daily intakes from real 445 meal logs
+        // 1. Aggregate daily intakes from 30-day synthetic logs
         val dailyIntakes = payload.mealLogs
             .groupBy { it.dateIso }
             .map { (dateIso, logs) ->
@@ -329,7 +330,7 @@ class NutraMetabolismEngineTest {
             today = today,
         )
 
-        assertTrue("30-day real fixture should calibrate TDEE", metabolismResult.isAdaptiveCalibrated)
+        assertTrue("30-day fixture should calibrate TDEE", metabolismResult.isAdaptiveCalibrated)
         assertTrue("30-day fixture should show real weight loss velocity", metabolismResult.weeklyWeightChangeKg < -0.15f)
         assertTrue("Estimated TDEE should be reasonable", metabolismResult.estimatedTdeeKcal in 1800..3600)
         assertTrue(metabolismResult.tdeeHistory.size >= 2)

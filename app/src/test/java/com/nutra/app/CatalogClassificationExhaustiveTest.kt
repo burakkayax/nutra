@@ -3,6 +3,7 @@ package com.nutra.app
 import com.nutra.app.core.database.TurkishFoodSeedCatalog
 import com.nutra.app.domain.intelligence.EdibilityStatus
 import com.nutra.app.domain.intelligence.FoodCulinaryClassifier
+import com.nutra.app.domain.intelligence.FoodEligibilityPolicy
 import com.nutra.app.domain.intelligence.MealRecommendationEngine
 import com.nutra.app.domain.intelligence.MealRole
 import com.nutra.app.domain.intelligence.PortionOptimizer
@@ -12,13 +13,16 @@ import com.nutra.app.domain.model.DailyNutritionSummary
 import com.nutra.app.domain.model.DietStyle
 import com.nutra.app.domain.model.DietaryProfile
 import com.nutra.app.domain.model.FoodCategory
+import com.nutra.app.domain.model.FoodDietFlags
 import com.nutra.app.domain.model.FoodFeedbackRecord
 import com.nutra.app.domain.model.FoodFeedbackStatus
 import com.nutra.app.domain.model.FoodItem
 import com.nutra.app.domain.model.MacroGoals
+import com.nutra.app.domain.model.MealLogItem
 import com.nutra.app.domain.model.MealSummary
 import com.nutra.app.domain.model.MealType
 import com.nutra.app.domain.model.UserProfile
+import com.nutra.app.domain.usecase.ContextualMealRankerAndComboEngine
 import com.nutra.app.domain.usecase.TurkishTextNormalizer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -379,5 +383,245 @@ class CatalogClassificationExhaustiveTest {
             ),
         )
         assertTrue(classifier.isAllowedByPreferences(target, DietaryProfile(), neutralMap))
+    }
+
+    @Test
+    fun independentGoldenMatrix_eliminatesAllCategoryFalsePositivesAndAdversarialFalseNegatives() {
+        val catalog = indexedCatalog()
+        val classified = classifier.classifyCatalog(catalog)
+        val policy = FoodEligibilityPolicy()
+
+        // 1. Every catalog fish item must be pescatarian-safe and NEVER falsely flagged as poultry or red meat
+        val fishItems = classified.filter { it.food.dietFlags.containsFish }
+        assertTrue("Expected >= 25 catalog fish items, got ${fishItems.size}", fishItems.size >= 25)
+        for (fish in fishItems) {
+            assertTrue("${fish.food.catalogCode} (${fish.food.name}) must have containsFish=true", fish.containsFish)
+            assertFalse("${fish.food.catalogCode} (${fish.food.name}) must NOT have containsPoultry=true", fish.containsPoultry)
+            assertFalse("${fish.food.catalogCode} (${fish.food.name}) must NOT have containsRedMeat=true", fish.containsRedMeat)
+            assertTrue(
+                "${fish.food.catalogCode} (${fish.food.name}) must be eligible for PESCATARIAN",
+                policy.isEligible(fish, DietaryProfile(dietStyle = DietStyle.PESCATARIAN), emptyMap(), requireReadyToEat = false),
+            )
+        }
+
+        // 2. Red meat & poultry items must NEVER falsely carry FISH_SEAFOOD allergen
+        val meatAndPoultry = classified.filter {
+            (it.food.dietFlags.containsRedMeat || it.food.dietFlags.containsPoultry) &&
+                !it.food.dietFlags.containsFish
+        }
+        assertTrue("Expected >= 35 meat/poultry items, got ${meatAndPoultry.size}", meatAndPoultry.size >= 35)
+        for (meat in meatAndPoultry) {
+            assertFalse(
+                "${meat.food.catalogCode} (${meat.food.name}) must NOT carry FISH_SEAFOOD allergen",
+                AllergenTag.FISH_SEAFOOD in meat.allergens,
+            )
+        }
+
+        // 3. Plain fruits (non-nut items in FRUIT_NUTS) must NEVER falsely carry TREE_NUTS or PEANUT
+        val nutTokens = listOf("badem", "findik", "findig", "ceviz", "fistik", "fistig", "kaju", "antep", "kestane", "pikan", "makadamya", "leblebi", "cekirdek", "kuruyemis", "asorti")
+        val plainFruits = classified.filter { cf ->
+            cf.food.category == FoodCategory.FRUIT_NUTS &&
+                nutTokens.none { tok -> TurkishTextNormalizer.normalize(cf.food.name).contains(tok) }
+        }
+        assertTrue("Expected >= 65 plain fruit items, got ${plainFruits.size}", plainFruits.size >= 65)
+        for (fruit in plainFruits) {
+            assertFalse(
+                "${fruit.food.catalogCode} (${fruit.food.name}) plain fruit must NOT carry TREE_NUTS",
+                AllergenTag.TREE_NUTS in fruit.allergens,
+            )
+            assertFalse(
+                "${fruit.food.catalogCode} (${fruit.food.name}) plain fruit must NOT carry PEANUT",
+                AllergenTag.PEANUT in fruit.allergens,
+            )
+        }
+
+        // 4. Plain oats, peanut butter & olives must NEVER carry DAIRY
+        val byCode = classified.associateBy { it.food.catalogCode }
+        for (code in listOf("TR0224", "TR0228", "TR0315", "TR0915")) {
+            val item = byCode.getValue(code)
+            assertFalse("$code (${item.food.name}) must NOT carry DAIRY allergen", AllergenTag.DAIRY in item.allergens)
+        }
+
+        // 5. Adversarial synthetic custom foods (previously misclassified by substring/negation heuristics)
+        val sebzeliTavuk = classifier.classifySingle(
+            FoodItem(
+                id = 9001L,
+                name = "Sebzeli Tavuk",
+                subtitle = "Ev yemeği",
+                category = FoodCategory.HOME_COOKED,
+                caloriesPer100g = 150,
+                proteinPer100g = 18f,
+                carbsPer100g = 6f,
+                fatPer100g = 5f,
+                defaultUnitLabel = "1 Porsiyon",
+                defaultUnitGrams = 200f,
+                isCustom = true,
+                allergenVerified = false,
+            ),
+        )
+        assertTrue("Sebzeli Tavuk must be poultry", sebzeliTavuk.containsPoultry)
+        assertTrue("Sebzeli Tavuk must contain animal product", sebzeliTavuk.containsAnimalProduct)
+        assertFalse(
+            "Sebzeli Tavuk must NEVER be eligible for VEGAN",
+            policy.isEligible(sebzeliTavuk, DietaryProfile(dietStyle = DietStyle.VEGAN), emptyMap(), forAutomaticRecommendation = false),
+        )
+
+        val soyaSosluDana = classifier.classifySingle(
+            FoodItem(
+                id = 9002L,
+                name = "Soya Soslu Dana Eti",
+                subtitle = "Wok",
+                category = FoodCategory.MEAT_POULTRY,
+                caloriesPer100g = 210,
+                proteinPer100g = 22f,
+                carbsPer100g = 5f,
+                fatPer100g = 11f,
+                defaultUnitLabel = "1 Porsiyon",
+                defaultUnitGrams = 180f,
+                isCustom = true,
+                allergenVerified = false,
+            ),
+        )
+        assertTrue("Soya Soslu Dana Eti must be red meat", soyaSosluDana.containsRedMeat)
+        assertTrue("Soya Soslu Dana Eti must carry SOY allergen", AllergenTag.SOY in soyaSosluDana.allergens)
+        assertFalse(
+            "Soya Soslu Dana Eti must NEVER be eligible for VEGAN",
+            policy.isEligible(soyaSosluDana, DietaryProfile(dietStyle = DietStyle.VEGAN), emptyMap(), forAutomaticRecommendation = false),
+        )
+
+        val bademSutuVeYogurt = classifier.classifySingle(
+            FoodItem(
+                id = 9003L,
+                name = "Badem Sütü ve Yoğurt",
+                subtitle = "Kase",
+                category = FoodCategory.BREAKFAST,
+                caloriesPer100g = 90,
+                proteinPer100g = 4f,
+                carbsPer100g = 8f,
+                fatPer100g = 4f,
+                defaultUnitLabel = "1 Kase",
+                defaultUnitGrams = 200f,
+                isCustom = true,
+                allergenVerified = false,
+            ),
+        )
+        assertTrue("Badem Sütü ve Yoğurt MUST carry DAIRY allergen (yoğurt)", AllergenTag.DAIRY in bademSutuVeYogurt.allergens)
+        assertTrue("Badem Sütü ve Yoğurt MUST carry TREE_NUTS allergen (badem)", AllergenTag.TREE_NUTS in bademSutuVeYogurt.allergens)
+        assertFalse(
+            "Badem Sütü ve Yoğurt must NEVER be eligible for DAIRY-excluded user",
+            policy.isEligible(bademSutuVeYogurt, DietaryProfile(excludedAllergens = setOf(AllergenTag.DAIRY)), emptyMap(), forAutomaticRecommendation = false),
+        )
+
+        // 6. Unverified custom food safety gate in FoodEligibilityPolicy
+        val unverifiedCustom = classifier.classifySingle(
+            FoodItem(
+                id = 9004L,
+                name = "Özel Kurabiyem",
+                subtitle = "Ev yapımı",
+                category = FoodCategory.SNACKS_SWEETS,
+                caloriesPer100g = 350,
+                proteinPer100g = 6f,
+                carbsPer100g = 50f,
+                fatPer100g = 14f,
+                defaultUnitLabel = "1 Adet",
+                defaultUnitGrams = 45f,
+                isCustom = true,
+                allergenVerified = false,
+            ),
+        )
+        assertFalse(
+            "Unverified custom food must be excluded from automated recommendations when allergen filter is active",
+            policy.isEligible(
+                unverifiedCustom,
+                DietaryProfile(excludedAllergens = setOf(AllergenTag.PEANUT)),
+                emptyMap(),
+                forAutomaticRecommendation = true,
+            ),
+        )
+        assertTrue(
+            "Unverified custom food remains eligible for STANDARD profile with no allergen exclusions",
+            policy.isEligible(unverifiedCustom, DietaryProfile(), emptyMap(), forAutomaticRecommendation = true),
+        )
+    }
+
+    @Test
+    fun smartCombos_strictlyHonorDietaryProfileAndDislikedFeedback() {
+        val catalog = indexedCatalog()
+        val egg = catalog.first { it.name.contains("Haşlanmış Yumurta") }
+        val cheese = catalog.first { it.name.contains("Ezine") }
+        val bread = catalog.first { it.catalogCode == "TR0122" }
+
+        val history = listOf(
+            MealLogItem(1L, "2026-11-18", MealType.BREAKFAST, egg.id, egg.name, "1 Adet", 2f, 100f, 155, 12.6f, 1.1f, 10.6f, 1000L),
+            MealLogItem(2L, "2026-11-18", MealType.BREAKFAST, cheese.id, cheese.name, "1 Dilim", 1f, 30f, 87, 5.2f, 0.5f, 7.0f, 1001L),
+            MealLogItem(3L, "2026-11-18", MealType.BREAKFAST, bread.id, bread.name, "1 Dilim", 2f, 80f, 206, 8.6f, 34.9f, 2.7f, 1002L),
+            MealLogItem(4L, "2026-11-19", MealType.BREAKFAST, egg.id, egg.name, "1 Adet", 2f, 100f, 155, 12.6f, 1.1f, 10.6f, 2000L),
+            MealLogItem(5L, "2026-11-19", MealType.BREAKFAST, cheese.id, cheese.name, "1 Dilim", 1f, 30f, 87, 5.2f, 0.5f, 7.0f, 2001L),
+            MealLogItem(6L, "2026-11-19", MealType.BREAKFAST, bread.id, bread.name, "1 Dilim", 2f, 80f, 206, 8.6f, 34.9f, 2.7f, 2002L),
+        )
+
+        val comboEngine = ContextualMealRankerAndComboEngine()
+        val unrestricted = comboEngine.buildSmartComboSuggestions(
+            mealType = MealType.BREAKFAST,
+            currentDateMealItems = emptyList(),
+            historicalLogs = history,
+            catalogFoods = catalog,
+        )
+        assertTrue("Expected smart combo with unrestricted profile", unrestricted.isNotEmpty())
+
+        // With DAIRY exclusion, Ezine cheese MUST NOT appear in any smart combo
+        val dairyFree = comboEngine.buildSmartComboSuggestions(
+            mealType = MealType.BREAKFAST,
+            currentDateMealItems = emptyList(),
+            historicalLogs = history,
+            catalogFoods = catalog,
+            dietaryProfile = DietaryProfile(excludedAllergens = setOf(AllergenTag.DAIRY)),
+        )
+        assertTrue(
+            "Dairy-excluded smart combos must never contain dairy foods",
+            dairyFree.flatMap { it.items }.none { it.foodId == cheese.id },
+        )
+
+        // With VEGAN diet, neither egg nor cheese can appear, and any curated fallback combo must be 100% vegan
+        val veganCombos = comboEngine.buildSmartComboSuggestions(
+            mealType = MealType.BREAKFAST,
+            currentDateMealItems = emptyList(),
+            historicalLogs = history,
+            catalogFoods = catalog,
+            dietaryProfile = DietaryProfile(dietStyle = DietStyle.VEGAN),
+        )
+        val catalogById = catalog.associateBy { it.id }
+        for (entry in veganCombos.flatMap { it.items }) {
+            assertTrue("Egg must never appear in vegan smart combos", entry.foodId != egg.id)
+            assertTrue("Cheese must never appear in vegan smart combos", entry.foodId != cheese.id)
+            val matched = entry.foodId?.let { catalogById[it] }
+            assertTrue("Every vegan combo item must exist in catalog", matched != null)
+            assertFalse(
+                "Vegan smart combo item '${matched!!.name}' must NOT contain animal products",
+                classifier.classifySingle(matched).containsAnimalProduct,
+            )
+        }
+
+        // With egg disliked, egg must never appear in smart combos
+        val eggKey = classifier.classifySingle(egg).feedbackKey
+        val dislikedMap = mapOf(
+            eggKey to FoodFeedbackRecord(
+                foodKey = eggKey,
+                foodId = egg.id,
+                foodName = egg.name,
+                status = FoodFeedbackStatus.DISLIKED,
+            ),
+        )
+        val withoutDisliked = comboEngine.buildSmartComboSuggestions(
+            mealType = MealType.BREAKFAST,
+            currentDateMealItems = emptyList(),
+            historicalLogs = history,
+            catalogFoods = catalog,
+            feedbackByKey = dislikedMap,
+        )
+        assertTrue(
+            "Disliked egg must never appear in smart combos",
+            withoutDisliked.flatMap { it.items }.none { it.foodId == egg.id },
+        )
     }
 }

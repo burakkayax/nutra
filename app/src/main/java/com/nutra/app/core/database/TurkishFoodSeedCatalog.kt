@@ -1,7 +1,9 @@
 package com.nutra.app.core.database
 
 import android.content.Context
+import com.nutra.app.domain.model.AllergenTag
 import com.nutra.app.domain.model.FoodCategory
+import com.nutra.app.domain.model.FoodDietFlags
 import com.nutra.app.domain.model.FoodItem
 import com.nutra.app.domain.model.MealType
 import com.nutra.app.domain.model.ServingUnit
@@ -13,7 +15,7 @@ import java.io.InputStream
 
 @Serializable
 internal data class SeedCatalogPayloadDto(
-    val catalogVersion: Int = 2,
+    val catalogVersion: Int = 3,
     val foods: List<SeedFoodDto> = emptyList(),
 )
 
@@ -52,6 +54,8 @@ internal data class SeedFoodDto(
     val potassiumMg: Float? = null,
     val ironMg: Float? = null,
     val vitaminCMg: Float? = null,
+    val allergens: List<String> = emptyList(),
+    val dietFlags: List<String> = emptyList(),
 )
 
 private data class SeedCatalogRecord(
@@ -63,6 +67,7 @@ object TurkishFoodSeedCatalog {
 
     const val CATALOG_ASSET_NAME: String = "turkish_food_catalog.json"
     const val EXPECTED_CATALOG_SIZE: Int = 621
+    const val CURRENT_CATALOG_VERSION: Int = 3
 
     private val catalogJson = Json {
         ignoreUnknownKeys = true
@@ -71,6 +76,7 @@ object TurkishFoodSeedCatalog {
 
     private val CATEGORY_BY_NAME: Map<String, FoodCategory> = FoodCategory.entries.associateBy { it.name }
     private val MEAL_BY_NAME: Map<String, MealType> = MealType.entries.associateBy { it.name }
+    private val ALLERGEN_BY_NAME: Map<String, AllergenTag> = AllergenTag.entries.associateBy { it.name }
 
     /**
      * Maps normalized names from the legacy 38-item starter seed to stable catalog codes (`TRxxxx`)
@@ -129,6 +135,10 @@ object TurkishFoodSeedCatalog {
             FoodItemEntity.fromDomain(record.item, record.normalizedSearchText)
         }
 
+    fun releaseCache() {
+        cachedRecords = null
+    }
+
     private fun loadRecords(context: Context?): List<SeedCatalogRecord> {
         cachedRecords?.let { return it }
         synchronized(this) {
@@ -136,7 +146,8 @@ object TurkishFoodSeedCatalog {
             val rawJson = openCatalogStream(context)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
                 ?: error("Besin kataloğu asset dosyası bulunamadı: $CATALOG_ASSET_NAME")
             val payload = catalogJson.decodeFromString<SeedCatalogPayloadDto>(rawJson)
-            val parsed = payload.foods.map(::toRecord)
+            val version = payload.catalogVersion.coerceAtLeast(CURRENT_CATALOG_VERSION)
+            val parsed = payload.foods.map { dto -> toRecord(dto, version) }
             cachedRecords = parsed
             return parsed
         }
@@ -151,24 +162,20 @@ object TurkishFoodSeedCatalog {
             ?: TurkishFoodSeedCatalog::class.java.getResourceAsStream("/$CATALOG_ASSET_NAME")
     }
 
-    private fun toRecord(dto: SeedFoodDto): SeedCatalogRecord {
+    private fun toRecord(dto: SeedFoodDto, catalogVersion: Int): SeedCatalogRecord {
         val category = CATEGORY_BY_NAME[dto.category] ?: FoodCategory.HOME_COOKED
         val baseUnit = ServingUnitLabels.normalizedBaseUnit(dto.baseUnit)
         val preferredMeals = dto.preferredMeals.mapNotNull { MEAL_BY_NAME[it] }.toSet()
         val alternates = dto.alternateUnits.map { ServingUnit(label = it.l, grams = it.g) }
         val normalizedName = TurkishTextNormalizer.normalize(dto.name)
+        // Only index food-intrinsic tokens (name, brand, searchKeywords, code) —
+        // never category titles or broad subtitles that cause cross-allergen contamination.
         val searchParts = buildString(128) {
             append(dto.name)
             if (!dto.brand.isNullOrBlank()) {
                 append(' ')
                 append(dto.brand)
             }
-            if (dto.subtitle.isNotBlank()) {
-                append(' ')
-                append(dto.subtitle)
-            }
-            append(' ')
-            append(category.title)
             if (dto.searchKeywords.isNotBlank()) {
                 append(' ')
                 append(dto.searchKeywords)
@@ -179,6 +186,8 @@ object TurkishFoodSeedCatalog {
             }
         }
         val normalizedSearch = TurkishTextNormalizer.normalize(searchParts)
+        val allergens = dto.allergens.mapNotNull { ALLERGEN_BY_NAME[it.trim().uppercase()] }.toSet()
+        val dietFlags = FoodDietFlags.fromTokens(dto.dietFlags)
 
         val item = FoodItem(
             name = dto.name,
@@ -208,6 +217,11 @@ object TurkishFoodSeedCatalog {
             ironMgPer100g = dto.ironMg,
             vitaminCMgPer100g = dto.vitaminCMg,
             preparationState = dto.preparationState?.takeIf { it.isNotBlank() },
+            allergens = allergens,
+            dietFlags = dietFlags,
+            allergenVerified = true,
+            customUid = null,
+            catalogVersion = catalogVersion,
             normalizedName = normalizedName,
             normalizedSearchText = normalizedSearch,
         )

@@ -92,7 +92,7 @@ class NutraPerformanceAndStabilityTest {
 
         assertEquals("2026-11-11", trend[1].dateIso)
         assertEquals(77.2f, trend[1].rawWeightKg, 0.001f)
-        assertEquals(76.3f, trend[1].emaTrendKg, 0.05f)
+        assertEquals(76.2f, trend[1].emaTrendKg, 0.05f)
 
         assertEquals("2026-11-12", trend[2].dateIso)
         assertEquals(75.8f, trend[2].rawWeightKg, 0.001f)

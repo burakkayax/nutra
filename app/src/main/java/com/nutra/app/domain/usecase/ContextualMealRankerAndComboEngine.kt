@@ -1,8 +1,11 @@
 package com.nutra.app.domain.usecase
 
 import com.nutra.app.core.designsystem.NutraFormatters
+import com.nutra.app.domain.intelligence.FoodCulinaryClassifier
 import com.nutra.app.domain.model.ComboFoodEntry
+import com.nutra.app.domain.model.DietaryProfile
 import com.nutra.app.domain.model.FoodCategory
+import com.nutra.app.domain.model.FoodFeedbackRecord
 import com.nutra.app.domain.model.FoodItem
 import com.nutra.app.domain.model.MealLogItem
 import com.nutra.app.domain.model.MealType
@@ -31,7 +34,10 @@ data class MealUsageStats(
     val maxTimestamp: Long,
 )
 
-class ContextualMealRankerAndComboEngine @Inject constructor() {
+class ContextualMealRankerAndComboEngine @Inject constructor(
+    private val classifier: FoodCulinaryClassifier,
+) {
+    constructor() : this(FoodCulinaryClassifier())
 
     fun prepareMealUsageStats(
         historicalLogs: List<MealLogItem>,
@@ -166,10 +172,44 @@ class ContextualMealRankerAndComboEngine @Inject constructor() {
         currentDateMealItems: List<MealLogItem>,
         historicalLogs: List<MealLogItem>,
         catalogFoods: List<FoodItem>,
+        dietaryProfile: DietaryProfile = DietaryProfile(),
+        feedbackByKey: Map<String, FoodFeedbackRecord> = emptyMap(),
     ): List<SmartComboSuggestion> {
         val normCache = HashMap<String, String>(64)
         fun cachedNorm(text: String): String =
             normCache.getOrPut(text) { TurkishTextNormalizer.normalize(text) }
+
+        val classifiedCatalog = classifier.classifyCatalog(catalogFoods)
+        val classifiedById = HashMap<Long, com.nutra.app.domain.intelligence.ClassifiedFood>(classifiedCatalog.size)
+        val classifiedByNormName = HashMap<String, com.nutra.app.domain.intelligence.ClassifiedFood>(classifiedCatalog.size)
+        val eligibleCatalog = ArrayList<FoodItem>(classifiedCatalog.size)
+        for (cf in classifiedCatalog) {
+            if (cf.food.id > 0L) classifiedById[cf.food.id] = cf
+            val nName = cf.food.normalizedName.ifBlank { cachedNorm(cf.food.name) }
+            classifiedByNormName.putIfAbsent(nName, cf)
+            if (classifier.isAllowedByPreferences(cf, dietaryProfile, feedbackByKey, requireReadyToEat = true, forAutomaticRecommendation = true)) {
+                eligibleCatalog.add(cf.food)
+            }
+        }
+
+        fun isHistoricalItemEligible(log: MealLogItem): Boolean {
+            val matched = log.foodId?.let { classifiedById[it] }
+                ?: classifiedByNormName[cachedNorm(log.foodName)]
+            if (matched != null) {
+                return classifier.isAllowedByPreferences(
+                    classified = matched,
+                    dietaryProfile = dietaryProfile,
+                    feedbackByKey = feedbackByKey,
+                    requireReadyToEat = false,
+                    forAutomaticRecommendation = true,
+                )
+            }
+            // Unknown/deleted custom item: do not recommend when strict dietary/allergen rules are active
+            val hasStrictRules = dietaryProfile.excludedAllergens.isNotEmpty() ||
+                dietaryProfile.dietStyle != com.nutra.app.domain.model.DietStyle.STANDARD ||
+                dietaryProfile.excludedKeywords.isNotEmpty()
+            return !hasStrictRules
+        }
 
         val currentFoodNames = HashSet<String>(currentDateMealItems.size.coerceAtLeast(4))
         for (i in currentDateMealItems.indices) {
@@ -185,7 +225,7 @@ class ContextualMealRankerAndComboEngine @Inject constructor() {
         val basketsByDate = LinkedHashMap<String, MutableList<MealLogItem>>()
         for (i in historicalLogs.indices) {
             val log = historicalLogs[i]
-            if (log.mealType == mealType) {
+            if (log.mealType == mealType && isHistoricalItemEligible(log)) {
                 basketsByDate.getOrPut(log.dateIso) { ArrayList(4) }.add(log)
             }
         }
@@ -253,10 +293,11 @@ class ContextualMealRankerAndComboEngine @Inject constructor() {
                 if (missingItems.size >= 2) {
                     val count = group.count
                     val title = missingItems.take(3).joinToString(" + ") { it.foodName }
+                    val mealTitle = if (mealType == MealType.SNACK) "Ara öğünde" else "${mealType.title} öğününde"
                     val subtitle = if (count >= 2) {
-                        "${mealType.title} öğününde $count kez birlikte tükettiniz"
+                        "$mealTitle $count kez birlikte tükettin"
                     } else {
-                        "Son ${NutraFormatters.lowercaseTr(mealType.title)} kaydınızdan hızlı kombin"
+                        "Son ${NutraFormatters.lowercaseTr(mealType.title)} kaydından hızlı kombin"
                     }
                     suggestions.add(
                         SmartComboSuggestion(
@@ -293,9 +334,9 @@ class ContextualMealRankerAndComboEngine @Inject constructor() {
         for (spec in blueprintSpecs) keywordsNeeded.addAll(spec.third)
         val exactMatchedByKeyword = HashMap<String, FoodItem>(keywordsNeeded.size)
         val partialMatchedByKeyword = HashMap<String, FoodItem>(keywordsNeeded.size)
-        for (i in catalogFoods.indices) {
+        for (i in eligibleCatalog.indices) {
             if (exactMatchedByKeyword.size == keywordsNeeded.size) break
-            val food = catalogFoods[i]
+            val food = eligibleCatalog[i]
             val normName = food.normalizedName.ifBlank { cachedNorm(food.name) }
             for (kw in keywordsNeeded) {
                 if (!exactMatchedByKeyword.containsKey(kw)) {
@@ -355,12 +396,17 @@ class ContextualMealRankerAndComboEngine @Inject constructor() {
                 Triple(
                     "Klasik Dengeli Kahvaltı Kombini",
                     "Birlikte sık tüketilen yüksek proteinli kahvaltı üçlüsü",
-                    listOf("haslanmis yumurta", "ezine peyniri", "ekmek tam bugday unlu"),
+                    listOf("haslanmis yumurta", "ezine peyniri", "tam bugday ekmegi"),
                 ),
                 Triple(
                     "Yulaf & Yoğurt Enerji Kasesi",
                     "Pratik sabah kombinasyonu",
-                    listOf("yulaf ezmesi", "yogurt suzme burdur", "ceviz"),
+                    listOf("yulaf ezmesi", "suzme yogurt burdur", "ceviz"),
+                ),
+                Triple(
+                    "Bitkisel Kahvaltı Tabağı",
+                    "Hayvansal ürün içermeyen dengeli sabah ikilisi",
+                    listOf("yulaf ezmesi", "muz", "badem"),
                 ),
             ),
             MealType.LUNCH to listOf(
@@ -374,6 +420,11 @@ class ContextualMealRankerAndComboEngine @Inject constructor() {
                     "Hafif ve doyurucu öğle ikilisi",
                     listOf("mercimek corbasi", "coban salatasi"),
                 ),
+                Triple(
+                    "Zeytinyağlı Baklagil & Salata",
+                    "Lif açısından zengin bitkisel öğle tabağı",
+                    listOf("kuru fasulye etsiz", "coban salatasi"),
+                ),
             ),
             MealType.DINNER to listOf(
                 Triple(
@@ -386,6 +437,16 @@ class ContextualMealRankerAndComboEngine @Inject constructor() {
                     "Dengeli akşam yemeği üçlüsü",
                     listOf("kuru fasulye etli", "pirinc pilavi sivi yagli", "yogurt tam yagli"),
                 ),
+                Triple(
+                    "Izgara Somon & Salata",
+                    "Omega-3 açısından zengin hafif akşam tabağı",
+                    listOf("somon baligi pismis", "coban salatasi"),
+                ),
+                Triple(
+                    "Nohut & Pilav Ev Menüsü",
+                    "Doyurucu bitkisel akşam kombinasyonu",
+                    listOf("nohut yemegi etsiz", "pirinc pilavi sivi yagli"),
+                ),
             ),
             MealType.SNACK to listOf(
                 Triple(
@@ -397,6 +458,11 @@ class ContextualMealRankerAndComboEngine @Inject constructor() {
                     "Muz & Kefir Ara Öğünü",
                     "Pratik ve ferah ara öğün ikilisi",
                     listOf("muz", "kefir"),
+                ),
+                Triple(
+                    "Muz & Ceviz Ara Öğünü",
+                    "Bitkisel ve pratik enerji ikilisi",
+                    listOf("muz", "ceviz"),
                 ),
             ),
         )

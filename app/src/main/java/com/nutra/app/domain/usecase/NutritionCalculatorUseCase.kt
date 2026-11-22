@@ -10,13 +10,14 @@ import kotlin.math.roundToInt
 
 object BodyMetricBounds {
     const val MIN_AGE = 14
+    const val ADULT_MIN_AGE = 18
     const val MAX_AGE = 95
     const val MIN_HEIGHT_CM = 130
     const val MAX_HEIGHT_CM = 225
-    const val MIN_WEIGHT_KG = 35f
-    const val MAX_WEIGHT_KG = 250f
-    const val MIN_WEIGHT_TENTHS = 350
-    const val MAX_WEIGHT_TENTHS = 2500
+    const val MIN_WEIGHT_KG = 30f
+    const val MAX_WEIGHT_KG = 300f
+    const val MIN_WEIGHT_TENTHS = 300
+    const val MAX_WEIGHT_TENTHS = 3000
 }
 
 data class MacroGoalBounds(
@@ -37,6 +38,9 @@ class NutritionCalculatorUseCase @Inject constructor() {
     /**
      * Calculates daily Calorie, Protein, Carbohydrate, Fat, and Water targets
      * using the Mifflin-St Jeor equation.
+     *
+     * For ages 14-17 (adolescent observation mode), automatic calorie deficit/surplus
+     * adjustments are disabled and maintenance-band reference targets are returned.
      */
     fun calculateGoals(
         sex: BiologicalSex,
@@ -46,9 +50,12 @@ class NutritionCalculatorUseCase @Inject constructor() {
         activityLevel: ActivityLevel,
         goalType: GoalType,
     ): MacroGoals {
-        val safeWeight = (if (weightKg.isFinite()) weightKg else 75f).coerceIn(35f, 250f)
+        val safeWeight = (if (weightKg.isFinite()) weightKg else 75f)
+            .coerceIn(BodyMetricBounds.MIN_WEIGHT_KG, BodyMetricBounds.MAX_WEIGHT_KG)
         val safeHeight = heightCm.coerceIn(120, 230)
-        val safeAge = age.coerceIn(14, 100)
+        val safeAge = age.coerceIn(BodyMetricBounds.MIN_AGE, 100)
+        val isAdolescent = safeAge < BodyMetricBounds.ADULT_MIN_AGE
+        val effectiveGoalType = if (isAdolescent) GoalType.MAINTAIN else goalType
 
         val sexConstant = when (sex) {
             BiologicalSex.MALE -> 5f
@@ -57,13 +64,20 @@ class NutritionCalculatorUseCase @Inject constructor() {
 
         val bmr = (10f * safeWeight) + (6.25f * safeHeight) - (5f * safeAge) + sexConstant
         val tdee = bmr * activityLevel.multiplier
-        val rawCalories = (tdee + goalType.calorieDelta).roundToInt()
+        val effectiveDelta = if (isAdolescent) 0 else effectiveGoalType.calorieDelta
+        val rawCalories = (tdee + effectiveDelta).roundToInt()
+
+        val clinicalMinCalories = when {
+            isAdolescent -> 1500
+            sex == BiologicalSex.MALE -> 1500
+            else -> 1200
+        }
 
         // Round to nearest 10 kcal for clean display
-        val targetCalories = ((rawCalories + 5) / 10 * 10).coerceIn(1200, 4800)
+        val targetCalories = ((rawCalories + 5) / 10 * 10).coerceIn(clinicalMinCalories, 4800)
 
-        val proteinGrams = ((targetCalories * goalType.proteinRatio) / 4f).roundToInt().coerceAtLeast(60)
-        val fatGrams = ((targetCalories * goalType.fatRatio) / 9f).roundToInt().coerceAtLeast(40)
+        val proteinGrams = ((targetCalories * effectiveGoalType.proteinRatio) / 4f).roundToInt().coerceAtLeast(60)
+        val fatGrams = ((targetCalories * effectiveGoalType.fatRatio) / 9f).roundToInt().coerceAtLeast(40)
         val remainingCalories = (targetCalories - (proteinGrams * 4) - (fatGrams * 9)).coerceAtLeast(200)
         val carbsGrams = (remainingCalories / 4f).roundToInt()
 

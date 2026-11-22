@@ -49,7 +49,9 @@ object WaterReminderScheduleCalculator {
         val endTotalSec = (safe.endHour * 60 + safe.endMinute) * 60
         val currentSec = time.toSecondOfDay()
         val earliestSec = (startTotalSec - 120).coerceAtLeast(0)
-        val latestSec = (endTotalSec + 600).coerceAtMost(24 * 60 * 60 - 1)
+        // Widen trailing tolerance (30-45 min) to absorb Doze/approximate alarm drift without dropping late window alerts
+        val dozeGraceSeconds = maxOf(30, minOf(safe.intervalMinutes / 2, 45)) * 60
+        val latestSec = (endTotalSec + dozeGraceSeconds).coerceAtMost(24 * 60 * 60 - 1)
         return currentSec in earliestSec..latestSec
     }
 
@@ -119,7 +121,7 @@ object WaterReminderScheduleCalculator {
     fun formatNextTriggerLabel(now: LocalDateTime, nextTrigger: LocalDateTime): String {
         val clock = formatClock(nextTrigger.hour, nextTrigger.minute)
         val dayPrefix = if (nextTrigger.toLocalDate() == now.toLocalDate()) "Bugün" else "Yarın"
-        return "$dayPrefix $clock"
+        return "$dayPrefix ~$clock"
     }
 
     fun formatProfileSummary(settings: WaterReminderSettings): String {
@@ -128,6 +130,6 @@ object WaterReminderScheduleCalculator {
         val interval = formatInterval(safe.intervalMinutes)
         val start = formatClock(safe.startHour, safe.startMinute)
         val end = formatClock(safe.endHour, safe.endMinute)
-        return "Açık · $interval aralıkla · $start–$end"
+        return "Açık · ~$interval aralıkla · $start–$end"
     }
 }

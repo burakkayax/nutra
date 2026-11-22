@@ -129,7 +129,7 @@ class CoreAppAndEdgeCasesRigorousTest {
             baseUnit = "g",
         )
         assertEquals("0 g", badLog.formattedQuantity)
-        assertEquals("1x 1 Porsiyon (0 ml)", badLog.copy(unitLabel = "1 Porsiyon", baseUnit = "ml").formattedQuantity)
+        assertEquals("1 Porsiyon (0 ml)", badLog.copy(unitLabel = "1 Porsiyon", baseUnit = "ml").formattedQuantity)
 
         // DailyGoalImpactPreview guards 0 calorieGoal / proteinGoal
         val impact = DailyGoalImpactPreview(0, 500, 0, 0f, 30f, 0, 0f, 50f, 0, 0f, 15f, 0, "")
@@ -299,8 +299,8 @@ class CoreAppAndEdgeCasesRigorousTest {
         val trendNanAlpha = trendCalc.calculateTrend(messy, smoothingFactor = Float.NaN)
         assertEquals(2, trendNanAlpha.size)
         assertEquals(80.0f, trendNanAlpha[0].emaTrendKg, 0.01f)
-        // 80.0 * 0.75 + 79.0 * 0.25 = 79.75 -> rounded to 1 decimal place = 79.8
-        assertEquals(79.8f, trendNanAlpha[1].emaTrendKg, 0.01f)
+        // 4-day gap with time-aware tau = 7.0 -> alpha = 1 - exp(-4/7) ≈ 0.435 -> 80 - 0.435 = 79.56 -> 79.6
+        assertEquals(79.6f, trendNanAlpha[1].emaTrendKg, 0.05f)
 
         val trendAlphaOne = trendCalc.calculateTrend(messy, smoothingFactor = 5.0f)
         assertEquals(79.0f, trendAlphaOne[1].emaTrendKg, 0.01f)
@@ -510,20 +510,21 @@ class CoreAppAndEdgeCasesRigorousTest {
         assertEquals("00:00", WaterReminderScheduleCalculator.formatClockFromMinutes(-100))
         assertEquals("23:59", WaterReminderScheduleCalculator.formatClockFromMinutes(9999))
         assertTrue(WaterReminderScheduleCalculator.isWithinActiveWindow(LocalTime.of(9, 0), settings))
-        assertTrue(WaterReminderScheduleCalculator.isWithinActiveWindow(LocalTime.of(21, 10), settings))
-        assertFalse(WaterReminderScheduleCalculator.isWithinActiveWindow(LocalTime.of(21, 11), settings))
+        assertTrue(WaterReminderScheduleCalculator.isWithinActiveWindow(LocalTime.of(21, 45), settings))
+        assertFalse(WaterReminderScheduleCalculator.isWithinActiveWindow(LocalTime.of(21, 46), settings))
     }
 
     @Test
-    fun roomMigrationsChain_isContiguousFromV1ToV5AndExecutesAllExpectedSchemaStatements() {
+    fun roomMigrationsChain_isContiguousFromV1ToV6AndExecutesAllExpectedSchemaStatements() {
         val migrations = listOf(
             AppModule.MIGRATION_1_2,
             AppModule.MIGRATION_2_3,
             AppModule.MIGRATION_3_4,
             AppModule.MIGRATION_4_5,
+            AppModule.MIGRATION_5_6,
         )
         assertEquals(1, migrations.first().startVersion)
-        assertEquals(5, migrations.last().endVersion)
+        assertEquals(6, migrations.last().endVersion)
         for (i in 0 until migrations.lastIndex) {
             assertEquals(migrations[i].endVersion, migrations[i + 1].startVersion)
         }

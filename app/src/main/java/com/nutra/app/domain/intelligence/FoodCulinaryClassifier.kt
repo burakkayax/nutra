@@ -1,11 +1,9 @@
 package com.nutra.app.domain.intelligence
 
 import com.nutra.app.domain.model.AllergenTag
-import com.nutra.app.domain.model.DietStyle
 import com.nutra.app.domain.model.DietaryProfile
 import com.nutra.app.domain.model.FoodCategory
 import com.nutra.app.domain.model.FoodFeedbackRecord
-import com.nutra.app.domain.model.FoodFeedbackStatus
 import com.nutra.app.domain.model.FoodItem
 import com.nutra.app.domain.usecase.TurkishTextNormalizer
 import javax.inject.Inject
@@ -19,7 +17,10 @@ import javax.inject.Singleton
  * raw potatoes/onions) and oversized default units from leaking into practical meal suggestions.
  */
 @Singleton
-class FoodCulinaryClassifier @Inject constructor() {
+class FoodCulinaryClassifier @Inject constructor(
+    private val eligibilityPolicy: FoodEligibilityPolicy,
+) {
+    constructor() : this(FoodEligibilityPolicy())
 
     private data class CatalogCacheSnapshot(
         val signature: Int,
@@ -31,6 +32,7 @@ class FoodCulinaryClassifier @Inject constructor() {
 
     fun foodFeedbackKey(food: FoodItem): String =
         food.catalogCode?.takeIf { it.isNotBlank() }
+            ?: food.customUid?.takeIf { it.isNotBlank() }
             ?: "custom:${food.id}:${TurkishTextNormalizer.normalize(food.name)}"
 
     fun classifyCatalog(foods: List<FoodItem>): List<ClassifiedFood> {
@@ -64,11 +66,7 @@ class FoodCulinaryClassifier @Inject constructor() {
 
     fun classifySingle(food: FoodItem): ClassifiedFood {
         val normName = food.normalizedName.ifBlank { TurkishTextNormalizer.normalize(food.name) }
-        val normFull = food.normalizedSearchText.ifBlank {
-            TurkishTextNormalizer.normalize("${food.name} ${food.subtitle} ${food.brand.orEmpty()}")
-        }
         val paddedName = " $normName "
-        val paddedFull = " $normFull "
         val prep = TurkishTextNormalizer.normalize(food.preparationState.orEmpty())
 
         val edibility = resolveEdibility(food, normName, paddedName, prep)
@@ -78,27 +76,47 @@ class FoodCulinaryClassifier @Inject constructor() {
             resolveMealRole(food, normName, paddedName)
         }
 
-        val isExplicitlyMeatFree = containsAnyToken(normName, PLANT_PROTEIN_TOKENS) ||
-            normName.contains("mercimek kofte") ||
-            normName.contains("cig kofte") ||
-            normName.contains("patates kofte") ||
-            normName.contains("ispanakli kofte") ||
-            normName.contains("koftelik")
+        val containsFish: Boolean
+        val containsPoultry: Boolean
+        val containsRedMeat: Boolean
+        val allergens: Set<AllergenTag>
+        val containsAnimalProduct: Boolean
 
-        val containsFish = containsAnyToken(normFull, FISH_TOKENS) || containsAnyToken(paddedFull, FISH_WORD_TOKENS)
-        val containsPoultry = !isExplicitlyMeatFree && containsAnyToken(normFull, POULTRY_TOKENS)
-        val hasExplicitRedMeatWord = containsAnyToken(normFull, EXPLICIT_RED_MEAT_TOKENS)
-        val hasGenericMeatDishWord = containsAnyToken(normFull, GENERIC_MEAT_DISH_TOKENS)
-        val containsRedMeat = !isExplicitlyMeatFree && (
-            hasExplicitRedMeatWord ||
-                (!containsPoultry && !containsFish && hasGenericMeatDishWord) ||
-                (food.category == FoodCategory.MEAT_POULTRY && !containsFish && !containsPoultry)
-            )
+        if (food.allergenVerified) {
+            // Verified Catalog v3 structural metadata is authoritative (zero category-title bleed-through)
+            val df = food.dietFlags
+            containsFish = df.containsFish
+            containsPoultry = df.containsPoultry
+            containsRedMeat = df.containsRedMeat
+            allergens = food.allergens
+            containsAnimalProduct = df.containsAnimalProduct ||
+                containsRedMeat || containsPoultry || containsFish ||
+                AllergenTag.DAIRY in allergens || AllergenTag.EGG in allergens || df.containsHoney
+        } else {
+            // Heuristic fallback for unverified custom/legacy items: inspect ONLY food.name (never category/subtitle!)
+            val isExplicitlyMeatFree = containsAnyToken(normName, PLANT_PROTEIN_TOKENS) ||
+                normName.contains("mercimek kofte") ||
+                normName.contains("cig kofte") ||
+                normName.contains("patates kofte") ||
+                normName.contains("ispanakli kofte") ||
+                normName.contains("koftelik")
 
-        val allergens = detectAllergens(normName, normFull, paddedFull, containsFish)
-        val containsHoney = containsAnyToken(paddedName, HONEY_WORD_TOKENS) || containsAnyToken(normName, HONEY_SUBSTRING_TOKENS)
-        val containsAnimalProduct = containsRedMeat || containsPoultry || containsFish ||
-            AllergenTag.DAIRY in allergens || AllergenTag.EGG in allergens || containsHoney
+            containsFish = containsAnyToken(normName, FISH_TOKENS) || containsAnyToken(paddedName, FISH_WORD_TOKENS)
+            containsPoultry = !isExplicitlyMeatFree && containsAnyToken(normName, POULTRY_TOKENS)
+            val hasExplicitRedMeatWord = containsAnyToken(normName, EXPLICIT_RED_MEAT_TOKENS)
+            val hasGenericMeatDishWord = containsAnyToken(normName, GENERIC_MEAT_DISH_TOKENS)
+            containsRedMeat = !isExplicitlyMeatFree && (
+                hasExplicitRedMeatWord ||
+                    (!containsPoultry && !containsFish && hasGenericMeatDishWord) ||
+                    (food.category == FoodCategory.MEAT_POULTRY && !containsFish && !containsPoultry)
+                )
+
+            allergens = detectAllergensFromNameOnly(normName, paddedName, containsFish)
+            val containsHoney = (containsAnyToken(paddedName, HONEY_WORD_TOKENS) || containsAnyToken(normName, HONEY_SUBSTRING_TOKENS)) &&
+                !normName.contains("balkabagi")
+            containsAnimalProduct = containsRedMeat || containsPoultry || containsFish ||
+                AllergenTag.DAIRY in allergens || AllergenTag.EGG in allergens || containsHoney
+        }
 
         val isFastFood = containsAnyToken(normName, FAST_FOOD_TOKENS)
         val isTurkishHomeCooked = food.brand == null && !isFastFood && (
@@ -140,46 +158,15 @@ class FoodCulinaryClassifier @Inject constructor() {
         classified: ClassifiedFood,
         dietaryProfile: DietaryProfile,
         feedbackByKey: Map<String, FoodFeedbackRecord>,
-    ): Boolean {
-        if (classified.edibility != EdibilityStatus.READY_TO_EAT) return false
-
-        val fb = feedbackByKey[classified.feedbackKey]
-        if (fb?.status == FoodFeedbackStatus.DISLIKED) return false
-
-        // Hard allergen exclusions
-        for (excluded in dietaryProfile.excludedAllergens) {
-            if (excluded in classified.allergens) return false
-        }
-
-        // Diet style hard rules
-        when (dietaryProfile.dietStyle) {
-            DietStyle.STANDARD, DietStyle.MEDITERRANEAN, DietStyle.LOW_CARB -> Unit
-            DietStyle.VEGETARIAN -> {
-                if (classified.containsRedMeat || classified.containsPoultry || classified.containsFish) return false
-            }
-            DietStyle.VEGAN -> {
-                if (classified.containsAnimalProduct) return false
-            }
-            DietStyle.PESCATARIAN -> {
-                if (classified.containsRedMeat || classified.containsPoultry) return false
-            }
-        }
-
-        // User-excluded custom keywords
-        if (dietaryProfile.excludedKeywords.isNotEmpty()) {
-            val searchTarget = classified.food.normalizedSearchText.ifBlank {
-                TurkishTextNormalizer.normalize("${classified.food.name} ${classified.food.subtitle}")
-            }
-            for (kw in dietaryProfile.excludedKeywords) {
-                val normKw = TurkishTextNormalizer.normalize(kw)
-                if (normKw.length >= 2 && searchTarget.contains(normKw)) {
-                    return false
-                }
-            }
-        }
-
-        return true
-    }
+        requireReadyToEat: Boolean = true,
+        forAutomaticRecommendation: Boolean = true,
+    ): Boolean = eligibilityPolicy.isEligible(
+        classified = classified,
+        dietaryProfile = dietaryProfile,
+        feedbackByKey = feedbackByKey,
+        requireReadyToEat = requireReadyToEat,
+        forAutomaticRecommendation = forAutomaticRecommendation,
+    )
 
     private fun resolveEdibility(food: FoodItem, normName: String, paddedName: String, prep: String): EdibilityStatus {
         if (food.caloriesPer100g <= 2 && food.proteinPer100g < 0.5f && food.carbsPer100g < 0.5f && food.fatPer100g < 0.5f) {
@@ -338,46 +325,49 @@ class FoodCulinaryClassifier @Inject constructor() {
         }
     }
 
-    private fun detectAllergens(
+    private fun detectAllergensFromNameOnly(
         normName: String,
-        normFull: String,
-        paddedFull: String,
+        paddedName: String,
         containsFish: Boolean,
     ): Set<AllergenTag> {
         val set = HashSet<AllergenTag>(4)
-        val isPlantMilk = containsAnyToken(normName, PLANT_MILK_TOKENS)
-        val dairySearchText = normFull.replace("kaymaksiz", "")
-        if (!isPlantMilk && containsAnyToken(dairySearchText, DAIRY_ALLERGEN_TOKENS)) {
+        // Strip plant-milk tokens before checking dairy, so "Badem Sütü ve Yoğurt" still flags DAIRY!
+        var dairySearchText = normName.replace("kaymaksiz", "")
+        for (pm in PLANT_MILK_TOKENS) {
+            dairySearchText = dairySearchText.replace(pm, "")
+        }
+        if (containsAnyToken(dairySearchText, DAIRY_ALLERGEN_TOKENS)) {
             set.add(AllergenTag.DAIRY)
         }
-        val isGlutenFree = normFull.contains("glutensiz")
-        if (!isGlutenFree && containsAnyToken(normFull, GLUTEN_ALLERGEN_TOKENS)) {
+        val isGlutenFree = normName.contains("glutensiz")
+        if (!isGlutenFree && containsAnyToken(normName, GLUTEN_ALLERGEN_TOKENS)) {
             set.add(AllergenTag.GLUTEN)
         }
-        if (containsAnyToken(normFull, EGG_ALLERGEN_TOKENS)) {
+        if (containsAnyToken(normName, EGG_ALLERGEN_TOKENS) && !normName.contains("yumurtasiz")) {
             set.add(AllergenTag.EGG)
         }
         if (containsFish) {
             set.add(AllergenTag.FISH_SEAFOOD)
         }
-        val isPeanut = containsAnyToken(normFull, PEANUT_ALLERGEN_TOKENS)
-        if (isPeanut) {
+        if (containsAnyToken(normName, PEANUT_ALLERGEN_TOKENS)) {
             set.add(AllergenTag.PEANUT)
         }
-        val treeNutSearch = normFull
+        val treeNutSearch = normName
             .replace("hindistan cevizi", "")
             .replace("yer fistikli", "")
             .replace("yer fistigi", "")
+            .replace("fistik ezmesi", "")
+            .replace("fistik ezmeli", "")
         if (containsAnyToken(treeNutSearch, TREE_NUT_ALLERGEN_TOKENS)) {
             set.add(AllergenTag.TREE_NUTS)
         }
-        if (containsAnyToken(normFull, SOY_ALLERGEN_TOKENS)) {
+        if (containsAnyToken(normName, SOY_ALLERGEN_TOKENS)) {
             set.add(AllergenTag.SOY)
         }
-        if (containsAnyToken(normFull, SESAME_ALLERGEN_TOKENS) || containsAnyToken(paddedFull, SESAME_WORD_TOKENS)) {
+        if (containsAnyToken(normName, SESAME_ALLERGEN_TOKENS) || containsAnyToken(paddedName, SESAME_WORD_TOKENS)) {
             set.add(AllergenTag.SESAME)
         }
-        if (containsAnyToken(normFull, LEGUME_ALLERGEN_TOKENS)) {
+        if (containsAnyToken(normName, LEGUME_ALLERGEN_TOKENS)) {
             set.add(AllergenTag.LEGUMES)
         }
         return set
@@ -390,6 +380,8 @@ class FoodCulinaryClassifier @Inject constructor() {
         paddedName: String,
     ): PortionConstraint {
         val defaultG = (if (food.defaultUnitGrams.isFinite()) food.defaultUnitGrams else 100f).coerceAtLeast(10f)
+        val isProteinPowder = food.proteinPer100g >= 55f && !food.isLiquid
+        val isPuddingOrCup = normName.contains("puding") || normName.contains("sutlac") || normName.contains("muhallebi") || normName.contains("kazandibi")
         val isCheese = normName.contains("peynir") || normName.contains("kasar") || normName.contains("ezine") || normName.contains("lor")
         val isBread = normName.contains("ekmek") || normName.contains("lavas") || normName.contains("simit")
         val isOat = normName.contains("yulaf") || normName.contains("musli") || normName.contains("granola")
@@ -402,6 +394,13 @@ class FoodCulinaryClassifier @Inject constructor() {
         val isHumusOrDip = normName.contains("humus") || normName.contains("haydari")
 
         return when {
+            isProteinPowder -> PortionConstraint(minGrams = 20f, maxGrams = 45f, typicalGrams = 30f, gramStep = 5f)
+            isPuddingOrCup -> PortionConstraint(
+                minGrams = (defaultG * 0.5f).coerceIn(50f, 120f),
+                maxGrams = (defaultG * 1.5f).coerceIn(100f, 220f),
+                typicalGrams = defaultG.coerceIn(80f, 180f),
+                gramStep = 10f,
+            )
             isEgg -> PortionConstraint(minGrams = 50f, maxGrams = 200f, typicalGrams = 100f, gramStep = 50f)
             isCheese -> PortionConstraint(minGrams = 25f, maxGrams = 120f, typicalGrams = 45f, gramStep = 10f)
             isBread -> PortionConstraint(minGrams = 25f, maxGrams = 120f, typicalGrams = 50f, gramStep = 10f)
@@ -532,7 +531,7 @@ class FoodCulinaryClassifier @Inject constructor() {
         val FAST_FOOD_TOKENS = arrayOf("hamburger", "cheeseburger", "pizza", "hot dog", "nugget", "patates kizartma", "sandvic")
         val PROCESSED_MEAT_TOKENS = arrayOf("salam", "sosis", "sucuk", "nugget", "jambon", "pepperoni")
 
-        val FISH_TOKENS = arrayOf("balik", "somon", "levrek", "cipura", "hamsi", "palamut", "sardalya", "uskumru", "karides", "kalamar", "midye", "alabalik", "istavrit", "mezgit", "lufer", "dardanel")
+        val FISH_TOKENS = arrayOf("balik", "somon", "levrek", "cipura", "hamsi", "palamut", "sardalya", "uskumru", "karides", "kalamar", "midye", "alabalik", "istavrit", "mezgit", "lufer")
         val FISH_WORD_TOKENS = arrayOf(" ton ")
         val POULTRY_TOKENS = arrayOf("tavuk", "pilic", "hindi", "banvit", "keskinoglu")
         val EXPLICIT_RED_MEAT_TOKENS = arrayOf(
@@ -542,10 +541,11 @@ class FoodCulinaryClassifier @Inject constructor() {
             "karniyarik", "hunkar", "alinazik", "manti", "lahmacun", "dugun corbasi", "icli kofte",
         )
         val GENERIC_MEAT_DISH_TOKENS = arrayOf("kofte", "kebap", "doner", "hamburger", "tantuni")
-        val PLANT_PROTEIN_TOKENS = arrayOf("bitkisel", "vegan", "soya", "tofu", "etsiz", "sebzeli")
+        // Do NOT include "sebzeli" or bare "soya" here — "Sebzeli Tavuk" and "Soya Soslu Dana Eti" contain meat!
+        val PLANT_PROTEIN_TOKENS = arrayOf("bitkisel", "vegan", "soya kofte", "soya kiyma", "soya eti", "tofu", "tempeh", "seitan", "etsiz")
         val HONEY_WORD_TOKENS = arrayOf(" bal ", " bali ", " balli ")
         val HONEY_SUBSTRING_TOKENS = arrayOf("cicek bali", "cam bali", "suzme bal", "karakovan")
-        val PLANT_MILK_TOKENS = arrayOf("badem sutu", "yulaf sutu", "soya sutu", "hindistan cevizi sutu", "bitkisel sut")
+        val PLANT_MILK_TOKENS = arrayOf("badem sutu", "yulaf sutu", "soya sutu", "hindistan cevizi sutu", "bitkisel sut", "yulafli icecek")
         val DAIRY_ALLERGEN_TOKENS = arrayOf(
             "sut", "yogurt", "peynir", "ayran", "kefir", "kasar", "lor", "ezine", "labne",
             "krema", "tereyag", "cacik", "haydari", "kaymak", "sutlac", "muhallebi", "kazandibi",

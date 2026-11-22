@@ -44,9 +44,9 @@ class NutraAndroid17InstrumentedTest {
     val composeRule = createAndroidComposeRule<MainActivity>()
 
     @Test
-    fun roomDatabase_realSqliteMigrationFromV1ToV5PreservesDataAndValidatesSchema() = runBlocking {
+    fun roomDatabase_realSqliteMigrationFromV1ToV6PreservesDataAndValidatesSchema() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
-        val dbName = "nutra_migration_v1_v5_test.db"
+        val dbName = "nutra_migration_v1_v6_test.db"
         context.deleteDatabase(dbName)
 
         try {
@@ -155,13 +155,14 @@ class NutraAndroid17InstrumentedTest {
             v1Helper.writableDatabase.close()
             v1Helper.close()
 
-            // 2. Open with Room v5 & run all 4 production migrations (validates exact Room schema hash!)
+            // 2. Open with Room v6 & run all 5 production migrations (validates exact Room schema hash!)
             val migratedDb = Room.databaseBuilder(context, NutraDatabase::class.java, dbName)
                 .addMigrations(
                     AppModule.MIGRATION_1_2,
                     AppModule.MIGRATION_2_3,
                     AppModule.MIGRATION_3_4,
                     AppModule.MIGRATION_4_5,
+                    AppModule.MIGRATION_5_6,
                 )
                 .build()
 
@@ -171,13 +172,17 @@ class NutraAndroid17InstrumentedTest {
                 assertEquals(1, foods.size)
                 assertEquals("Ev Yapımı Yulaf", foods.first().name)
                 assertEquals("g", foods.first().baseUnit)
+                assertEquals("", foods.first().allergensCsv)
+                assertEquals(0, foods.first().dietFlagsMask)
+                assertEquals(false, foods.first().allergenVerified)
+                assertEquals(0, foods.first().catalogVersion)
 
                 val logs = dao.getAllMealLogsSnapshot()
                 assertEquals(1, logs.size)
                 assertEquals(240, logs.first().calories)
                 assertEquals("g", logs.first().baseUnit)
 
-                // Verify v5 tables accept writes & queries cleanly
+                // Verify v6 tables & columns accept writes & queries cleanly
                 dao.insertGoalHistory(
                     GoalHistoryEntity(
                         effectiveDateIso = "2026-11-21",
@@ -185,6 +190,7 @@ class NutraAndroid17InstrumentedTest {
                         proteinGrams = 160,
                         carbsGrams = 220,
                         fatGrams = 70,
+                        waterGoalMl = 2800,
                         goalType = GoalType.LOSE_WEIGHT.name,
                         targetWeightKg = 74f,
                         source = GoalChangeSource.MANUAL.name,
@@ -194,6 +200,7 @@ class NutraAndroid17InstrumentedTest {
                 val latestGoal = dao.findLatestGoalHistoryForDate("2026-11-21")
                 assertNotNull(latestGoal)
                 assertEquals(2200, latestGoal!!.calories)
+                assertEquals(2800, latestGoal.waterGoalMl)
 
                 dao.upsertFoodFeedback(
                     FoodFeedbackEntity(
@@ -317,14 +324,15 @@ class NutraAndroid17InstrumentedTest {
             }
         }
 
-        // 1. Open Nutra Intelligence Studio from Dashboard if card is visible
-        if (composeRule.onAllNodesWithText("Önerileri gör").fetchSemanticsNodes().isNotEmpty()) {
-            composeRule.onNodeWithText("Önerileri gör").performScrollTo().performClick()
-            composeRule.waitForIdle()
-            composeRule.onNodeWithText("Nutra Intelligence").assertIsDisplayed()
-            composeRule.onNodeWithContentDescription("Geri").performClick()
-            composeRule.waitForIdle()
+        // 1. Open Nutra Intelligence Studio from Dashboard
+        composeRule.waitUntil(timeoutMillis = 10_000L) {
+            composeRule.onAllNodesWithText("Önerileri gör").fetchSemanticsNodes().isNotEmpty()
         }
+        composeRule.onNodeWithText("Önerileri gör").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Nutra Intelligence").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Geri").performClick()
+        composeRule.waitForIdle()
 
         // 2. Navigate to Analytics (İlerleme), switch ranges, and open Metabolism Detail
         composeRule.onNodeWithText("İlerleme").performClick()
@@ -336,13 +344,14 @@ class NutraAndroid17InstrumentedTest {
         composeRule.onNodeWithText("7 Gün").performClick()
         composeRule.waitForIdle()
 
-        if (composeRule.onAllNodesWithText("Adaptif Metabolizma").fetchSemanticsNodes().isNotEmpty()) {
-            composeRule.onNodeWithText("Adaptif Metabolizma").performScrollTo().performClick()
-            composeRule.waitForIdle()
-            composeRule.onNodeWithText("TDEE, kilo projeksiyonu ve plato analizi").assertIsDisplayed()
-            composeRule.onNodeWithContentDescription("Geri").performClick()
-            composeRule.waitForIdle()
+        composeRule.waitUntil(timeoutMillis = 10_000L) {
+            composeRule.onAllNodesWithText("Adaptif Metabolizma").fetchSemanticsNodes().isNotEmpty()
         }
+        composeRule.onNodeWithText("Adaptif Metabolizma").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("TDEE, kilo projeksiyonu ve plato analizi").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Geri").performClick()
+        composeRule.waitForIdle()
 
         // 3. Navigate to Profile, open Daily Goals & Dietary Preferences, then return to Dashboard
         composeRule.onNodeWithText("Profil").performClick()

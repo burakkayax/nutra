@@ -1,6 +1,5 @@
 package com.nutra.app.feature.intelligence
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -23,6 +22,7 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -54,6 +54,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -78,6 +79,7 @@ import com.nutra.app.core.designsystem.NutraStepperButton
 import com.nutra.app.core.designsystem.NutraStickyScreenHeader
 import com.nutra.app.core.designsystem.NutraStickySubScreenHeaderTopReservedPadding
 import com.nutra.app.core.designsystem.NutraTheme
+import com.nutra.app.core.designsystem.rememberAccessibleSnackbarTimeout
 import com.nutra.app.core.designsystem.rememberHeaderCollapseFraction
 import com.nutra.app.domain.intelligence.MealRecommendation
 import com.nutra.app.domain.intelligence.RecommendedFoodPortion
@@ -93,7 +95,6 @@ import kotlin.math.roundToInt
 fun DashboardIntelligenceCard(
     cardState: DashboardIntelligenceCardState,
     onOpenStudio: (MealType) -> Unit,
-    onQuickLogTopRecommendation: (MealRecommendation) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val pages = cardState.mealPages
@@ -134,7 +135,7 @@ fun DashboardIntelligenceCard(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = "Alışkanlıklarınıza göre kişiselleştirildi",
+                    text = "Alışkanlıklarına göre kişiselleştirildi",
                     style = NutraTheme.typography.caption,
                     color = colors.textSecondary,
                     maxLines = 1,
@@ -149,7 +150,7 @@ fun DashboardIntelligenceCard(
                     pages.indices.forEach { idx ->
                         val isSelected = idx == pagerState.currentPage
                         NutraDot(
-                            color = if (isSelected) colors.accent else colors.surfaceMuted,
+                            color = if (isSelected) colors.accent else colors.controlBorder,
                             size = if (isSelected) 7.dp else 5.dp,
                         )
                     }
@@ -246,9 +247,14 @@ fun NutraIntelligenceScreen(
     val listState = rememberLazyListState()
     val headerCollapseFraction = rememberHeaderCollapseFraction(listState)
     val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val defaultTopPadding = statusBarTop + NutraStickySubScreenHeaderTopReservedPadding + 56.dp
+    var measuredHeaderHeight by remember { mutableStateOf(defaultTopPadding) }
     val mealChipsListState = rememberLazyListState()
-
-    BackHandler(onBack = onNavigateBack)
+    val hasUndoDislike = state.lastDislikedFood != null
+    val snackbarTimeoutMs = rememberAccessibleSnackbarTimeout(
+        baseTimeoutMillis = if (hasUndoDislike) 4500L else 3000L,
+        hasAction = hasUndoDislike,
+    )
 
     LaunchedEffect(state.selectedMealType) {
         val targetIdx = MealType.entries.indexOf(state.selectedMealType).coerceAtLeast(0)
@@ -257,7 +263,7 @@ fun NutraIntelligenceScreen(
 
     LaunchedEffect(state.feedbackEventId, state.feedbackMessage) {
         if (state.feedbackMessage != null) {
-            delay(2800)
+            delay(snackbarTimeoutMs)
             viewModel.clearFeedback()
         }
     }
@@ -277,7 +283,7 @@ fun NutraIntelligenceScreen(
                 state = state,
                 viewModel = viewModel,
                 listState = listState,
-                topPadding = statusBarTop + NutraStickySubScreenHeaderTopReservedPadding + 52.dp,
+                topPadding = maxOf(defaultTopPadding, measuredHeaderHeight + 6.dp),
                 onLoggedMeal = onLoggedMeal,
             )
         }
@@ -287,6 +293,7 @@ fun NutraIntelligenceScreen(
             eyebrow = "Kişiselleştirilmiş öğün ve porsiyon",
             collapseFractionState = headerCollapseFraction,
             onNavigateBack = onNavigateBack,
+            onHeaderHeightMeasured = { measuredHeaderHeight = it },
             modifier = Modifier.align(Alignment.TopCenter),
             bottomContent = {
                 LazyRow(
@@ -301,6 +308,7 @@ fun NutraIntelligenceScreen(
                             text = meal.title,
                             selected = meal == state.selectedMealType,
                             onClick = { viewModel.selectMealType(meal) },
+                            role = Role.Tab,
                         )
                     }
                 }
@@ -310,7 +318,9 @@ fun NutraIntelligenceScreen(
         NutraSnackbarHost(
             visible = state.feedbackMessage != null,
             message = state.feedbackMessage.orEmpty(),
-            tone = NutraSnackbarTone.Success,
+            actionLabel = if (hasUndoDislike) "Geri al" else null,
+            onAction = if (hasUndoDislike) viewModel::undoLastDislike else null,
+            tone = if (hasUndoDislike) NutraSnackbarTone.Neutral else NutraSnackbarTone.Success,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
@@ -357,30 +367,35 @@ private fun RecommendationsTabContent(
         ),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        // Compact single-line target budget strip (without maturity badge)
+        // Budget summary + contextual guidance notes (cold start / micronutrient signal)
         item(key = "budget_overview") {
-            Row(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(NutraTheme.shapes.md)
                     .background(colors.surface)
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Text(
-                    text = "${report.mealType.title} hedefi:",
-                    style = NutraTheme.typography.caption,
-                    color = colors.textSecondary,
-                    maxLines = 1,
-                )
-                Text(
-                    text = "~${NutraFormatters.formatInt(report.budget.targetCalories)} kcal · ${NutraFormatters.formatInt(report.budget.targetProteinGrams.roundToInt())} g protein",
+                    text = report.budget.budgetSummaryText,
                     style = NutraTheme.typography.labelSmall,
                     color = colors.textPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                 )
+                report.prioritizedMicronutrientNote?.let { microNote ->
+                    Text(
+                        text = microNote,
+                        style = NutraTheme.typography.caption,
+                        color = colors.onAccentSoft,
+                    )
+                }
+                report.coldStartNote?.let { coldNote ->
+                    Text(
+                        text = coldNote,
+                        style = NutraTheme.typography.caption,
+                        color = colors.textSecondary,
+                    )
+                }
             }
         }
 
@@ -396,7 +411,7 @@ private fun RecommendationsTabContent(
             items(report.recommendations, key = { it.id }) { effective ->
                 RecommendationDetailCard(
                     recommendation = effective,
-                    hasManualEdits = !state.portionOverrides[effective.id].isNullOrEmpty(),
+                    hasManualEdits = viewModel.hasManualEdits(effective),
                     onAdjustPortion = { portion, delta ->
                         viewModel.adjustRecommendationItemGrams(effective.id, portion, delta)
                     },
@@ -443,20 +458,33 @@ private fun RecommendationDetailCard(
     )
 
     NutraCard(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        // 1. Clean single-row header: Style title on left, Calories + Protein badge on right
+        // 1. Clean header: recommendation title + style label on left, Calories + Protein badge on right
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
+            verticalAlignment = Alignment.Top,
         ) {
-            Text(
-                text = recommendation.styleTag.label,
-                style = NutraTheme.typography.titleSmall,
-                color = colors.textPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            Column(
                 modifier = Modifier.weight(1f).padding(end = 8.dp),
-            )
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = recommendation.title.ifBlank { recommendation.styleTag.label },
+                    style = NutraTheme.typography.titleSmall,
+                    color = colors.textPrimary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (recommendation.title.isNotBlank() && recommendation.title != recommendation.styleTag.label) {
+                    Text(
+                        text = recommendation.styleTag.label,
+                        style = NutraTheme.typography.caption,
+                        color = colors.textSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
             NutraBadge(
                 text = "${NutraFormatters.formatInt(recommendation.totalCalories)} kcal · ${NutraFormatters.formatInt(recommendation.totalProtein.roundToInt())} g P",
                 color = colors.onAccentSoft,
@@ -479,20 +507,22 @@ private fun RecommendationDetailCard(
             }
         }
 
-        // 3. Collapsible "Detaylar" trigger strip
+        // 3. Collapsible "Detaylar" trigger strip (FlowRow prevents 0px macro-label collisions on narrow screens)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .heightIn(min = 48.dp)
                 .clip(NutraTheme.shapes.sm)
                 .background(colors.surfaceMuted)
-                .clickable { isDetailsExpanded = !isDetailsExpanded }
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
+                .clickable(role = Role.Button) { isDetailsExpanded = !isDetailsExpanded }
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(
+            FlowRow(
+                modifier = Modifier.weight(1f),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 MacroInlineTag("K", "${NutraFormatters.formatMacroGrams(recommendation.totalCarbs)}g", colors.carbs)
                 MacroInlineTag("Y", "${NutraFormatters.formatMacroGrams(recommendation.totalFat)}g", colors.fat)
@@ -506,6 +536,8 @@ private fun RecommendationDetailCard(
                     text = if (isDetailsExpanded) "Gizle" else "Detaylar",
                     style = NutraTheme.typography.labelSmall,
                     color = colors.textSecondary,
+                    maxLines = 1,
+                    softWrap = false,
                 )
                 Icon(
                     imageVector = NutraIcons.ExpandMore,
@@ -676,10 +708,15 @@ private fun RecommendedPortionRow(
 ) {
     val colors = NutraTheme.colors
     val suffix = portion.food.displayUnitSuffix
-    val quantityText = if (ServingUnitLabels.isRawUnitLabel(portion.unitLabel)) {
-        "${portion.totalGrams.roundToInt()} $suffix"
-    } else {
-        "${NutraFormatters.formatMultiplier(portion.multiplier)}x ${portion.unitLabel} (${portion.totalGrams.roundToInt()} $suffix)"
+    val cleanLabel = portion.unitLabel.trim()
+    val quantityText = when {
+        ServingUnitLabels.isRawUnitLabel(cleanLabel) -> "${portion.totalGrams.roundToInt()} $suffix"
+        kotlin.math.abs(portion.multiplier - 1f) < 0.01f && cleanLabel.startsWith("1 ") ->
+            "$cleanLabel (${portion.totalGrams.roundToInt()} $suffix)"
+        cleanLabel.startsWith("1 ") ->
+            "${NutraFormatters.formatMultiplier(portion.multiplier)} ${cleanLabel.removePrefix("1 ")} (${portion.totalGrams.roundToInt()} $suffix)"
+        else ->
+            "${NutraFormatters.formatMultiplier(portion.multiplier)}x $cleanLabel (${portion.totalGrams.roundToInt()} $suffix)"
     }
     val step = if (portion.maxGrams <= 60f) 5f else if (portion.maxGrams <= 150f) 10f else 20f
 
@@ -746,10 +783,10 @@ private fun RecommendedPortionRow(
                 if (onDislike != null) {
                     NutraIconButton(
                         icon = Icons.Rounded.Close,
-                        contentDescription = "Bu besini bir daha önerme",
+                        contentDescription = "${portion.food.name} besinini bir daha önerme",
                         onClick = onDislike,
-                        size = 34.dp,
-                        iconSize = 15.dp,
+                        size = 44.dp,
+                        iconSize = 18.dp,
                         containerColor = colors.dangerSoft,
                         contentColor = colors.dangerText,
                     )

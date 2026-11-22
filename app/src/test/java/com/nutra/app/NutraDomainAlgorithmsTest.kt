@@ -136,8 +136,8 @@ class NutraDomainAlgorithmsTest {
         val trend = calculator.calculateTrend(entries, smoothingFactor = 0.25f)
         assertEquals(3, trend.size)
         assertEquals(76.0f, trend[0].emaTrendKg, 0.01f)
-        // Day 2 EMA should filter out most of the +1.2kg spike (76.0 * 0.75 + 77.2 * 0.25 = 76.3)
-        assertEquals(76.3f, trend[1].emaTrendKg, 0.05f)
+        // Day 2 time-aware EMA (tau = 7 days -> 1-day alpha = 0.14): 76.0 + 0.14 * 1.2 = 76.168 -> 76.2
+        assertEquals(76.2f, trend[1].emaTrendKg, 0.05f)
     }
 
     @Test

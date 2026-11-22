@@ -67,6 +67,7 @@ data class IntelligenceUiState(
     val activeTab: IntelligenceStudioTab = IntelligenceStudioTab.RECOMMENDATIONS,
     val report: IntelligenceReport? = null,
     val portionOverrides: Map<String, Map<Long, Float>> = emptyMap(),
+    val lastDislikedFood: RecommendedFoodPortion? = null,
     val feedbackMessage: String? = null,
     val feedbackEventId: Long = 0L,
 )
@@ -76,6 +77,7 @@ private data class StudioControlState(
     val manualMealType: MealType? = null,
     val variationSeed: Int = 0,
     val portionOverrides: Map<String, Map<Long, Float>> = emptyMap(),
+    val lastDislikedFood: RecommendedFoodPortion? = null,
     val feedbackMessage: String? = null,
     val feedbackEventId: Long = 0L,
 )
@@ -108,11 +110,15 @@ class IntelligenceViewModel @Inject constructor(
     private val feedbackSeq = AtomicLong(0L)
     private val isLoggingGuard = AtomicBoolean(false)
 
-    // Atomic date-scoped pair so date changes never transiently mix yesterday's summary with today's logs
+    // Atomic date-scoped pair projected to exclude waterMl so water taps NEVER trigger recommendation recomputation!
     private val dateScopedDataFlow = selectedDateFlow.flatMapLatest { date ->
+        val dateIso = date.toString()
+        val summaryWithoutWaterFlow = nutritionRepository.observeDailySummary(dateIso)
+            .map { s -> s.copy(waterMl = 0, goals = s.goals.copy(waterMl = 2500)) }
+            .distinctUntilChanged()
         combine(
-            nutritionRepository.observeDailySummary(date.toString()),
-            nutritionRepository.observeMealLogsSince(date.minusDays(60).toString()),
+            summaryWithoutWaterFlow,
+            nutritionRepository.observeMealLogsInRange(date.minusDays(60).toString(), dateIso),
         ) { summary, logs ->
             DateScopedData(
                 selectedDate = date,
@@ -121,6 +127,24 @@ class IntelligenceViewModel @Inject constructor(
             )
         }
     }
+
+    // Project only recommendation-relevant profile fields (excludes water, theme, dynamic color, water reminder, metabolism flags)
+    private val recommendationProfileFlow = preferencesDataStore.userProfileFlow
+        .map { p ->
+            UserProfile(
+                sex = p.sex,
+                age = p.age,
+                heightCm = p.heightCm,
+                currentWeightKg = p.currentWeightKg,
+                targetWeightKg = p.targetWeightKg,
+                activityLevel = p.activityLevel,
+                goalType = p.goalType,
+                goals = p.goals.copy(waterMl = 2500),
+                onboardingCompleted = true,
+                dietaryProfile = p.dietaryProfile,
+            )
+        }
+        .distinctUntilChanged()
 
     // Shared catalog & feedback flows eliminate duplicate Room queries
     private val sharedCatalogFlow = nutritionRepository.observeAllFoods()
@@ -139,7 +163,7 @@ class IntelligenceViewModel @Inject constructor(
 
     // Single shared computation of recommendations
     private val sharedReportFlow = combine(
-        preferencesDataStore.userProfileFlow,
+        recommendationProfileFlow,
         dateScopedDataFlow,
         sharedCatalogFlow.filterNotNull(),
         sharedFeedbackFlow,
@@ -227,6 +251,11 @@ class IntelligenceViewModel @Inject constructor(
             initialValue = null,
         )
 
+    private fun overrideKey(dateIso: String, rec: MealRecommendation): String {
+        val foodHash = rec.items.joinToString(",") { it.feedbackKey }
+        return "$dateIso|${rec.id}|$foodHash"
+    }
+
     private val resolvedReportFlow = combine(
         sharedReportFlow,
         studioControlFlow.map { it.portionOverrides }.distinctUntilChanged(),
@@ -243,7 +272,7 @@ class IntelligenceViewModel @Inject constructor(
                 it.type == MicronutrientType.SODIUM && it.status == NutrientSignalStatus.ELEVATED_RECORDED
             }
             val resolvedRecs = report.recommendations.map { rec ->
-                val recOverrides = overrides[rec.id]
+                val recOverrides = overrides[overrideKey(reportSnap.dateIso, rec)] ?: overrides[rec.id]
                 if (recOverrides.isNullOrEmpty()) {
                     rec
                 } else {
@@ -271,6 +300,7 @@ class IntelligenceViewModel @Inject constructor(
             activeTab = control.activeTab,
             report = reportSnap.report,
             portionOverrides = control.portionOverrides,
+            lastDislikedFood = control.lastDislikedFood,
             feedbackMessage = control.feedbackMessage,
             feedbackEventId = control.feedbackEventId,
         )
@@ -280,9 +310,18 @@ class IntelligenceViewModel @Inject constructor(
         initialValue = IntelligenceUiState(),
     )
 
+    fun refreshToday() {
+        val now = LocalDate.now()
+        if (selectedDateFlow.value != now) {
+            selectedDateFlow.value = now
+            studioControlFlow.update { it.copy(portionOverrides = emptyMap()) }
+        }
+    }
+
     fun syncDate(date: LocalDate) {
         if (selectedDateFlow.value != date) {
             selectedDateFlow.value = date
+            studioControlFlow.update { it.copy(portionOverrides = emptyMap()) }
         }
     }
 
@@ -291,6 +330,7 @@ class IntelligenceViewModel @Inject constructor(
             it.copy(
                 activeTab = initialTab,
                 manualMealType = mealType,
+                portionOverrides = emptyMap(),
             )
         }
     }
@@ -314,20 +354,31 @@ class IntelligenceViewModel @Inject constructor(
     }
 
     fun adjustRecommendationItemGrams(recId: String, portion: RecommendedFoodPortion, deltaGrams: Float) {
+        val currentRec = uiState.value.report?.recommendations?.firstOrNull { it.id == recId }
+        val key = if (currentRec != null) overrideKey(selectedDateFlow.value.toString(), currentRec) else recId
         studioControlFlow.update { state ->
-            val currentMap = state.portionOverrides[recId].orEmpty().toMutableMap()
+            val currentMap = (state.portionOverrides[key] ?: state.portionOverrides[recId]).orEmpty().toMutableMap()
             val currentGrams = currentMap[portion.food.id] ?: portion.totalGrams
             val nextGrams = (currentGrams + deltaGrams).coerceIn(portion.minGrams, portion.maxGrams)
             currentMap[portion.food.id] = nextGrams
             val nextOverrides = state.portionOverrides.toMutableMap()
-            nextOverrides[recId] = currentMap
+            nextOverrides[key] = currentMap
             state.copy(portionOverrides = nextOverrides)
         }
     }
 
+    fun hasManualEdits(recommendation: MealRecommendation): Boolean {
+        val overrides = uiState.value.portionOverrides
+        val key = overrideKey(selectedDateFlow.value.toString(), recommendation)
+        return !overrides[key].isNullOrEmpty() || !overrides[recommendation.id].isNullOrEmpty()
+    }
+
     fun resetRecommendationPortions(recId: String) {
+        val currentRec = uiState.value.report?.recommendations?.firstOrNull { it.id == recId }
+        val key = if (currentRec != null) overrideKey(selectedDateFlow.value.toString(), currentRec) else recId
         studioControlFlow.update { state ->
             val next = state.portionOverrides.toMutableMap()
+            next.remove(key)
             next.remove(recId)
             state.copy(portionOverrides = next)
         }
@@ -338,7 +389,10 @@ class IntelligenceViewModel @Inject constructor(
         onLogged: (MealType, String) -> Unit = { _, _ -> },
     ) {
         if (!isLoggingGuard.compareAndSet(false, true)) return
-        val currentOverrides = studioControlFlow.value.portionOverrides[recommendation.id]
+        val dateIso = selectedDateFlow.value.toString()
+        val key = overrideKey(dateIso, recommendation)
+        val currentOverrides = studioControlFlow.value.portionOverrides[key]
+            ?: studioControlFlow.value.portionOverrides[recommendation.id]
         val budget = uiState.value.report?.budget
         val effective = if (!currentOverrides.isNullOrEmpty() && budget != null) {
             recommendationEngine.recomputeRecommendationWithPortions(
@@ -349,7 +403,6 @@ class IntelligenceViewModel @Inject constructor(
         } else {
             recommendation
         }
-        val dateIso = selectedDateFlow.value.toString()
         viewModelScope.launch {
             try {
                 val entries: List<ComboFoodEntry> = effective.items.map { it.toComboEntry() }
@@ -361,7 +414,9 @@ class IntelligenceViewModel @Inject constructor(
                 nutritionRepository.recordRecommendationAccepted(
                     effective.items.map { Triple(it.feedbackKey, it.food.id.takeIf { id -> id > 0L }, it.food.name) },
                 )
-                val msg = "${effective.mealType.title} eklendi (${NutraFormatters.formatInt(effective.totalCalories)} kcal)"
+                studioControlFlow.update { it.copy(portionOverrides = emptyMap(), lastDislikedFood = null) }
+                val mealTitle = if (effective.mealType == MealType.SNACK) "Ara öğün" else effective.mealType.title
+                val msg = "$mealTitle eklendi (${NutraFormatters.formatInt(effective.totalCalories)} kcal)"
                 emitFeedback(msg)
                 onLogged(effective.mealType, msg)
             } finally {
@@ -378,12 +433,34 @@ class IntelligenceViewModel @Inject constructor(
                 foodName = portion.food.name,
                 disliked = true,
             )
-            emitFeedback("${portion.food.name} önerilerden gizlendi")
+            val id = feedbackSeq.incrementAndGet()
+            studioControlFlow.update {
+                it.copy(
+                    portionOverrides = emptyMap(),
+                    lastDislikedFood = portion,
+                    feedbackMessage = "${portion.food.name} önerilerden gizlendi",
+                    feedbackEventId = id,
+                )
+            }
+        }
+    }
+
+    fun undoLastDislike() {
+        val disliked = studioControlFlow.value.lastDislikedFood ?: return
+        studioControlFlow.update { it.copy(lastDislikedFood = null, feedbackMessage = null) }
+        viewModelScope.launch {
+            nutritionRepository.setFoodDisliked(
+                foodKey = disliked.feedbackKey,
+                foodId = disliked.food.id.takeIf { it > 0L },
+                foodName = disliked.food.name,
+                disliked = false,
+            )
+            emitFeedback("${disliked.food.name} önerilere yeniden eklendi")
         }
     }
 
     fun clearFeedback() {
-        studioControlFlow.update { it.copy(feedbackMessage = null) }
+        studioControlFlow.update { it.copy(feedbackMessage = null, lastDislikedFood = null) }
     }
 
     private fun emitFeedback(message: String) {

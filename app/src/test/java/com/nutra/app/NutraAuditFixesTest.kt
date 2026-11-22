@@ -79,7 +79,7 @@ class NutraAuditFixesTest {
             multiplier = 1.25f,
             totalGrams = 37.5f,
         )
-        assertEquals("1,25x 1 Dilim (38 g)", quarterLog.formattedQuantity)
+        assertEquals("1,25 Dilim (38 g)", quarterLog.formattedQuantity)
     }
 
     @Test

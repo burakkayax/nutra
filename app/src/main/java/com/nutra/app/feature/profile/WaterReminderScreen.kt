@@ -1,11 +1,11 @@
 package com.nutra.app.feature.profile
 
 import android.Manifest
+import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.provider.Settings
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -20,18 +20,20 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -41,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -71,7 +74,9 @@ import com.nutra.app.core.designsystem.NutraTheme
 import com.nutra.app.core.designsystem.rememberHeaderCollapseFraction
 import com.nutra.app.core.notification.WaterReminderBounds
 import com.nutra.app.core.notification.WaterReminderScheduleCalculator
+import com.nutra.app.core.notification.WaterReminderScheduler
 import com.nutra.app.domain.model.WaterReminderSettings
+import kotlinx.coroutines.delay
 import java.time.LocalDateTime
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -84,18 +89,41 @@ private enum class ReminderTimeField(val title: String) {
     END("Bitiş saati"),
 }
 
-private fun hasSystemNotificationPermission(context: Context): Boolean {
+private enum class NotificationAccessState {
+    ALLOWED,
+    PERMISSION_MISSING,
+    CHANNEL_MUTED,
+}
+
+private fun inspectNotificationAccess(context: Context): NotificationAccessState {
     val granted = ContextCompat.checkSelfPermission(
         context,
         Manifest.permission.POST_NOTIFICATIONS,
     ) == PackageManager.PERMISSION_GRANTED
-    return granted && NotificationManagerCompat.from(context).areNotificationsEnabled()
+    if (!granted || !NotificationManagerCompat.from(context).areNotificationsEnabled()) {
+        return NotificationAccessState.PERMISSION_MISSING
+    }
+    val channel = context.getSystemService(NotificationManager::class.java)
+        ?.getNotificationChannel(WaterReminderScheduler.CHANNEL_ID)
+    return if (channel != null && channel.importance == NotificationManager.IMPORTANCE_NONE) {
+        NotificationAccessState.CHANNEL_MUTED
+    } else {
+        NotificationAccessState.ALLOWED
+    }
 }
 
-private fun openAppNotificationSettings(context: Context) {
-    val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-        putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+private fun openWaterNotificationSettings(context: Context, accessState: NotificationAccessState) {
+    val intent = if (accessState == NotificationAccessState.CHANNEL_MUTED) {
+        Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).apply {
+            putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+            putExtra(Settings.EXTRA_CHANNEL_ID, WaterReminderScheduler.CHANNEL_ID)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+    } else {
+        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+            putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
     }
     runCatching { context.startActivity(intent) }
 }
@@ -128,12 +156,23 @@ fun WaterReminderScreen(
     }
     var stopWhenGoalReached by rememberSaveable { mutableStateOf(sanitizedInitial.stopWhenGoalReached) }
 
-    var hasNotificationPermission by remember { mutableStateOf(hasSystemNotificationPermission(context)) }
+    var accessState by remember { mutableStateOf(inspectNotificationAccess(context)) }
+    val hasNotificationPermission = accessState == NotificationAccessState.ALLOWED
     var permissionDeniedNotice by rememberSaveable { mutableStateOf(false) }
-    var pendingEnableAfterPermission by remember { mutableStateOf(false) }
+    var pendingEnableAfterPermission by rememberSaveable { mutableStateOf(false) }
 
     var showCustomIntervalDialog by remember { mutableStateOf(false) }
     var activeTimeField by remember { mutableStateOf<ReminderTimeField?>(null) }
+    var liveNow by remember { mutableStateOf(LocalDateTime.now()) }
+
+    LaunchedEffect(enabled) {
+        if (!enabled) return@LaunchedEffect
+        liveNow = LocalDateTime.now()
+        while (true) {
+            delay(30_000L)
+            liveNow = LocalDateTime.now()
+        }
+    }
 
     fun buildSanitizedSettings(
         nextEnabled: Boolean = enabled,
@@ -184,14 +223,15 @@ fun WaterReminderScreen(
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        val effectiveGranted = granted && hasSystemNotificationPermission(context)
-        hasNotificationPermission = effectiveGranted
-        if (effectiveGranted) {
+        val nextAccess = if (granted) inspectNotificationAccess(context) else NotificationAccessState.PERMISSION_MISSING
+        accessState = nextAccess
+        if (nextAccess == NotificationAccessState.ALLOWED) {
             permissionDeniedNotice = false
             if (pendingEnableAfterPermission) {
                 enabled = true
                 persistSettings(nextEnabled = true)
             }
+            pendingEnableAfterPermission = false
         } else {
             permissionDeniedNotice = true
             if (enabled) {
@@ -199,16 +239,20 @@ fun WaterReminderScreen(
                 persistSettings(nextEnabled = false)
             }
         }
-        pendingEnableAfterPermission = false
     }
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-        val nowGranted = hasSystemNotificationPermission(context)
-        val wasGranted = hasNotificationPermission
-        hasNotificationPermission = nowGranted
-        if (nowGranted) {
+        liveNow = LocalDateTime.now()
+        val prevAccess = accessState
+        val nextAccess = inspectNotificationAccess(context)
+        accessState = nextAccess
+        if (nextAccess == NotificationAccessState.ALLOWED) {
             permissionDeniedNotice = false
-            if (!wasGranted && enabled) {
+            if (pendingEnableAfterPermission) {
+                pendingEnableAfterPermission = false
+                enabled = true
+                persistSettings(nextEnabled = true)
+            } else if (prevAccess != NotificationAccessState.ALLOWED && enabled) {
                 persistSettings(nextEnabled = true)
             }
         }
@@ -217,30 +261,41 @@ fun WaterReminderScreen(
     fun handleToggleEnabled(nextEnabled: Boolean) {
         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         if (!nextEnabled) {
+            pendingEnableAfterPermission = false
             if (enabled) {
                 enabled = false
                 persistSettings(nextEnabled = false)
             }
             return
         }
-        val currentlyGranted = hasSystemNotificationPermission(context)
-        hasNotificationPermission = currentlyGranted
-        if (currentlyGranted) {
-            permissionDeniedNotice = false
-            if (!enabled) {
-                enabled = true
-                persistSettings(nextEnabled = true)
+        val currentAccess = inspectNotificationAccess(context)
+        accessState = currentAccess
+        when (currentAccess) {
+            NotificationAccessState.ALLOWED -> {
+                permissionDeniedNotice = false
+                pendingEnableAfterPermission = false
+                if (!enabled) {
+                    enabled = true
+                    persistSettings(nextEnabled = true)
+                }
             }
-        } else {
-            pendingEnableAfterPermission = true
-            permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            NotificationAccessState.CHANNEL_MUTED -> {
+                pendingEnableAfterPermission = true
+                permissionDeniedNotice = true
+            }
+            NotificationAccessState.PERMISSION_MISSING -> {
+                pendingEnableAfterPermission = true
+                permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
         }
     }
 
-    BackHandler(onBack = onNavigateBack)
-
     val scrollState = rememberScrollState()
     val headerCollapseFraction = rememberHeaderCollapseFraction(scrollState)
+    val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val defaultTopPadding = statusBarTop + NutraStickySubScreenHeaderTopReservedPadding
+    var measuredHeaderHeight by remember { mutableStateOf(defaultTopPadding) }
+    val secondaryAlpha = if (enabled) 1f else 0.55f
 
     Box(
         modifier = Modifier
@@ -253,24 +308,280 @@ fun WaterReminderScreen(
                 .widthIn(max = NutraContentMaxWidth)
                 .fillMaxSize()
                 .verticalScroll(scrollState)
-                .statusBarsPadding()
+                .navigationBarsPadding()
                 .padding(horizontal = NutraTheme.spacing.screen)
-                .padding(top = NutraStickySubScreenHeaderTopReservedPadding, bottom = NutraTheme.spacing.xxl),
-            verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.xxl),
+                .padding(
+                    top = maxOf(defaultTopPadding, measuredHeaderHeight + 6.dp),
+                    bottom = 24.dp,
+                ),
+            verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.xl),
         ) {
             // 1. Master toggle card
             Column(verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.md)) {
-                    NutraCard(contentPadding = PaddingValues(0.dp)) {
+                NutraCard(contentPadding = PaddingValues(0.dp)) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(NutraTheme.shapes.lg)
+                            .toggleable(
+                                value = enabled,
+                                role = Role.Switch,
+                                onValueChange = ::handleToggleEnabled,
+                            )
+                            .padding(horizontal = NutraTheme.spacing.card, vertical = NutraTheme.spacing.lg),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                        ) {
+                            Text(
+                                text = "Su hatırlatıcı",
+                                style = NutraTheme.typography.label,
+                                color = colors.textPrimary,
+                            )
+                            Text(
+                                text = if (enabled) {
+                                    "~${WaterReminderScheduleCalculator.formatInterval(draftSettings.intervalMinutes)} aralıkla · ${WaterReminderScheduleCalculator.formatClock(draftSettings.startHour, draftSettings.startMinute)}–${WaterReminderScheduleCalculator.formatClock(draftSettings.endHour, draftSettings.endMinute)}"
+                                } else {
+                                    "Düzenli bildirim almak için aç"
+                                },
+                                style = NutraTheme.typography.bodySmall,
+                                color = colors.textSecondary,
+                            )
+                        }
+                        NutraSwitch(
+                            checked = enabled,
+                            onCheckedChange = null,
+                        )
+                    }
+                }
+
+                AnimatedVisibility(
+                    visible = !hasNotificationPermission && (permissionDeniedNotice || enabled),
+                    enter = expandVertically(tween(180)) + fadeIn(tween(160)),
+                    exit = shrinkVertically(tween(160)) + fadeOut(tween(120)),
+                ) {
+                    val isChannelMuted = accessState == NotificationAccessState.CHANNEL_MUTED
+                    NutraCard {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                            ) {
+                                Text(
+                                    text = if (isChannelMuted) "Bildirim kanalı kapalı" else "Bildirim izni gerekli",
+                                    style = NutraTheme.typography.label,
+                                    color = colors.warningText,
+                                )
+                                Text(
+                                    text = if (isChannelMuted) {
+                                        "Su hatırlatıcı kanalı sistem ayarlarında sessize alınmış. Bildirim almak için kanalı aç."
+                                    } else {
+                                        "Hatırlatma bildirimleri için sistem ayarlarından izin ver."
+                                    },
+                                    style = NutraTheme.typography.bodySmall,
+                                    color = colors.textSecondary,
+                                )
+                            }
+                            NutraButton(
+                                text = "Ayarları aç",
+                                onClick = { openWaterNotificationSettings(context, accessState) },
+                                style = NutraButtonStyle.Secondary,
+                                size = NutraButtonSize.Small,
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 2. Period selection & custom interval
+            Column(
+                modifier = Modifier.graphicsLayer { alpha = secondaryAlpha },
+                verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.md),
+            ) {
+                NutraSectionHeader(title = "Hatırlatma periyodu")
+
+                NutraCard(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        FIRST_ROW_INTERVAL_PRESETS.forEach { preset ->
+                            NutraChip(
+                                text = WaterReminderScheduleCalculator.formatInterval(preset),
+                                selected = !isCustomMode && intervalMinutes == preset,
+                                onClick = {
+                                    isCustomMode = false
+                                    if (intervalMinutes != preset) {
+                                        intervalMinutes = preset
+                                        persistSettings(nextIntervalMinutes = preset)
+                                    }
+                                },
+                                role = Role.RadioButton,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        SECOND_ROW_INTERVAL_PRESETS.forEach { preset ->
+                            NutraChip(
+                                text = WaterReminderScheduleCalculator.formatInterval(preset),
+                                selected = !isCustomMode && intervalMinutes == preset,
+                                onClick = {
+                                    isCustomMode = false
+                                    if (intervalMinutes != preset) {
+                                        intervalMinutes = preset
+                                        persistSettings(nextIntervalMinutes = preset)
+                                    }
+                                },
+                                role = Role.RadioButton,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                        NutraChip(
+                            text = "Özel",
+                            selected = isCustomMode,
+                            onClick = { isCustomMode = true },
+                            role = Role.RadioButton,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+
+                    AnimatedVisibility(
+                        visible = isCustomMode,
+                        enter = expandVertically(tween(200)) + fadeIn(tween(180)),
+                        exit = shrinkVertically(tween(160)) + fadeOut(tween(120)),
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(top = 4.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            NutraDivider()
+                            NutraMetricStepperRow(
+                                label = "Özel periyot",
+                                supportingText = "10 – 360 dk arası",
+                                valueText = WaterReminderScheduleCalculator.formatInterval(intervalMinutes),
+                                onDecrement = {
+                                    val next = (intervalMinutes - WaterReminderBounds.CUSTOM_STEP_MINUTES)
+                                        .coerceIn(
+                                            WaterReminderBounds.MIN_INTERVAL_MINUTES,
+                                            WaterReminderBounds.MAX_INTERVAL_MINUTES,
+                                        )
+                                    if (next != intervalMinutes) {
+                                        intervalMinutes = next
+                                        persistSettings(nextIntervalMinutes = next)
+                                    }
+                                },
+                                onIncrement = {
+                                    val next = (intervalMinutes + WaterReminderBounds.CUSTOM_STEP_MINUTES)
+                                        .coerceIn(
+                                            WaterReminderBounds.MIN_INTERVAL_MINUTES,
+                                            WaterReminderBounds.MAX_INTERVAL_MINUTES,
+                                        )
+                                    if (next != intervalMinutes) {
+                                        intervalMinutes = next
+                                        persistSettings(nextIntervalMinutes = next)
+                                    }
+                                },
+                                onValueClick = { showCustomIntervalDialog = true },
+                                valueMinWidth = 86.dp,
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 3. Active hours & smart stop toggle
+            Column(
+                modifier = Modifier.graphicsLayer { alpha = secondaryAlpha },
+                verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.md),
+            ) {
+                NutraSectionHeader(title = "Aktif saatler")
+
+                NutraCard(contentPadding = PaddingValues(horizontal = NutraTheme.spacing.card, vertical = NutraTheme.spacing.lg)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        NutraMetricStepperRow(
+                            label = "Başlangıç",
+                            valueText = WaterReminderScheduleCalculator.formatClockFromMinutes(startTotalMinutes),
+                            onDecrement = {
+                                val next = (startTotalMinutes - WaterReminderBounds.TIME_STEP_MINUTES)
+                                    .coerceAtLeast(WaterReminderBounds.MIN_START_TOTAL_MINUTES)
+                                if (next != startTotalMinutes) {
+                                    startTotalMinutes = next
+                                    persistSettings(nextStartTotalMinutes = next)
+                                }
+                            },
+                            onIncrement = {
+                                val maxStart = (endTotalMinutes - WaterReminderBounds.MIN_WINDOW_SPAN_MINUTES)
+                                    .coerceAtMost(WaterReminderBounds.MAX_START_TOTAL_MINUTES)
+                                val next = (startTotalMinutes + WaterReminderBounds.TIME_STEP_MINUTES)
+                                    .coerceAtMost(maxStart)
+                                if (next != startTotalMinutes) {
+                                    startTotalMinutes = next
+                                    persistSettings(nextStartTotalMinutes = next)
+                                }
+                            },
+                            onValueClick = { activeTimeField = ReminderTimeField.START },
+                            valueMinWidth = 76.dp,
+                        )
+
+                        NutraDivider()
+
+                        NutraMetricStepperRow(
+                            label = "Bitiş",
+                            valueText = WaterReminderScheduleCalculator.formatClockFromMinutes(endTotalMinutes),
+                            onDecrement = {
+                                val minEnd = (startTotalMinutes + WaterReminderBounds.MIN_WINDOW_SPAN_MINUTES)
+                                    .coerceAtLeast(WaterReminderBounds.MIN_END_TOTAL_MINUTES)
+                                val next = (endTotalMinutes - WaterReminderBounds.TIME_STEP_MINUTES)
+                                    .coerceAtLeast(minEnd)
+                                if (next != endTotalMinutes) {
+                                    endTotalMinutes = next
+                                    persistSettings(nextEndTotalMinutes = next)
+                                }
+                            },
+                            onIncrement = {
+                                val next = (endTotalMinutes + WaterReminderBounds.TIME_STEP_MINUTES)
+                                    .coerceAtMost(WaterReminderBounds.MAX_END_TOTAL_MINUTES)
+                                if (next != endTotalMinutes) {
+                                    endTotalMinutes = next
+                                    persistSettings(nextEndTotalMinutes = next)
+                                }
+                            },
+                            onValueClick = { activeTimeField = ReminderTimeField.END },
+                            valueMinWidth = 76.dp,
+                        )
+
+                        NutraDivider()
+
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(NutraTheme.shapes.lg)
+                                .clip(NutraTheme.shapes.sm)
                                 .toggleable(
-                                    value = enabled,
+                                    value = stopWhenGoalReached,
                                     role = Role.Switch,
-                                    onValueChange = ::handleToggleEnabled,
+                                    onValueChange = { next ->
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        if (next != stopWhenGoalReached) {
+                                            stopWhenGoalReached = next
+                                            persistSettings(nextStopWhenGoalReached = next)
+                                        }
+                                    },
                                 )
-                                .padding(horizontal = NutraTheme.spacing.card, vertical = NutraTheme.spacing.lg),
+                                .padding(vertical = 4.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
@@ -281,316 +592,80 @@ fun WaterReminderScreen(
                                 verticalArrangement = Arrangement.spacedBy(2.dp),
                             ) {
                                 Text(
-                                    text = "Su hatırlatıcı",
+                                    text = "Hedefe ulaşınca durdur",
                                     style = NutraTheme.typography.label,
                                     color = colors.textPrimary,
                                 )
                                 Text(
-                                    text = if (enabled) {
-                                        "${WaterReminderScheduleCalculator.formatInterval(draftSettings.intervalMinutes)} aralıkla · ${WaterReminderScheduleCalculator.formatClock(draftSettings.startHour, draftSettings.startMinute)}–${WaterReminderScheduleCalculator.formatClock(draftSettings.endHour, draftSettings.endMinute)}"
-                                    } else {
-                                        "Düzenli bildirim almak için aç"
-                                    },
+                                    text = "Günlük ${NutraFormatters.formatInt(waterGoalMl)} ml tamamlandığında bildirim gönderme",
                                     style = NutraTheme.typography.bodySmall,
                                     color = colors.textSecondary,
                                 )
                             }
                             NutraSwitch(
-                                checked = enabled,
+                                checked = stopWhenGoalReached,
                                 onCheckedChange = null,
                             )
                         }
                     }
-
-                    AnimatedVisibility(
-                        visible = !hasNotificationPermission && (permissionDeniedNotice || enabled),
-                        enter = expandVertically(tween(180)) + fadeIn(tween(160)),
-                        exit = shrinkVertically(tween(160)) + fadeOut(tween(120)),
-                    ) {
-                        NutraCard {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Column(
-                                    modifier = Modifier.weight(1f),
-                                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                                ) {
-                                    Text(
-                                        text = "Bildirim izni gerekli",
-                                        style = NutraTheme.typography.label,
-                                        color = colors.warningText,
-                                    )
-                                    Text(
-                                        text = "Hatırlatma bildirimleri için sistem ayarlarından izin ver.",
-                                        style = NutraTheme.typography.bodySmall,
-                                        color = colors.textSecondary,
-                                    )
-                                }
-                                NutraButton(
-                                    text = "Ayarları aç",
-                                    onClick = { openAppNotificationSettings(context) },
-                                    style = NutraButtonStyle.Secondary,
-                                    size = NutraButtonSize.Small,
-                                )
-                            }
-                        }
-                    }
                 }
 
-                // 2. Period selection & custom interval
-                Column(verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.md)) {
-                    NutraSectionHeader(title = "Hatırlatma periyodu")
-
-                    NutraCard(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                // Subtle live schedule preview when enabled (ticks every 30s)
+                AnimatedVisibility(
+                    visible = enabled,
+                    enter = expandVertically(tween(180)) + fadeIn(tween(160)),
+                    exit = shrinkVertically(tween(160)) + fadeOut(tween(120)),
+                ) {
+                    val dailyCount = remember(draftSettings) {
+                        WaterReminderScheduleCalculator.estimateDailyReminderCount(draftSettings)
+                    }
+                    val nextLabel = remember(draftSettings, liveNow) {
+                        WaterReminderScheduleCalculator.computeNextTriggerDateTime(liveNow, draftSettings)
+                            ?.let { WaterReminderScheduleCalculator.formatNextTriggerLabel(liveNow, it) }
+                    }
+                    NutraCard(
+                        contentPadding = PaddingValues(
+                            horizontal = NutraTheme.spacing.card,
+                            vertical = 14.dp,
+                        ),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            FIRST_ROW_INTERVAL_PRESETS.forEach { preset ->
-                                NutraChip(
-                                    text = WaterReminderScheduleCalculator.formatInterval(preset),
-                                    selected = !isCustomMode && intervalMinutes == preset,
-                                    onClick = {
-                                        isCustomMode = false
-                                        if (intervalMinutes != preset) {
-                                            intervalMinutes = preset
-                                            persistSettings(nextIntervalMinutes = preset)
-                                        }
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                )
-                            }
-                        }
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            SECOND_ROW_INTERVAL_PRESETS.forEach { preset ->
-                                NutraChip(
-                                    text = WaterReminderScheduleCalculator.formatInterval(preset),
-                                    selected = !isCustomMode && intervalMinutes == preset,
-                                    onClick = {
-                                        isCustomMode = false
-                                        if (intervalMinutes != preset) {
-                                            intervalMinutes = preset
-                                            persistSettings(nextIntervalMinutes = preset)
-                                        }
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                )
-                            }
-                            NutraChip(
-                                text = "Özel",
-                                selected = isCustomMode,
-                                onClick = { isCustomMode = true },
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 modifier = Modifier.weight(1f),
-                            )
-                        }
-
-                        AnimatedVisibility(
-                            visible = isCustomMode,
-                            enter = expandVertically(tween(200)) + fadeIn(tween(180)),
-                            exit = shrinkVertically(tween(160)) + fadeOut(tween(120)),
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(top = 4.dp),
-                                verticalArrangement = Arrangement.spacedBy(12.dp),
                             ) {
-                                NutraDivider()
-                                NutraMetricStepperRow(
-                                    label = "Özel periyot",
-                                    supportingText = "10 – 360 dk arası",
-                                    valueText = WaterReminderScheduleCalculator.formatInterval(intervalMinutes),
-                                    onDecrement = {
-                                        val next = (intervalMinutes - WaterReminderBounds.CUSTOM_STEP_MINUTES)
-                                            .coerceIn(
-                                                WaterReminderBounds.MIN_INTERVAL_MINUTES,
-                                                WaterReminderBounds.MAX_INTERVAL_MINUTES,
-                                            )
-                                        if (next != intervalMinutes) {
-                                            intervalMinutes = next
-                                            persistSettings(nextIntervalMinutes = next)
-                                        }
-                                    },
-                                    onIncrement = {
-                                        val next = (intervalMinutes + WaterReminderBounds.CUSTOM_STEP_MINUTES)
-                                            .coerceIn(
-                                                WaterReminderBounds.MIN_INTERVAL_MINUTES,
-                                                WaterReminderBounds.MAX_INTERVAL_MINUTES,
-                                            )
-                                        if (next != intervalMinutes) {
-                                            intervalMinutes = next
-                                            persistSettings(nextIntervalMinutes = next)
-                                        }
-                                    },
-                                    onValueClick = { showCustomIntervalDialog = true },
-                                    valueMinWidth = 86.dp,
+                                NutraDot(color = colors.water)
+                                Text(
+                                    text = "Günde ~$dailyCount hatırlatma",
+                                    style = NutraTheme.typography.bodySmall,
+                                    color = colors.textSecondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            if (nextLabel != null) {
+                                Text(
+                                    text = "Sonraki: $nextLabel",
+                                    style = NutraTheme.typography.labelSmall,
+                                    color = colors.textPrimary,
+                                    maxLines = 1,
                                 )
                             }
                         }
+                        Text(
+                            text = "Pil tasarrufu nedeniyle bildirim zamanı birkaç dakika esneyebilir.",
+                            style = NutraTheme.typography.caption,
+                            color = colors.textTertiary,
+                        )
                     }
                 }
-
-                // 3. Active hours & smart stop toggle
-                Column(verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.md)) {
-                    NutraSectionHeader(title = "Aktif saatler")
-
-                    NutraCard(contentPadding = PaddingValues(horizontal = NutraTheme.spacing.card, vertical = NutraTheme.spacing.lg)) {
-                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            NutraMetricStepperRow(
-                                label = "Başlangıç",
-                                valueText = WaterReminderScheduleCalculator.formatClockFromMinutes(startTotalMinutes),
-                                onDecrement = {
-                                    val next = (startTotalMinutes - WaterReminderBounds.TIME_STEP_MINUTES)
-                                        .coerceAtLeast(WaterReminderBounds.MIN_START_TOTAL_MINUTES)
-                                    if (next != startTotalMinutes) {
-                                        startTotalMinutes = next
-                                        persistSettings(nextStartTotalMinutes = next)
-                                    }
-                                },
-                                onIncrement = {
-                                    val maxStart = (endTotalMinutes - WaterReminderBounds.MIN_WINDOW_SPAN_MINUTES)
-                                        .coerceAtMost(WaterReminderBounds.MAX_START_TOTAL_MINUTES)
-                                    val next = (startTotalMinutes + WaterReminderBounds.TIME_STEP_MINUTES)
-                                        .coerceAtMost(maxStart)
-                                    if (next != startTotalMinutes) {
-                                        startTotalMinutes = next
-                                        persistSettings(nextStartTotalMinutes = next)
-                                    }
-                                },
-                                onValueClick = { activeTimeField = ReminderTimeField.START },
-                                valueMinWidth = 76.dp,
-                            )
-
-                            NutraDivider()
-
-                            NutraMetricStepperRow(
-                                label = "Bitiş",
-                                valueText = WaterReminderScheduleCalculator.formatClockFromMinutes(endTotalMinutes),
-                                onDecrement = {
-                                    val minEnd = (startTotalMinutes + WaterReminderBounds.MIN_WINDOW_SPAN_MINUTES)
-                                        .coerceAtLeast(WaterReminderBounds.MIN_END_TOTAL_MINUTES)
-                                    val next = (endTotalMinutes - WaterReminderBounds.TIME_STEP_MINUTES)
-                                        .coerceAtLeast(minEnd)
-                                    if (next != endTotalMinutes) {
-                                        endTotalMinutes = next
-                                        persistSettings(nextEndTotalMinutes = next)
-                                    }
-                                },
-                                onIncrement = {
-                                    val next = (endTotalMinutes + WaterReminderBounds.TIME_STEP_MINUTES)
-                                        .coerceAtMost(WaterReminderBounds.MAX_END_TOTAL_MINUTES)
-                                    if (next != endTotalMinutes) {
-                                        endTotalMinutes = next
-                                        persistSettings(nextEndTotalMinutes = next)
-                                    }
-                                },
-                                onValueClick = { activeTimeField = ReminderTimeField.END },
-                                valueMinWidth = 76.dp,
-                            )
-
-                            NutraDivider()
-
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(NutraTheme.shapes.sm)
-                                    .toggleable(
-                                        value = stopWhenGoalReached,
-                                        role = Role.Switch,
-                                        onValueChange = { next ->
-                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                            if (next != stopWhenGoalReached) {
-                                                stopWhenGoalReached = next
-                                                persistSettings(nextStopWhenGoalReached = next)
-                                            }
-                                        },
-                                    )
-                                    .padding(vertical = 4.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Column(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .padding(end = 12.dp),
-                                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                                ) {
-                                    Text(
-                                        text = "Hedefe ulaşınca durdur",
-                                        style = NutraTheme.typography.label,
-                                        color = colors.textPrimary,
-                                    )
-                                    Text(
-                                        text = "Günlük ${NutraFormatters.formatInt(waterGoalMl)} ml tamamlandığında bildirim gönderme",
-                                        style = NutraTheme.typography.bodySmall,
-                                        color = colors.textSecondary,
-                                    )
-                                }
-                                NutraSwitch(
-                                    checked = stopWhenGoalReached,
-                                    onCheckedChange = null,
-                                )
-                            }
-                        }
-                    }
-
-                    // Subtle live schedule preview when enabled
-                    AnimatedVisibility(
-                        visible = enabled,
-                        enter = expandVertically(tween(180)) + fadeIn(tween(160)),
-                        exit = shrinkVertically(tween(160)) + fadeOut(tween(120)),
-                    ) {
-                        val now = remember(draftSettings) { LocalDateTime.now() }
-                        val dailyCount = remember(draftSettings) {
-                            WaterReminderScheduleCalculator.estimateDailyReminderCount(draftSettings)
-                        }
-                        val nextLabel = remember(draftSettings, now) {
-                            WaterReminderScheduleCalculator.computeNextTriggerDateTime(now, draftSettings)
-                                ?.let { WaterReminderScheduleCalculator.formatNextTriggerLabel(now, it) }
-                        }
-                        NutraCard(
-                            contentPadding = PaddingValues(
-                                horizontal = NutraTheme.spacing.card,
-                                vertical = 14.dp,
-                            ),
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    modifier = Modifier.weight(1f),
-                                ) {
-                                    NutraDot(color = colors.water)
-                                    Text(
-                                        text = "Günde $dailyCount hatırlatma",
-                                        style = NutraTheme.typography.bodySmall,
-                                        color = colors.textSecondary,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
-                                if (nextLabel != null) {
-                                    Text(
-                                        text = "Sonraki: $nextLabel",
-                                        style = NutraTheme.typography.labelSmall,
-                                        color = colors.textPrimary,
-                                        maxLines = 1,
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Spacer(Modifier.navigationBarsPadding())
+            }
         }
 
         NutraStickyScreenHeader(
@@ -598,6 +673,7 @@ fun WaterReminderScreen(
             eyebrow = "Gün içinde düzenli su içmeni hatırlatır",
             collapseFractionState = headerCollapseFraction,
             onNavigateBack = onNavigateBack,
+            onHeaderHeightMeasured = { measuredHeaderHeight = it },
             modifier = Modifier.align(Alignment.TopCenter),
         )
     }
@@ -634,12 +710,18 @@ fun WaterReminderScreen(
             ReminderTimeField.END -> endTotalMinutes
         }
         val minMinutes = when (editingTime) {
-            ReminderTimeField.START -> 0
-            ReminderTimeField.END -> (startTotalMinutes + WaterReminderBounds.MIN_WINDOW_SPAN_MINUTES).coerceAtMost(23 * 60 + 55)
+            ReminderTimeField.START -> WaterReminderBounds.MIN_START_TOTAL_MINUTES
+            ReminderTimeField.END -> maxOf(
+                WaterReminderBounds.MIN_END_TOTAL_MINUTES,
+                startTotalMinutes + WaterReminderBounds.MIN_WINDOW_SPAN_MINUTES,
+            ).coerceAtMost(WaterReminderBounds.MAX_END_TOTAL_MINUTES)
         }
         val maxMinutes = when (editingTime) {
-            ReminderTimeField.START -> (endTotalMinutes - WaterReminderBounds.MIN_WINDOW_SPAN_MINUTES).coerceAtLeast(0)
-            ReminderTimeField.END -> 23 * 60 + 55
+            ReminderTimeField.START -> minOf(
+                WaterReminderBounds.MAX_START_TOTAL_MINUTES,
+                endTotalMinutes - WaterReminderBounds.MIN_WINDOW_SPAN_MINUTES,
+            ).coerceAtLeast(WaterReminderBounds.MIN_START_TOTAL_MINUTES)
+            ReminderTimeField.END -> WaterReminderBounds.MAX_END_TOTAL_MINUTES
         }
         ReminderTimePickerDialog(
             title = editingTime.title,
@@ -698,8 +780,18 @@ private fun ReminderTimePickerDialog(
             NutraMetricStepperRow(
                 label = "Saat",
                 valueText = "%02d".format(Locale.US, hour),
-                onDecrement = { totalMinutes = (totalMinutes - 60).coerceIn(minTotalMinutes, maxTotalMinutes) },
-                onIncrement = { totalMinutes = (totalMinutes + 60).coerceIn(minTotalMinutes, maxTotalMinutes) },
+                onDecrement = {
+                    val candidate = totalMinutes - 60
+                    if (candidate >= minTotalMinutes) {
+                        totalMinutes = candidate
+                    }
+                },
+                onIncrement = {
+                    val candidate = totalMinutes + 60
+                    if (candidate <= maxTotalMinutes) {
+                        totalMinutes = candidate
+                    }
+                },
                 valueMinWidth = 64.dp,
             )
             NutraDivider()

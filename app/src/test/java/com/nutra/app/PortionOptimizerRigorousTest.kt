@@ -124,7 +124,7 @@ class PortionOptimizerRigorousTest {
                     ),
                 )
                 assertEquals(3, res.items.size)
-                assertTrue(res.fitScore in 20..100)
+                assertTrue(res.fitScore in 0..100)
                 for (item in res.items) {
                     assertTrue(item.totalGrams.isFinite())
                     assertTrue(
@@ -246,7 +246,7 @@ class PortionOptimizerRigorousTest {
         assertEquals(0f, item.proteinGrams, 0.001f)
         assertEquals(0f, item.carbsGrams, 0.001f)
         assertEquals(0f, item.fatGrams, 0.001f)
-        assertTrue(res.fitScore in 20..100)
+        assertTrue(res.fitScore in 0..100)
     }
 
     @Test
@@ -261,9 +261,9 @@ class PortionOptimizerRigorousTest {
         assertTrue("Expected perfect ($perfect) > close ($close)", perfect > close)
         assertTrue("Expected close ($close) > medium ($medium)", close > medium)
         assertTrue("Expected medium ($medium) > poor ($poor)", medium > poor)
-        assertTrue("Fit score floor must be >= 20, got $poor", poor >= 20)
+        assertTrue("Fit score must stay within 0..100, got $poor", poor in 0..100)
 
-        // Non-finite inputs must remain safely within 20..100
+        // Non-finite inputs must remain safely within 0..100
         val nanScore = optimizer.computeFitScore(
             actualCal = 500,
             actualP = Float.NaN,
@@ -271,7 +271,7 @@ class PortionOptimizerRigorousTest {
             actualF = -5f,
             budget = makeBudget(calories = 0, protein = Float.NaN, carbs = Float.NaN, fat = Float.NaN),
         )
-        assertTrue(nanScore in 20..100)
-        assertFalse(abs(perfect - close) < 0)
+        assertTrue(nanScore in 0..100)
+        assertTrue(perfect - close > 0)
     }
 }

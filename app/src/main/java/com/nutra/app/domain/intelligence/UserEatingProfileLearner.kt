@@ -140,16 +140,25 @@ class UserEatingProfileLearner @Inject constructor() {
             basketItemsByDateMeal.getOrPut(basketKey) { ArrayList(4) }.add(fid)
         }
 
-        // Incorporate explicit recommendation acceptance/pin feedback into food affinity
+        // Incorporate explicit recommendation acceptance/pin feedback with logarithmic cap & 30-day recency decay
+        val nowMillis = today.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli() + 86_400_000L
+        val feedbackLambda = ln(2.0) / 30.0
         for (cf in classifiedCatalog) {
             val fb = feedbackByKey[cf.feedbackKey] ?: continue
             val fid = cf.food.id
             if (fid <= 0L) continue
             if (fb.acceptedCount > 0) {
-                foodWeightedCounts[fid] = (foodWeightedCounts[fid] ?: 0.0) + fb.acceptedCount * 0.75
+                val daysSinceAccept = if (fb.lastAcceptedMillis > 0L) {
+                    ((nowMillis - fb.lastAcceptedMillis).coerceAtLeast(0L) / 86_400_000.0).coerceAtLeast(0.0)
+                } else {
+                    0.0
+                }
+                val recencyDecay = exp(-feedbackLambda * daysSinceAccept)
+                val cappedBoost = (ln(1.0 + fb.acceptedCount) * 0.85 * recencyDecay).coerceAtMost(2.5)
+                foodWeightedCounts[fid] = (foodWeightedCounts[fid] ?: 0.0) + cappedBoost
             }
             if (fb.status == FoodFeedbackStatus.PINNED) {
-                foodWeightedCounts[fid] = (foodWeightedCounts[fid] ?: 0.0) + 3.0
+                foodWeightedCounts[fid] = (foodWeightedCounts[fid] ?: 0.0) + 2.5
             }
         }
 
@@ -205,24 +214,46 @@ class UserEatingProfileLearner @Inject constructor() {
             mealShares[meal] = mealShares.getValue(meal) / shareSum
         }
 
-        // Build co-occurrence adjacency map (pairs consumed together >= 2 times)
+        // Build frequency-ranked global AND per-MealType co-occurrence adjacency maps (pairs consumed together >= 2 times)
         val pairCounts = HashMap<Pair<Long, Long>, Int>()
-        for (basket in basketItemsByDateMeal.values) {
+        val mealPairCounts = MealType.entries.associateWith { HashMap<Pair<Long, Long>, Int>() }
+        for ((basketKey, basket) in basketItemsByDateMeal) {
             val unique = basket.distinct()
             if (unique.size < 2) continue
+            val mealName = basketKey.substringAfter('|', "")
+            val mealType = MealType.entries.firstOrNull { it.name == mealName }
+            val mealMap = mealType?.let { mealPairCounts.getValue(it) }
             for (i in unique.indices) {
                 for (j in i + 1 until unique.size) {
                     val a = minOf(unique[i], unique[j])
                     val b = maxOf(unique[i], unique[j])
-                    pairCounts[a to b] = (pairCounts[a to b] ?: 0) + 1
+                    val pair = a to b
+                    pairCounts[pair] = (pairCounts[pair] ?: 0) + 1
+                    if (mealMap != null) {
+                        mealMap[pair] = (mealMap[pair] ?: 0) + 1
+                    }
                 }
             }
         }
         val coOccurrence = HashMap<Long, MutableSet<Long>>()
-        for ((pair, count) in pairCounts) {
+        for ((pair, count) in pairCounts.entries.sortedByDescending { it.value }) {
             if (count >= 2) {
-                coOccurrence.getOrPut(pair.first) { HashSet() }.add(pair.second)
-                coOccurrence.getOrPut(pair.second) { HashSet() }.add(pair.first)
+                coOccurrence.getOrPut(pair.first) { LinkedHashSet() }.add(pair.second)
+                coOccurrence.getOrPut(pair.second) { LinkedHashSet() }.add(pair.first)
+            }
+        }
+        val mealCoOccurrence = HashMap<MealType, Map<Long, List<Long>>>(4)
+        for ((mealType, counts) in mealPairCounts) {
+            val rankedNeighbors = HashMap<Long, MutableList<Pair<Long, Int>>>()
+            for ((pair, count) in counts) {
+                if (count >= 2) {
+                    rankedNeighbors.getOrPut(pair.first) { ArrayList() }.add(pair.second to count)
+                    rankedNeighbors.getOrPut(pair.second) { ArrayList() }.add(pair.first to count)
+                }
+            }
+            mealCoOccurrence[mealType] = rankedNeighbors.mapValues { (_, list) ->
+                list.sortedWith(compareByDescending<Pair<Long, Int>> { it.second }.thenBy { it.first })
+                    .map { it.first }
             }
         }
 
@@ -257,6 +288,7 @@ class UserEatingProfileLearner @Inject constructor() {
             recentlyEatenFoodIds48h = recent48h,
             mealCalorieShares = mealShares,
             coOccurrencePairs = coOccurrence,
+            mealCoOccurrencePairs = mealCoOccurrence,
             micronutrientSignals = micronutrientSignals,
             habitShiftNote = habitShiftNote,
         )
@@ -273,17 +305,24 @@ class UserEatingProfileLearner @Inject constructor() {
         today: LocalDate,
     ): List<MicronutrientSignal> {
         val windowStart = today.minusDays(6)
-        val recentLogs = ArrayList<MealLogItem>(validLogs.size.coerceAtMost(128))
-        val activeDates = HashSet<String>(8)
-        var totalKcal = 0f
+        val logsByDate = HashMap<String, MutableList<MealLogItem>>(8)
+        val kcalByDate = HashMap<String, Int>(8)
         for (parsed in validLogs) {
             if (!parsed.date.isBefore(windowStart) && !parsed.date.isAfter(today)) {
-                recentLogs.add(parsed.log)
-                activeDates.add(parsed.log.dateIso)
-                totalKcal += parsed.log.calories.coerceAtLeast(0)
+                logsByDate.getOrPut(parsed.log.dateIso) { ArrayList() }.add(parsed.log)
+                kcalByDate[parsed.log.dateIso] = (kcalByDate[parsed.log.dateIso] ?: 0) + parsed.log.calories.coerceAtLeast(0)
             }
         }
-        val dayCount = activeDates.size
+        // Prefer adequately logged days (>= 1000 kcal) so half-logged days don't trigger false low-micronutrient alerts
+        val fullDates = kcalByDate.filterValues { it >= 1000 }.keys
+        val effectiveDates = if (fullDates.size >= MIN_MICRONUTRIENT_DAYS) fullDates else kcalByDate.keys
+        val recentLogs = ArrayList<MealLogItem>(validLogs.size.coerceAtMost(128))
+        var totalKcal = 0f
+        for (dateIso in effectiveDates) {
+            logsByDate[dateIso]?.let { recentLogs.addAll(it) }
+            totalKcal += (kcalByDate[dateIso] ?: 0)
+        }
+        val dayCount = effectiveDates.size
 
         val fiberRef = ((profile.goals.calories / 1000f) * 14f).coerceIn(22f, 38f)
         val sodiumRef = 2300f

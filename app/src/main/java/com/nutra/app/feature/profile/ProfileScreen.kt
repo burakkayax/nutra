@@ -1,6 +1,5 @@
 package com.nutra.app.feature.profile
 
-import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -45,6 +44,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.nutra.app.core.designsystem.isCompactWidthOrLargeFont
 import com.nutra.app.core.designsystem.NutraButton
 import com.nutra.app.core.designsystem.NutraButtonSize
 import com.nutra.app.core.designsystem.NutraButtonStyle
@@ -65,10 +65,12 @@ import com.nutra.app.core.designsystem.NutraStickyHeaderTopReservedPadding
 import com.nutra.app.core.designsystem.NutraStickyScreenHeader
 import com.nutra.app.core.designsystem.NutraSwitch
 import com.nutra.app.core.designsystem.NutraTheme
+import com.nutra.app.core.designsystem.rememberAccessibleSnackbarTimeout
 import com.nutra.app.core.designsystem.rememberHeaderCollapseFraction
 import com.nutra.app.core.designsystem.rememberSkeletonPulseAlpha
 import com.nutra.app.core.notification.WaterReminderScheduleCalculator
 import com.nutra.app.domain.model.ThemePreference
+import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.delay
 import java.time.LocalDate
 
@@ -93,10 +95,11 @@ fun ProfileScreen(
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
     val layoutDirection = LocalLayoutDirection.current
+    val useTwoByTwoStats = isCompactWidthOrLargeFont()
     val listState = rememberLazyListState()
     val headerCollapseFraction = rememberHeaderCollapseFraction(listState)
-
-    var pendingImportUri by remember { mutableStateOf<Uri?>(null) }
+    val defaultTopClearance = contentPadding.calculateTopPadding() + NutraStickyHeaderTopReservedPadding
+    var measuredHeaderHeight by remember { mutableStateOf(defaultTopClearance) }
 
     LaunchedEffect(scrollToTopTrigger) {
         if (scrollToTopTrigger > 0) {
@@ -116,14 +119,18 @@ fun ProfileScreen(
         contract = ActivityResultContracts.OpenDocument(),
     ) { uri ->
         if (uri != null) {
-            pendingImportUri = uri
+            viewModel.prepareImportFromUri(context.contentResolver, uri)
         }
     }
 
     val feedback = state.feedback
+    val snackbarTimeoutMs = rememberAccessibleSnackbarTimeout(
+        baseTimeoutMillis = if (feedback?.canUndoGoals == true) 4500L else 3200L,
+        hasAction = feedback?.canUndoGoals == true,
+    )
     LaunchedEffect(feedback?.eventId, feedback?.message) {
         if (feedback != null) {
-            delay(if (feedback.canUndoGoals) 4500L else 3200L)
+            delay(snackbarTimeoutMs)
             viewModel.clearFeedback()
         }
     }
@@ -142,7 +149,7 @@ fun ProfileScreen(
             contentPadding = PaddingValues(
                 start = contentPadding.calculateStartPadding(layoutDirection) + NutraTheme.spacing.screen,
                 end = contentPadding.calculateEndPadding(layoutDirection) + NutraTheme.spacing.screen,
-                top = contentPadding.calculateTopPadding() + NutraStickyHeaderTopReservedPadding,
+                top = maxOf(defaultTopClearance, measuredHeaderHeight + 4.dp),
                 bottom = contentPadding.calculateBottomPadding() + 16.dp,
             ),
             verticalArrangement = Arrangement.spacedBy(NutraTheme.spacing.xl),
@@ -184,30 +191,65 @@ fun ProfileScreen(
 
                     NutraDivider(modifier = Modifier.padding(vertical = 16.dp))
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        BodyStatColumn(
-                            label = "Mevcut",
-                            value = "${NutraFormatters.formatKg(profile.currentWeightKg)} kg",
-                            modifier = Modifier.weight(1f),
-                        )
-                        BodyStatColumn(
-                            label = "Hedef",
-                            value = "${NutraFormatters.formatKg(profile.targetWeightKg)} kg",
-                            modifier = Modifier.weight(1f),
-                        )
-                        BodyStatColumn(
-                            label = "Boy",
-                            value = "${profile.heightCm} cm",
-                            modifier = Modifier.weight(1f),
-                        )
-                        BodyStatColumn(
-                            label = "Yaş",
-                            value = "${profile.age}",
-                            modifier = Modifier.weight(1f),
-                        )
+                    if (useTwoByTwoStats) {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                BodyStatColumn(
+                                    label = "Mevcut",
+                                    value = "${NutraFormatters.formatKg(profile.currentWeightKg)} kg",
+                                    modifier = Modifier.weight(1f),
+                                )
+                                BodyStatColumn(
+                                    label = "Hedef",
+                                    value = "${NutraFormatters.formatKg(profile.targetWeightKg)} kg",
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                BodyStatColumn(
+                                    label = "Boy",
+                                    value = "${profile.heightCm} cm",
+                                    modifier = Modifier.weight(1f),
+                                )
+                                BodyStatColumn(
+                                    label = "Yaş",
+                                    value = "${profile.age}",
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                        }
+                    } else {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            BodyStatColumn(
+                                label = "Mevcut",
+                                value = "${NutraFormatters.formatKg(profile.currentWeightKg)} kg",
+                                modifier = Modifier.weight(1f),
+                            )
+                            BodyStatColumn(
+                                label = "Hedef",
+                                value = "${NutraFormatters.formatKg(profile.targetWeightKg)} kg",
+                                modifier = Modifier.weight(1f),
+                            )
+                            BodyStatColumn(
+                                label = "Boy",
+                                value = "${profile.heightCm} cm",
+                                modifier = Modifier.weight(1f),
+                            )
+                            BodyStatColumn(
+                                label = "Yaş",
+                                value = "${profile.age}",
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
                     }
                 }
             }
@@ -291,7 +333,7 @@ fun ProfileScreen(
                 }
             }
 
-            // 4. Appearance preferences
+            // 3. Appearance preferences
             item(key = "appearance") {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     NutraSectionHeader(title = "Görünüm")
@@ -305,7 +347,7 @@ fun ProfileScreen(
                         )
 
                         NutraSegmentedControl(
-                            items = ThemePreference.entries,
+                            items = remember { ThemePreference.entries.toImmutableList() },
                             selectedItem = profile.themePreference,
                             onItemSelected = { theme ->
                                 viewModel.updateAppearance(theme, profile.useDynamicColor)
@@ -365,7 +407,7 @@ fun ProfileScreen(
                     NutraCard(contentPadding = PaddingValues(horizontal = NutraTheme.spacing.card, vertical = NutraTheme.spacing.sm)) {
                         NutraListRow(
                             title = "Verileri dışa aktar",
-                            subtitle = if (state.isBackupBusy) "İşleniyor..." else "Kayıtları JSON yedeği olarak indir",
+                            subtitle = if (state.isExportingBackup) "Dışa aktarılıyor..." else "Kayıtları JSON yedeği olarak indir",
                             leading = {
                                 NutraIconBadge(
                                     icon = NutraIcons.FileDownload,
@@ -374,7 +416,7 @@ fun ProfileScreen(
                                 )
                             },
                             trailing = {
-                                if (state.isBackupBusy) {
+                                if (state.isExportingBackup) {
                                     CircularProgressIndicator(
                                         modifier = Modifier.size(18.dp),
                                         color = colors.accent,
@@ -399,7 +441,7 @@ fun ProfileScreen(
 
                         NutraListRow(
                             title = "Yedekten geri yükle",
-                            subtitle = if (state.isBackupBusy) "İşleniyor..." else "JSON dosyasından içe aktar",
+                            subtitle = if (state.isImportingBackup) "Yedek doğrulanıyor..." else "JSON dosyasından içe aktar",
                             leading = {
                                 NutraIconBadge(
                                     icon = NutraIcons.FileUpload,
@@ -408,7 +450,7 @@ fun ProfileScreen(
                                 )
                             },
                             trailing = {
-                                if (state.isBackupBusy) {
+                                if (state.isImportingBackup) {
                                     CircularProgressIndicator(
                                         modifier = Modifier.size(18.dp),
                                         color = colors.accent,
@@ -441,6 +483,7 @@ fun ProfileScreen(
                 start = contentPadding.calculateStartPadding(layoutDirection) + NutraTheme.spacing.screen,
                 end = contentPadding.calculateEndPadding(layoutDirection) + NutraTheme.spacing.screen,
             ),
+            onHeaderHeightMeasured = { measuredHeaderHeight = it },
             modifier = Modifier.align(Alignment.TopCenter),
         )
 
@@ -467,21 +510,61 @@ fun ProfileScreen(
         )
     }
 
-    val uriToImport = pendingImportUri
-    if (uriToImport != null) {
+    val report = state.pendingImportReport
+    if (report != null) {
+        val summaryLines = buildList {
+            add("${NutraFormatters.formatInt(report.validMealLogs)} öğün kaydı")
+            add("${NutraFormatters.formatInt(report.validWaterDays)} gün su kaydı")
+            add("${NutraFormatters.formatInt(report.validWeightEntries)} tartı kaydı")
+            if (report.validCustomFoods > 0) {
+                add("${NutraFormatters.formatInt(report.validCustomFoods)} özel besin")
+            }
+        }.joinToString(" · ")
+
         NutraDialog(
-            onDismissRequest = { pendingImportUri = null },
+            onDismissRequest = viewModel::cancelPendingImport,
             title = "Yedekten geri yükle?",
-            message = "Mevcut tüm öğün, su, kilo kayıtların ve profil ayarların seçilen yedek dosyasıyla değiştirilecek. Bu işlem geri alınamaz.",
+            message = "Mevcut tüm kayıtların ve profil ayarların seçilen yedekle değiştirilecek. Bu işlem geri alınamaz.",
             confirmText = "Geri yükle",
-            onConfirm = {
-                pendingImportUri = null
-                viewModel.importBackupFromUri(context.contentResolver, uriToImport)
-            },
+            onConfirm = viewModel::confirmPendingImport,
             dismissText = "Vazgeç",
-            onDismiss = { pendingImportUri = null },
+            onDismiss = viewModel::cancelPendingImport,
             destructive = true,
-        )
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(NutraTheme.shapes.md)
+                    .background(colors.surfaceMuted)
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = "Yedek içeriği (v${report.payload.version})",
+                    style = NutraTheme.typography.labelSmall,
+                    color = colors.textPrimary,
+                )
+                Text(
+                    text = summaryLines,
+                    style = NutraTheme.typography.caption,
+                    color = colors.textSecondary,
+                )
+                if (report.totalSkippedCount > 0) {
+                    Text(
+                        text = "${report.totalSkippedCount} geçersiz veya bozuk kayıt atlanacak.",
+                        style = NutraTheme.typography.caption,
+                        color = colors.warningText,
+                    )
+                }
+                report.warnings.take(2).forEach { warning ->
+                    Text(
+                        text = "• $warning",
+                        style = NutraTheme.typography.caption,
+                        color = colors.textSecondary,
+                    )
+                }
+            }
+        }
     }
 }
 

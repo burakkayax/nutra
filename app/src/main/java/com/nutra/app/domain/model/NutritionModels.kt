@@ -29,7 +29,7 @@ enum class GoalType(
         fatRatio = 0.28f,
     ),
     MAINTAIN(
-        title = "Kilosunu Koruma",
+        title = "Kilo Koruma",
         subtitle = "Mevcut formu, enerjiyi ve metabolik dengeyi koruma",
         calorieDelta = 0,
         proteinRatio = 0.28f,
@@ -116,6 +116,79 @@ data class ServingUnit(
 
 @Immutable
 @Serializable
+data class FoodDietFlags(
+    val containsRedMeat: Boolean = false,
+    val containsPoultry: Boolean = false,
+    val containsFish: Boolean = false,
+    val containsDairy: Boolean = false,
+    val containsEgg: Boolean = false,
+    val containsHoney: Boolean = false,
+    val containsAnimalProduct: Boolean = false,
+) {
+    fun toBitmask(): Int {
+        var mask = 0
+        if (containsRedMeat) mask = mask or BIT_RED_MEAT
+        if (containsPoultry) mask = mask or BIT_POULTRY
+        if (containsFish) mask = mask or BIT_FISH
+        if (containsDairy) mask = mask or BIT_DAIRY
+        if (containsEgg) mask = mask or BIT_EGG
+        if (containsHoney) mask = mask or BIT_HONEY
+        if (containsAnimalProduct) mask = mask or BIT_ANIMAL_PRODUCT
+        return mask
+    }
+
+    companion object {
+        const val BIT_RED_MEAT = 1 shl 0
+        const val BIT_POULTRY = 1 shl 1
+        const val BIT_FISH = 1 shl 2
+        const val BIT_DAIRY = 1 shl 3
+        const val BIT_EGG = 1 shl 4
+        const val BIT_HONEY = 1 shl 5
+        const val BIT_ANIMAL_PRODUCT = 1 shl 6
+
+        fun fromBitmask(mask: Int): FoodDietFlags {
+            val red = (mask and BIT_RED_MEAT) != 0
+            val poultry = (mask and BIT_POULTRY) != 0
+            val fish = (mask and BIT_FISH) != 0
+            val dairy = (mask and BIT_DAIRY) != 0
+            val egg = (mask and BIT_EGG) != 0
+            val honey = (mask and BIT_HONEY) != 0
+            val animal = (mask and BIT_ANIMAL_PRODUCT) != 0 || red || poultry || fish || dairy || egg || honey
+            return FoodDietFlags(
+                containsRedMeat = red,
+                containsPoultry = poultry,
+                containsFish = fish,
+                containsDairy = dairy,
+                containsEgg = egg,
+                containsHoney = honey,
+                containsAnimalProduct = animal,
+            )
+        }
+
+        fun fromTokens(tokens: Collection<String>): FoodDietFlags {
+            val upper = tokens.map { it.trim().uppercase() }.toSet()
+            val red = "RED_MEAT" in upper
+            val poultry = "POULTRY" in upper
+            val fish = "FISH" in upper
+            val dairy = "DAIRY" in upper
+            val egg = "EGG" in upper
+            val honey = "HONEY" in upper
+            val animal = "ANIMAL_PRODUCT" in upper || red || poultry || fish || dairy || egg || honey
+            return FoodDietFlags(
+                containsRedMeat = red,
+                containsPoultry = poultry,
+                containsFish = fish,
+                containsDairy = dairy,
+                containsEgg = egg,
+                containsHoney = honey,
+                containsAnimalProduct = animal,
+            )
+        }
+    }
+}
+
+@Immutable
+@Serializable
 data class FoodItem(
     val id: Long = 0L,
     val name: String,
@@ -145,6 +218,11 @@ data class FoodItem(
     val ironMgPer100g: Float? = null,
     val vitaminCMgPer100g: Float? = null,
     val preparationState: String? = null,
+    val allergens: Set<AllergenTag> = emptySet(),
+    val dietFlags: FoodDietFlags = FoodDietFlags(),
+    val allergenVerified: Boolean = false,
+    val customUid: String? = null,
+    val catalogVersion: Int = 2,
     @Transient val normalizedName: String = "",
     @Transient val normalizedSearchText: String = "",
 ) {
@@ -215,7 +293,7 @@ data class MealLogItem(
     val id: Long = 0L,
     val dateIso: String,
     val mealType: MealType,
-    val foodId: Long?,
+    val foodId: Long? = null,
     val foodName: String,
     val unitLabel: String,
     val multiplier: Float,
@@ -231,10 +309,16 @@ data class MealLogItem(
     val formattedQuantity: String = run {
         val unitSuffix = ServingUnitLabels.normalizedBaseUnit(baseUnit)
         val safeGrams = if (totalGrams.isFinite() && totalGrams > 0f) totalGrams.roundToInt() else 0
-        if (ServingUnitLabels.isRawUnitLabel(unitLabel)) {
-            "$safeGrams $unitSuffix"
-        } else {
-            "${NutraFormatters.formatMultiplier(multiplier)}x $unitLabel ($safeGrams $unitSuffix)"
+        val safeMult = if (multiplier.isFinite() && multiplier > 0f) multiplier else 1f
+        val cleanLabel = unitLabel.trim()
+        when {
+            ServingUnitLabels.isRawUnitLabel(cleanLabel) -> "$safeGrams $unitSuffix"
+            kotlin.math.abs(safeMult - 1f) < 0.01f && cleanLabel.startsWith("1 ") ->
+                "$cleanLabel ($safeGrams $unitSuffix)"
+            cleanLabel.startsWith("1 ") ->
+                "${NutraFormatters.formatMultiplier(safeMult)} ${cleanLabel.removePrefix("1 ")} ($safeGrams $unitSuffix)"
+            else ->
+                "${NutraFormatters.formatMultiplier(safeMult)}x $cleanLabel ($safeGrams $unitSuffix)"
         }
     }
 }
@@ -314,6 +398,7 @@ data class GoalHistoryEntry(
     val targetWeightKg: Float,
     val source: GoalChangeSource = GoalChangeSource.MANUAL,
     val timestampMillis: Long = 0L,
+    val waterGoalMl: Int = 2500,
 )
 
 enum class FoodFeedbackStatus {
@@ -367,7 +452,10 @@ data class UserProfile(
     val dietaryProfile: DietaryProfile = DietaryProfile(),
     val adaptiveMetabolismEnabled: Boolean = true,
     val lastAdaptiveReviewDateIso: String? = null,
-)
+) {
+    val isAdolescentObservationMode: Boolean
+        get() = age < 18
+}
 
 @Immutable
 data class MealSummary(

@@ -9,6 +9,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -23,7 +24,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
-class WaterReminderScheduler @Inject constructor(
+open class WaterReminderScheduler @Inject constructor(
     @param:ApplicationContext private val context: Context,
 ) {
     companion object {
@@ -58,14 +59,48 @@ class WaterReminderScheduler @Inject constructor(
     }
 
     fun hasNotificationPermission(): Boolean {
+        ensureNotificationChannel()
         val granted = ContextCompat.checkSelfPermission(
             context,
             Manifest.permission.POST_NOTIFICATIONS,
         ) == PackageManager.PERMISSION_GRANTED
-        return granted && NotificationManagerCompat.from(context).areNotificationsEnabled()
+        if (!granted || !NotificationManagerCompat.from(context).areNotificationsEnabled()) {
+            return false
+        }
+        val channel = context.getSystemService(NotificationManager::class.java)
+            ?.getNotificationChannel(CHANNEL_ID)
+        return channel == null || channel.importance != NotificationManager.IMPORTANCE_NONE
     }
 
-    fun sync(settings: WaterReminderSettings, minLeadSeconds: Long = 5L) {
+    fun isChannelMuted(): Boolean {
+        ensureNotificationChannel()
+        val postGranted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.POST_NOTIFICATIONS,
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!postGranted || !NotificationManagerCompat.from(context).areNotificationsEnabled()) {
+            return false
+        }
+        val channel = context.getSystemService(NotificationManager::class.java)
+            ?.getNotificationChannel(CHANNEL_ID)
+        return channel != null && channel.importance == NotificationManager.IMPORTANCE_NONE
+    }
+
+    fun buildNotificationSettingsIntent(): Intent {
+        ensureNotificationChannel()
+        return if (isChannelMuted()) {
+            Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).apply {
+                putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                putExtra(Settings.EXTRA_CHANNEL_ID, CHANNEL_ID)
+            }
+        } else {
+            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+            }
+        }
+    }
+
+    open fun sync(settings: WaterReminderSettings, minLeadSeconds: Long = 5L) {
         ensureNotificationChannel()
         val safe = WaterReminderScheduleCalculator.sanitize(settings)
         if (!safe.enabled) {
@@ -91,37 +126,17 @@ class WaterReminderScheduler @Inject constructor(
         val pendingIntent = buildTriggerPendingIntent()
         alarmManager.cancel(pendingIntent)
 
-        val scheduledExact = if (alarmManager.canScheduleExactAlarms()) {
-            scheduleExactAlarm(alarmManager, triggerAtMillis, pendingIntent)
-        } else {
-            false
-        }
-
-        if (!scheduledExact) {
-            runCatching {
-                alarmManager.setAndAllowWhileIdle(
-                    AlarmManager.RTC_WAKEUP,
-                    triggerAtMillis,
-                    pendingIntent,
-                )
-            }
+        // Approximate Doze-friendly alarm without requiring special exact-alarm Play Store permissions
+        runCatching {
+            alarmManager.setAndAllowWhileIdle(
+                AlarmManager.RTC_WAKEUP,
+                triggerAtMillis,
+                pendingIntent,
+            )
         }
     }
 
-    @SuppressLint("MissingPermission")
-    private fun scheduleExactAlarm(
-        alarmManager: AlarmManager,
-        triggerAtMillis: Long,
-        pendingIntent: PendingIntent,
-    ): Boolean = runCatching {
-        alarmManager.setExactAndAllowWhileIdle(
-            AlarmManager.RTC_WAKEUP,
-            triggerAtMillis,
-            pendingIntent,
-        )
-    }.isSuccess
-
-    fun cancel() {
+    open fun cancel() {
         val alarmManager = context.getSystemService(AlarmManager::class.java)
         alarmManager?.cancel(buildTriggerPendingIntent())
         dismissNotification()
@@ -132,7 +147,7 @@ class WaterReminderScheduler @Inject constructor(
     }
 
     @SuppressLint("MissingPermission")
-    fun showReminderNotification(todayWaterMl: Int, goalWaterMl: Int) {
+    open fun showReminderNotification(todayWaterMl: Int, goalWaterMl: Int) {
         if (!hasNotificationPermission()) return
         ensureNotificationChannel()
 

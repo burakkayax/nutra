@@ -29,7 +29,7 @@ import kotlin.math.roundToInt
  * 4. Box-constrained portion optimization via [PortionOptimizer].
  * 5. Maximal Marginal Relevance (MMR) diversity selection so recommendations stay varied and practical.
  */
-class MealRecommendationEngine @Inject constructor(
+open class MealRecommendationEngine @Inject constructor(
     private val classifier: FoodCulinaryClassifier,
     private val profileLearner: UserEatingProfileLearner,
     private val portionOptimizer: PortionOptimizer,
@@ -96,7 +96,7 @@ class MealRecommendationEngine @Inject constructor(
         }
     }
 
-    fun generateRecommendations(
+    open fun generateRecommendations(
         profile: UserProfile,
         dailySummary: DailyNutritionSummary,
         mealType: MealType,
@@ -312,7 +312,7 @@ class MealRecommendationEngine @Inject constructor(
         val c = round1(cSum.toFloat())
         val f = round1(fSum.toFloat())
         val newFit = portionOptimizer.computeFitScore(cal, p, c, f, budget)
-        val (_, microHighlights, missingNote) = computeMicronutrientBreakdown(
+        val (allMicros, microHighlights, missingNote) = computeMicronutrientBreakdown(
             items = adjustedItems,
             classifiedMap = classifiedMap,
             lowMicronutrients = lowMicronutrients,
@@ -333,7 +333,29 @@ class MealRecommendationEngine @Inject constructor(
             impactSummary = "Eklendiğinde günlük kalori %$calPct, protein hedefin %$pPct düzeyine ulaşır.",
         )
 
+        val resolvedTag = resolveVerifiedStyleTag(
+            preferredTag = recommendation.styleTag,
+            mealType = recommendation.mealType,
+            totalCalories = cal,
+            totalProtein = p,
+            fiberGrams = allMicros[MicronutrientType.FIBER]?.amount ?: 0f,
+            budget = budget,
+            isHabitAdapted = recommendation.styleTag == RecommendationStyleTag.HABIT_ADAPTED,
+        )
+        val calText = NutraFormatters.formatInt(cal)
+        val protText = NutraFormatters.formatMacroGrams(p)
+        val updatedFirstReason = if (budget.mode == MealBudgetMode.LIGHT_OVER_BUDGET) {
+            "Günlük hedefine çok yaklaştığın için hafif ve dengeli bir seçenek ($calText kcal · $protText g protein)."
+        } else {
+            "${budget.mealType.title} bütçene (%$newFit uyum) göre $calText kcal ve $protText g protein sağlayacak şekilde ayarlandı."
+        }
+        val updatedReasons = buildList {
+            add(updatedFirstReason)
+            addAll(recommendation.reasons.drop(1))
+        }
+
         return recommendation.copy(
+            styleTag = resolvedTag,
             items = adjustedItems,
             totalCalories = cal,
             totalProtein = p,
@@ -341,6 +363,7 @@ class MealRecommendationEngine @Inject constructor(
             totalFat = f,
             micronutrientHighlights = microHighlights,
             missingMicronutrientNote = missingNote,
+            reasons = updatedReasons,
             goalImpact = impact,
             fitScore = newFit,
         )
@@ -400,25 +423,45 @@ class MealRecommendationEngine @Inject constructor(
             )
         }
 
-        // Determine unlogged future meals for the rest of the day
+        // Determine unlogged remaining meals for the rest of the day (reserve unlogged main meals even when browsing SNACK/DINNER early)
         val loggedMeals = dailySummary.meals.filter { it.items.isNotEmpty() }.map { it.mealType }.toSet()
-        val expectedRemainingMainMeals = when (mealType) {
+        val unloggedMeals = MealType.entries.filter { it !in loggedMeals }
+        val expectedRemainingMeals = when (mealType) {
             MealType.BREAKFAST -> listOf(MealType.BREAKFAST, MealType.LUNCH, MealType.DINNER, MealType.SNACK)
+                .filter { it == mealType || it !in loggedMeals }
             MealType.LUNCH -> listOf(MealType.LUNCH, MealType.DINNER, MealType.SNACK)
-            MealType.DINNER -> listOf(MealType.DINNER)
-            MealType.SNACK -> listOf(MealType.SNACK)
-        }.filter { it == mealType || it !in loggedMeals }
+                .filter { it == mealType || it !in loggedMeals }
+            MealType.DINNER -> {
+                // If user plans dinner early before breakfast/lunch are logged, reserve those shares too
+                val earlierUnloggedMains = listOf(MealType.BREAKFAST, MealType.LUNCH).filter { it !in loggedMeals }
+                if (earlierUnloggedMains.isNotEmpty() && dailySummary.consumedCalories < goalCal * 0.35f) {
+                    (earlierUnloggedMains + MealType.DINNER).distinct()
+                } else {
+                    listOf(MealType.DINNER)
+                }
+            }
+            MealType.SNACK -> {
+                val unloggedMains = listOf(MealType.BREAKFAST, MealType.LUNCH, MealType.DINNER).filter { it !in loggedMeals }
+                if (unloggedMains.isNotEmpty()) {
+                    (unloggedMains + MealType.SNACK).distinct()
+                } else {
+                    listOf(MealType.SNACK)
+                }
+            }
+        }
 
-        val shareOfThisMeal = if (mealType == MealType.DINNER || expectedRemainingMainMeals.size <= 1) {
-            // Dinner or last remaining meal gets the full remaining budget (capped sensibly for a single meal)
+        val shareOfThisMeal = if (expectedRemainingMeals.size <= 1) {
             1.0f
         } else {
-            val thisWeight = eatingProfile.mealCalorieShares[mealType] ?: 0.30f
-            val remWeightSum = expectedRemainingMainMeals
+            val thisWeight = eatingProfile.mealCalorieShares[mealType]
+                ?: if (mealType == MealType.SNACK) 0.12f else 0.30f
+            val remWeightSum = expectedRemainingMeals
                 .sumOf { (eatingProfile.mealCalorieShares[it] ?: 0.25f).toDouble() }
                 .toFloat()
                 .coerceAtLeast(thisWeight)
-            (thisWeight / remWeightSum).coerceIn(0.20f, 0.80f)
+            val minShare = if (mealType == MealType.SNACK) 0.10f else 0.20f
+            val maxShare = if (mealType == MealType.SNACK) 0.28f else 0.80f
+            (thisWeight / remWeightSum).coerceIn(minShare, maxShare)
         }
 
         val maxSingleMealCap = when (mealType) {
@@ -431,8 +474,8 @@ class MealRecommendationEngine @Inject constructor(
             .coerceIn(min(remCal, minSingleMealFloor), maxSingleMealCap)
         val calRatio = (allocatedCal.toFloat() / remCal.toFloat()).coerceIn(0.15f, 1f)
 
-        // Cap per-meal macro targets to physically achievable shares of allocatedCal
-        val maxFeasibleP = ((allocatedCal * 0.60f) / 4f).coerceAtLeast(if (mealType == MealType.SNACK) 8f else 18f)
+        // Cap per-meal protein target to ~42% of meal calories (realistic whole-food range without forcing protein powder)
+        val maxFeasibleP = ((allocatedCal * 0.42f) / 4f).coerceAtLeast(if (mealType == MealType.SNACK) 8f else 18f)
         val minP = min(if (mealType == MealType.SNACK) 6f else 18f, maxFeasibleP)
         val upperP = max(minP, min(maxFeasibleP, max(remP, if (mealType == MealType.SNACK) 25f else 65f)))
         val targetP = (remP * calRatio).coerceIn(minP, upperP)
@@ -851,8 +894,10 @@ class MealRecommendationEngine @Inject constructor(
 
             for (anchorId in mealTopIds) {
                 val anchor = allowedById[anchorId] ?: continue
-                val partners = eatingProfile.coOccurrencePairs[anchorId]
-                    .orEmpty()
+                // Prefer deterministic frequency-ranked meal-scoped co-occurrence partners before global fallback
+                val rankedPartnerIds = eatingProfile.mealCoOccurrencePairs[mealType]?.get(anchorId)
+                    ?: eatingProfile.coOccurrencePairs[anchorId].orEmpty().toList()
+                val partners = rankedPartnerIds
                     .mapNotNull { allowedById[it] }
                     .filter { it.role != anchor.role }
                     .take(2)
@@ -944,11 +989,21 @@ class MealRecommendationEngine @Inject constructor(
             classifiedMap = classifiedMap,
         )
 
+        val resolvedStyleTag = resolveVerifiedStyleTag(
+            preferredTag = raw.styleTag,
+            mealType = mealType,
+            totalCalories = opt.totalCalories,
+            totalProtein = opt.totalProtein,
+            fiberGrams = allMicros[MicronutrientType.FIBER]?.amount ?: 0f,
+            budget = budget,
+            isHabitAdapted = raw.isHabitAdapted,
+        )
+
         return MealRecommendation(
             id = id,
             mealType = mealType,
             title = title,
-            styleTag = raw.styleTag,
+            styleTag = resolvedStyleTag,
             items = opt.items,
             totalCalories = opt.totalCalories,
             totalProtein = opt.totalProtein,
@@ -963,6 +1018,57 @@ class MealRecommendationEngine @Inject constructor(
                 raw.isHabitAdapted || opt.items.any { (eatingProfile.foodAffinityById[it.food.id] ?: 0f) > 0.25f }
                 ),
         )
+    }
+
+    /**
+     * Verifies [RecommendationStyleTag] AFTER portion optimization using actual macros/fiber
+     * so low-protein or low-fiber meals are never falsely stamped as "Yüksek protein" or "Lif destekli".
+     */
+    private fun resolveVerifiedStyleTag(
+        preferredTag: RecommendationStyleTag,
+        mealType: MealType,
+        totalCalories: Int,
+        totalProtein: Float,
+        fiberGrams: Float,
+        budget: MealBudget,
+        isHabitAdapted: Boolean,
+    ): RecommendationStyleTag {
+        if (isHabitAdapted) return RecommendationStyleTag.HABIT_ADAPTED
+        val proteinEnergyShare = if (totalCalories > 0) (totalProtein * 4f) / totalCalories.toFloat() else 0f
+        val isTrulyHighProtein = if (mealType == MealType.SNACK) {
+            totalProtein >= 15f || proteinEnergyShare >= 0.28f
+        } else {
+            totalProtein >= 25f || proteinEnergyShare >= 0.28f
+        }
+        val isTrulyFiberRich = if (mealType == MealType.SNACK) fiberGrams >= 4f else fiberGrams >= 6f
+        val isTrulyLight = budget.mode == MealBudgetMode.LIGHT_OVER_BUDGET ||
+            (budget.targetCalories > 0 && totalCalories <= (budget.targetCalories * 0.80f).roundToInt())
+
+        return when (preferredTag) {
+            RecommendationStyleTag.HIGH_PROTEIN -> when {
+                isTrulyHighProtein -> RecommendationStyleTag.HIGH_PROTEIN
+                isTrulyFiberRich -> RecommendationStyleTag.FIBER_RICH
+                isTrulyLight -> RecommendationStyleTag.LIGHT_OPTION
+                else -> RecommendationStyleTag.BALANCED_TURKISH
+            }
+            RecommendationStyleTag.FIBER_RICH -> when {
+                isTrulyFiberRich -> RecommendationStyleTag.FIBER_RICH
+                isTrulyHighProtein -> RecommendationStyleTag.HIGH_PROTEIN
+                isTrulyLight -> RecommendationStyleTag.LIGHT_OPTION
+                else -> RecommendationStyleTag.BALANCED_TURKISH
+            }
+            RecommendationStyleTag.LIGHT_OPTION -> when {
+                isTrulyLight -> RecommendationStyleTag.LIGHT_OPTION
+                isTrulyHighProtein -> RecommendationStyleTag.HIGH_PROTEIN
+                isTrulyFiberRich -> RecommendationStyleTag.FIBER_RICH
+                else -> RecommendationStyleTag.BALANCED_TURKISH
+            }
+            else -> when {
+                isTrulyHighProtein && preferredTag == RecommendationStyleTag.BALANCED_TURKISH && totalProtein >= 32f ->
+                    RecommendationStyleTag.HIGH_PROTEIN
+                else -> preferredTag
+            }
+        }
     }
 
     private fun computeMicronutrientBreakdown(

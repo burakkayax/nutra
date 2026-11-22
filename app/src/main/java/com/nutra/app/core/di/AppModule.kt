@@ -120,6 +120,19 @@ object AppModule {
         }
     }
 
+    val MIGRATION_5_6 = object : Migration(5, 6) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE `food_items` ADD COLUMN `allergensCsv` TEXT NOT NULL DEFAULT ''")
+            db.execSQL("ALTER TABLE `food_items` ADD COLUMN `dietFlagsMask` INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE `food_items` ADD COLUMN `allergenVerified` INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE `food_items` ADD COLUMN `customUid` TEXT")
+            db.execSQL("ALTER TABLE `food_items` ADD COLUMN `catalogVersion` INTEGER NOT NULL DEFAULT 2")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_food_items_customUid` ON `food_items` (`customUid`)")
+            db.execSQL("UPDATE `food_items` SET `customUid` = 'CUSTOM_' || `id` WHERE `isCustom` = 1 AND `customUid` IS NULL")
+            db.execSQL("ALTER TABLE `goal_history` ADD COLUMN `waterGoalMl` INTEGER NOT NULL DEFAULT 2500")
+        }
+    }
+
     @Provides
     @Singleton
     fun provideNutraDatabase(
@@ -129,7 +142,7 @@ object AppModule {
         NutraDatabase::class.java,
         "nutra_database.db",
     )
-        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
         .addCallback(
             object : RoomDatabase.Callback() {
                 override fun onCreate(db: SupportSQLiteDatabase) {

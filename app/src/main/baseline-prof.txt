@@ -24,8 +24,15 @@ HSPLcom/nutra/app/feature/dashboard/**;->**(**)**
 # Post-startup interactive journeys (Hot + Post-startup, excluded from startup dex layout)
 HPLcom/nutra/app/core/database/FoodItemEntity;->**(**)**
 HPLcom/nutra/app/core/database/WeightLogEntity;->**(**)**
+HPLcom/nutra/app/core/database/GoalHistoryEntity;->**(**)**
+HPLcom/nutra/app/core/database/FoodFeedbackEntity;->**(**)**
+HPLcom/nutra/app/core/database/MetabolismSnapshotEntity;->**(**)**
 HPLcom/nutra/app/domain/usecase/**;->**(**)**
+HPLcom/nutra/app/domain/intelligence/**;->**(**)**
+HPLcom/nutra/app/domain/metabolism/**;->**(**)**
 HPLcom/nutra/app/feature/logging/**;->**(**)**
+HPLcom/nutra/app/feature/intelligence/**;->**(**)**
+HPLcom/nutra/app/feature/metabolism/**;->**(**)**
 HPLcom/nutra/app/feature/analytics/**;->**(**)**
 HPLcom/nutra/app/feature/profile/**;->**(**)**
 HPLcom/nutra/app/feature/onboarding/**;->**(**)**

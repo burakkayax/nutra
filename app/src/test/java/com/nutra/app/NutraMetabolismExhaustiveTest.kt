@@ -155,11 +155,11 @@ class NutraMetabolismExhaustiveTest {
         )
         assertTrue("tdeeDeltaFromPriorKcal should be positive", result.tdeeDeltaFromPriorKcal > 150)
 
-        // Check proposal rationale wording is never contradictory!
-        result.calorieProposal?.let { prop ->
-            assertTrue("Expected upward calorie proposal when TDEE >> active goal", prop.deltaKcal > 0)
-            assertFalse("Rationale must not claim TDEE is lower than goal when TDEE > goal", prop.rationale.contains("daha düşük"))
-        }
+        // Check proposal rationale wording is never contradictory (explicitly assert non-null!)
+        val prop = result.calorieProposal
+        assertNotNull("Expected upward calorie proposal when TDEE is well above active goal", prop)
+        assertTrue("Expected upward calorie proposal when TDEE >> active goal", prop!!.deltaKcal > 0)
+        assertFalse("Rationale must not claim TDEE is lower than goal when TDEE > goal", prop.rationale.contains("daha düşük"))
     }
 
     @Test
@@ -341,16 +341,16 @@ class NutraMetabolismExhaustiveTest {
             WeightEntry(i + 1L, today.minusDays(d.toLong()).toString(), 92.0f, 1000L + i)
         }
         val res = engine.analyze(maleProfile, intakes, flatWeights, today = today)
-        res.calorieProposal?.let { prop ->
-            assertTrue("Male calorie floor >= 1500, got ${prop.proposedGoals.calories}", prop.proposedGoals.calories >= AdaptiveMetabolismEngine.MALE_MIN_CALORIES)
-            val macroKcal = prop.proposedGoals.proteinGrams * 4 + prop.proposedGoals.carbsGrams * 4 + prop.proposedGoals.fatGrams * 9
-            assertTrue(
-                "Proposed macros ($macroKcal kcal) should closely align with proposed calories (${prop.proposedGoals.calories} kcal)",
-                abs(macroKcal - prop.proposedGoals.calories) <= 95,
-            )
-            assertTrue("Fat floor >= 35g", prop.proposedGoals.fatGrams >= 35)
-            assertTrue("Carbs floor >= 60g", prop.proposedGoals.carbsGrams >= 60)
-        }
+        assertNotNull("Expected bounded calorie proposal for 28-day male plateau at 1600 kcal", res.calorieProposal)
+        val prop = res.calorieProposal!!
+        assertTrue("Male calorie floor >= 1500, got ${prop.proposedGoals.calories}", prop.proposedGoals.calories >= AdaptiveMetabolismEngine.MALE_MIN_CALORIES)
+        val macroKcal = prop.proposedGoals.proteinGrams * 4 + prop.proposedGoals.carbsGrams * 4 + prop.proposedGoals.fatGrams * 9
+        assertTrue(
+            "Proposed macros ($macroKcal kcal) should closely align with proposed calories (${prop.proposedGoals.calories} kcal)",
+            abs(macroKcal - prop.proposedGoals.calories) <= 95,
+        )
+        assertTrue("Fat floor >= 35g", prop.proposedGoals.fatGrams >= 35)
+        assertTrue("Carbs floor >= 60g", prop.proposedGoals.carbsGrams >= 60)
 
         // Adversarial NaN / Infinity profile weights must not throw or produce NaN!
         val nanProfile = UserProfile(
@@ -361,5 +361,76 @@ class NutraMetabolismExhaustiveTest {
         assertTrue(nanRes.currentTrendWeightKg.isFinite() && nanRes.currentTrendWeightKg > 0f)
         assertTrue(nanRes.targetWeightKg.isFinite() && nanRes.targetWeightKg > 0f)
         assertTrue(nanRes.estimatedTdeeKcal in 1100..5200)
+    }
+
+    @Test
+    fun phase3MetabolismInvariants_volatilityDetrendingLongGapScalingInsufficientEtaAndAdolescentCalculator() {
+        val profile = UserProfile(
+            sex = BiologicalSex.MALE,
+            age = 29,
+            heightCm = 178,
+            currentWeightKg = 80f,
+            targetWeightKg = 72f,
+            activityLevel = ActivityLevel.MODERATE,
+            goalType = GoalType.LOSE_WEIGHT,
+            goals = MacroGoals(calories = 2000, proteinGrams = 160, carbsGrams = 200, fatGrams = 62),
+        )
+
+        // 1. Detrended MAD volatility stays low even during steep linear loss (-0.70 kg/week)
+        val cleanIntakes = (1..28).map { d ->
+            DailyIntakeObservation(today.minusDays(d.toLong()).toString(), 2000, 160f, 200f, 62f, 3, 7)
+        }
+        val steepCleanWeights = (28 downTo 0 step 2).mapIndexed { i, d ->
+            WeightEntry(i + 1L, today.minusDays(d.toLong()).toString(), 82.8f - (28 - d) * (0.70f / 7f), 1000L + i)
+        }
+        val steepRes = engine.analyze(profile, cleanIntakes, steepCleanWeights, today = today)
+        assertTrue(
+            "Detrended scaleVolatilityKg should stay low (< 0.30 kg) on clean linear loss, got ${steepRes.scaleVolatilityKg}",
+            steepRes.scaleVolatilityKg < 0.30f,
+        )
+
+        // 2. Multi-week weigh-in gap (32 days, legitimate 2.8 kg drop) must NOT be rejected as an outlier
+        val longGapWeights = listOf(
+            WeightEntry(1L, today.minusDays(40).toString(), 82.8f, 1000L),
+            WeightEntry(2L, today.minusDays(8).toString(), 80.0f, 2000L),
+            WeightEntry(3L, today.minusDays(4).toString(), 79.8f, 3000L),
+            WeightEntry(4L, today.toString(), 79.6f, 4000L),
+        )
+        val longGapRes = engine.analyze(profile, emptyList(), longGapWeights, today = today)
+        assertEquals(
+            "Valid 2.8 kg loss across a 32-day gap must not be dropped as an outlier",
+            0,
+            longGapRes.dataQuality.ignoredOutlierWeighIns,
+        )
+
+        // 3. INSUFFICIENT data quality must NOT emit a speculative targetEta
+        val sparseRes = engine.analyze(
+            profile = profile,
+            intakeObservations = listOf(DailyIntakeObservation(today.minusDays(1).toString(), 2000, 140f, 200f, 65f, 3, 6)),
+            weightEntries = listOf(WeightEntry(1L, today.toString(), 80f, 1000L)),
+            today = today,
+        )
+        assertNull("targetEta must be null when data quality is INSUFFICIENT", sparseRes.targetEta)
+
+        // 4. Incomplete-day < 500 kcal guard: days logged at 420 kcal with 3 meals still count as incomplete
+        val sub500Intakes = (1..28).map { d ->
+            if (d % 4 == 0) {
+                DailyIntakeObservation(today.minusDays(d.toLong()).toString(), 420, 30f, 45f, 12f, 3, 4)
+            } else {
+                DailyIntakeObservation(today.minusDays(d.toLong()).toString(), 2150, 155f, 215f, 68f, 3, 7)
+            }
+        }
+        val sub500Res = engine.analyze(profile, sub500Intakes, steepCleanWeights, today = today)
+        assertTrue(
+            "Days with < 500 kcal must be flagged as suspected incomplete (>= 6), got ${sub500Res.dataQuality.suspectedIncompleteDaysLast28}",
+            sub500Res.dataQuality.suspectedIncompleteDaysLast28 >= 6,
+        )
+
+        // 5. Adolescent (14..17) NutritionCalculatorUseCase forces Observation Mode (zero deficit/surplus)
+        val teenLose = calculator.calculateGoals(BiologicalSex.FEMALE, 16, 165, 65f, ActivityLevel.MODERATE, GoalType.LOSE_WEIGHT)
+        val teenMaintain = calculator.calculateGoals(BiologicalSex.FEMALE, 16, 165, 65f, ActivityLevel.MODERATE, GoalType.MAINTAIN)
+        val teenGain = calculator.calculateGoals(BiologicalSex.FEMALE, 16, 165, 65f, ActivityLevel.MODERATE, GoalType.GAIN_MUSCLE)
+        assertEquals("Adolescent LOSE_WEIGHT must equal MAINTAIN (zero deficit)", teenMaintain.calories, teenLose.calories)
+        assertEquals("Adolescent GAIN_MUSCLE must equal MAINTAIN (zero surplus)", teenMaintain.calories, teenGain.calories)
     }
 }

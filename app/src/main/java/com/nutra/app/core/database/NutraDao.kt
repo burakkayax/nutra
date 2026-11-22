@@ -56,6 +56,15 @@ interface NutraDao {
     @Query("SELECT * FROM food_items WHERE id = :foodId LIMIT 1")
     suspend fun findFoodById(foodId: Long): FoodItemEntity?
 
+    @Query("SELECT * FROM food_items WHERE customUid = :customUid LIMIT 1")
+    suspend fun findFoodByCustomUid(customUid: String): FoodItemEntity?
+
+    @Query("DELETE FROM food_items WHERE isCustom = 1")
+    suspend fun deleteAllCustomFoods()
+
+    @Query("SELECT MIN(catalogVersion) FROM food_items WHERE isCustom = 0 AND catalogCode IS NOT NULL")
+    suspend fun getMinSeedCatalogVersion(): Int?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertFoods(foods: List<FoodItemEntity>)
 
@@ -158,6 +167,17 @@ interface NutraDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertWaterLogs(waterLogs: List<WaterLogEntity>)
 
+    @Query(
+        """
+        INSERT INTO water_logs (dateIso, waterMl, updatedAtMillis)
+        VALUES (:dateIso, MIN(10000, MAX(0, :deltaMl)), :updatedAtMillis)
+        ON CONFLICT(dateIso) DO UPDATE SET
+            waterMl = MIN(10000, MAX(0, waterMl + :deltaMl)),
+            updatedAtMillis = :updatedAtMillis
+        """,
+    )
+    suspend fun addWaterDeltaAtomic(dateIso: String, deltaMl: Int, updatedAtMillis: Long)
+
     @Query("DELETE FROM water_logs")
     suspend fun deleteAllWaterLogs()
 
@@ -176,6 +196,9 @@ interface NutraDao {
 
     @Update
     suspend fun updateWeightLog(weightLog: WeightLogEntity)
+
+    @Query("DELETE FROM weight_logs WHERE id = :id")
+    suspend fun deleteWeightLogById(id: Long)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertWeightLogs(weightLogs: List<WeightLogEntity>)
@@ -233,6 +256,9 @@ interface NutraDao {
     // --- Metabolism Snapshots ---
     @Query("SELECT * FROM metabolism_snapshots ORDER BY dateIso ASC")
     fun observeMetabolismSnapshots(): Flow<List<MetabolismSnapshotEntity>>
+
+    @Query("SELECT * FROM metabolism_snapshots ORDER BY dateIso DESC LIMIT 1")
+    suspend fun getLatestMetabolismSnapshot(): MetabolismSnapshotEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertMetabolismSnapshots(snapshots: List<MetabolismSnapshotEntity>)

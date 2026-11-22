@@ -4,7 +4,9 @@ import android.content.ContentValues
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.nutra.app.domain.model.AllergenTag
 import com.nutra.app.domain.model.FoodCategory
+import com.nutra.app.domain.model.FoodDietFlags
 import com.nutra.app.domain.model.FoodFeedbackRecord
 import com.nutra.app.domain.model.FoodFeedbackStatus
 import com.nutra.app.domain.model.FoodItem
@@ -27,6 +29,7 @@ private val MEAL_TYPE_BY_NAME: Map<String, MealType> = MealType.entries.associat
 private val GOAL_TYPE_BY_NAME: Map<String, GoalType> = GoalType.entries.associateBy { it.name }
 private val GOAL_SOURCE_BY_NAME: Map<String, GoalChangeSource> = GoalChangeSource.entries.associateBy { it.name }
 private val FEEDBACK_STATUS_BY_NAME: Map<String, FoodFeedbackStatus> = FoodFeedbackStatus.entries.associateBy { it.name }
+private val ALLERGEN_BY_NAME: Map<String, AllergenTag> = AllergenTag.entries.associateBy { it.name }
 
 @Entity(
     tableName = "food_items",
@@ -35,6 +38,7 @@ private val FEEDBACK_STATUS_BY_NAME: Map<String, FoodFeedbackStatus> = FoodFeedb
         Index(value = ["category"]),
         Index(value = ["barcode"]),
         Index(value = ["catalogCode"]),
+        Index(value = ["customUid"]),
     ],
 )
 data class FoodItemEntity(
@@ -68,6 +72,11 @@ data class FoodItemEntity(
     val ironMgPer100g: Float? = null,
     val vitaminCMgPer100g: Float? = null,
     val preparationState: String? = null,
+    val allergensCsv: String = "",
+    val dietFlagsMask: Int = 0,
+    val allergenVerified: Boolean = false,
+    val customUid: String? = null,
+    val catalogVersion: Int = 2,
 ) {
     fun toDomain(): FoodItem {
         val units = if (alternateUnitsJson.isBlank() || alternateUnitsJson == "[]") {
@@ -87,6 +96,19 @@ data class FoodItemEntity(
                 preferredMealTypesCsv
                     .split(',')
                     .mapNotNull { token -> MEAL_TYPE_BY_NAME[token.trim()] }
+                    .toSet()
+            }
+        }
+
+        val parsedAllergens = when {
+            allergensCsv.isBlank() -> emptySet()
+            !allergensCsv.contains(',') -> {
+                ALLERGEN_BY_NAME[allergensCsv.trim()]?.let { setOf(it) } ?: emptySet()
+            }
+            else -> {
+                allergensCsv
+                    .split(',')
+                    .mapNotNull { token -> ALLERGEN_BY_NAME[token.trim()] }
                     .toSet()
             }
         }
@@ -122,14 +144,19 @@ data class FoodItemEntity(
             ironMgPer100g = ironMgPer100g,
             vitaminCMgPer100g = vitaminCMgPer100g,
             preparationState = preparationState,
+            allergens = parsedAllergens,
+            dietFlags = FoodDietFlags.fromBitmask(dietFlagsMask),
+            allergenVerified = allergenVerified,
+            customUid = customUid,
+            catalogVersion = catalogVersion,
             normalizedName = TurkishTextNormalizer.normalize(name),
             normalizedSearchText = normalizedSearchText.ifBlank {
-                TurkishTextNormalizer.normalize("$name ${brand.orEmpty()} $subtitle")
+                TurkishTextNormalizer.normalize("$name ${brand.orEmpty()}")
             },
         )
     }
 
-    fun toContentValues(): ContentValues = ContentValues(28).apply {
+    fun toContentValues(): ContentValues = ContentValues(33).apply {
         put("name", name)
         put("subtitle", subtitle)
         put("normalizedSearchText", normalizedSearchText)
@@ -158,6 +185,11 @@ data class FoodItemEntity(
         if (ironMgPer100g != null) put("ironMgPer100g", ironMgPer100g) else putNull("ironMgPer100g")
         if (vitaminCMgPer100g != null) put("vitaminCMgPer100g", vitaminCMgPer100g) else putNull("vitaminCMgPer100g")
         if (preparationState != null) put("preparationState", preparationState) else putNull("preparationState")
+        put("allergensCsv", allergensCsv)
+        put("dietFlagsMask", dietFlagsMask)
+        put("allergenVerified", if (allergenVerified) 1 else 0)
+        if (customUid != null) put("customUid", customUid) else putNull("customUid")
+        put("catalogVersion", catalogVersion)
     }
 
     companion object {
@@ -191,6 +223,11 @@ data class FoodItemEntity(
             ironMgPer100g = item.ironMgPer100g,
             vitaminCMgPer100g = item.vitaminCMgPer100g,
             preparationState = item.preparationState,
+            allergensCsv = item.allergens.sortedBy { it.name }.joinToString(",") { it.name },
+            dietFlagsMask = item.dietFlags.toBitmask(),
+            allergenVerified = item.allergenVerified,
+            customUid = item.customUid,
+            catalogVersion = item.catalogVersion,
         )
     }
 }
@@ -297,6 +334,7 @@ data class GoalHistoryEntity(
     val proteinGrams: Int,
     val carbsGrams: Int,
     val fatGrams: Int,
+    val waterGoalMl: Int = 2500,
     val goalType: String,
     val targetWeightKg: Float,
     val source: String,
@@ -309,6 +347,7 @@ data class GoalHistoryEntity(
         proteinGrams = proteinGrams,
         carbsGrams = carbsGrams,
         fatGrams = fatGrams,
+        waterGoalMl = waterGoalMl,
         goalType = GOAL_TYPE_BY_NAME[goalType] ?: GoalType.MAINTAIN,
         targetWeightKg = targetWeightKg,
         source = GOAL_SOURCE_BY_NAME[source] ?: GoalChangeSource.MANUAL,
@@ -323,6 +362,7 @@ data class GoalHistoryEntity(
             proteinGrams = entry.proteinGrams,
             carbsGrams = entry.carbsGrams,
             fatGrams = entry.fatGrams,
+            waterGoalMl = entry.waterGoalMl,
             goalType = entry.goalType.name,
             targetWeightKg = entry.targetWeightKg,
             source = entry.source.name,

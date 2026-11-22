@@ -10,11 +10,15 @@ import com.nutra.app.domain.metabolism.AdaptiveMetabolismEngine
 import com.nutra.app.domain.metabolism.CalorieTargetProposal
 import com.nutra.app.domain.metabolism.MetabolismAnalysisResult
 import com.nutra.app.domain.model.DailyAnalyticsPoint
+import com.nutra.app.domain.model.DietaryProfile
 import com.nutra.app.domain.model.GoalType
 import com.nutra.app.domain.model.MacroGoals
 import com.nutra.app.domain.model.MetabolismSnapshotRecord
+import com.nutra.app.domain.model.UserProfile
+import com.nutra.app.domain.model.WeightEntry
 import com.nutra.app.domain.model.WeightTrendPoint
 import com.nutra.app.domain.repository.NutritionRepository
+import com.nutra.app.domain.usecase.BodyMetricBounds
 import com.nutra.app.domain.usecase.WeightTrendCalculator
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
@@ -59,14 +63,18 @@ data class AnalyticsUiState(
     val selectedRange: AnalyticsRangeOption = AnalyticsRangeOption.DAYS_7,
     val dailyPoints: List<DailyAnalyticsPoint> = emptyList(),
     val averageCalories: Int = 0,
+    val loggedCalorieDaysCount: Int = 0,
     val averageWaterMl: Int = 0,
+    val loggedWaterDaysCount: Int = 0,
     val averageProteinGrams: Float = 0f,
     val averageCarbsGrams: Float = 0f,
     val averageFatGrams: Float = 0f,
     val scrubbedDayIndex: Int? = null,
     val scrubbedWaterIndex: Int? = null,
     val weightTrendPoints: List<WeightTrendPoint> = emptyList(),
+    val recentWeightEntries: List<WeightEntry> = emptyList(),
     val latestRecordedWeightKg: Float? = null,
+    val latestTrendWeightKg: Float? = null,
     val hasAnyWeightHistory: Boolean = false,
     val scrubbedWeightIndex: Int? = null,
     val profile: AnalyticsProfileSlice = AnalyticsProfileSlice(),
@@ -84,7 +92,9 @@ data class AnalyticsUiState(
 internal data class AnalyticsRangeSummary(
     val points: List<DailyAnalyticsPoint>,
     val averageCalories: Int,
+    val loggedCalorieDaysCount: Int = 0,
     val averageWaterMl: Int,
+    val loggedWaterDaysCount: Int = 0,
     val averageProteinGrams: Float,
     val averageCarbsGrams: Float,
     val averageFatGrams: Float,
@@ -94,7 +104,9 @@ internal data class AnalyticsRangeSummary(
 
 internal data class WeightRangeSummary(
     val pointsInRange: List<WeightTrendPoint>,
+    val recentEntries: List<WeightEntry> = emptyList(),
     val latestRecordedWeightKg: Float?,
+    val latestTrendWeightKg: Float? = null,
     val hasAnyHistory: Boolean,
     val option: AnalyticsRangeOption = AnalyticsRangeOption.DAYS_7,
     val endDateIso: String = "",
@@ -133,7 +145,9 @@ internal fun summarizeAnalyticsRange(
     return AnalyticsRangeSummary(
         points = points,
         averageCalories = if (calCount == 0) 0 else (calSum.toFloat() / calCount).roundToInt(),
+        loggedCalorieDaysCount = calCount,
         averageWaterMl = if (waterCount == 0) 0 else (waterSum.toFloat() / waterCount).roundToInt(),
+        loggedWaterDaysCount = waterCount,
         averageProteinGrams = if (macroDayCount == 0) 0f else (proteinSum / macroDayCount).toFloat(),
         averageCarbsGrams = if (macroDayCount == 0) 0f else (carbsSum / macroDayCount).toFloat(),
         averageFatGrams = if (macroDayCount == 0) 0f else (fatSum / macroDayCount).toFloat(),
@@ -146,12 +160,15 @@ internal fun filterWeightTrendForRange(
     allTrendPoints: List<WeightTrendPoint>,
     option: AnalyticsRangeOption,
     endDate: LocalDate,
+    rawEntries: List<WeightEntry> = emptyList(),
 ): WeightRangeSummary {
     val startIso = endDate.minusDays((option.days - 1).toLong()).toString()
     val endIso = endDate.toString()
     return WeightRangeSummary(
         pointsInRange = allTrendPoints.filter { it.dateIso in startIso..endIso },
+        recentEntries = rawEntries.takeLast(14).reversed(),
         latestRecordedWeightKg = allTrendPoints.lastOrNull()?.rawWeightKg,
+        latestTrendWeightKg = allTrendPoints.lastOrNull()?.emaTrendKg,
         hasAnyHistory = allTrendPoints.isNotEmpty(),
         option = option,
         endDateIso = endIso,
@@ -217,6 +234,16 @@ class AnalyticsViewModel @Inject constructor(
             replay = 1,
         )
 
+    /** All recorded weight measurements ordered newest-first for WeightHistoryScreen. */
+    val allWeightEntries: StateFlow<List<WeightEntry>> = sharedWeightEntriesFlow
+        .map { entries -> entries.reversed() }
+        .distinctUntilChanged()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(30_000),
+            initialValue = emptyList(),
+        )
+
     private val allWeightTrendPointsFlow = sharedWeightEntriesFlow
         .map { entries -> weightTrendCalculator.calculateTrend(entries) }
         .distinctUntilChanged()
@@ -229,8 +256,30 @@ class AnalyticsViewModel @Inject constructor(
         )
     }
 
+    // Project only metabolism-relevant profile fields so UI/theme/water/diet changes never re-run the Kalman filter
+    private val metabolismProfileInputFlow = preferencesDataStore.userProfileFlow
+        .map { p ->
+            UserProfile(
+                sex = p.sex,
+                age = p.age,
+                heightCm = p.heightCm,
+                currentWeightKg = p.currentWeightKg,
+                targetWeightKg = p.targetWeightKg,
+                activityLevel = p.activityLevel,
+                goalType = p.goalType,
+                goals = p.goals.copy(waterMl = 2500),
+                onboardingCompleted = true,
+                dietaryProfile = DietaryProfile(
+                    specialHealthGuardrail = p.dietaryProfile.specialHealthGuardrail,
+                ),
+                adaptiveMetabolismEnabled = p.adaptiveMetabolismEnabled,
+                lastAdaptiveReviewDateIso = p.lastAdaptiveReviewDateIso,
+            )
+        }
+        .distinctUntilChanged()
+
     val metabolismAnalysis: StateFlow<MetabolismAnalysisResult?> = combine(
-        preferencesDataStore.userProfileFlow,
+        metabolismProfileInputFlow,
         metabolismIntakeFlow,
         sharedWeightEntriesFlow,
         nutritionRepository.observeGoalHistory(),
@@ -253,10 +302,11 @@ class AnalyticsViewModel @Inject constructor(
 
     private val weightRangeSummaryFlow = combine(
         allWeightTrendPointsFlow,
+        sharedWeightEntriesFlow,
         rangeFlow,
         todayFlow,
-    ) { allPoints, option, end ->
-        filterWeightTrendForRange(allPoints, option, end)
+    ) { allPoints, rawEntries, option, end ->
+        filterWeightTrendForRange(allPoints, option, end, rawEntries)
     }.flowOn(Dispatchers.Default)
 
     private val dialogFeedbackStateFlow = combine(
@@ -297,12 +347,16 @@ class AnalyticsViewModel @Inject constructor(
             selectedRange = summary.option,
             dailyPoints = summary.points,
             averageCalories = summary.averageCalories,
+            loggedCalorieDaysCount = summary.loggedCalorieDaysCount,
             averageWaterMl = summary.averageWaterMl,
+            loggedWaterDaysCount = summary.loggedWaterDaysCount,
             averageProteinGrams = summary.averageProteinGrams,
             averageCarbsGrams = summary.averageCarbsGrams,
             averageFatGrams = summary.averageFatGrams,
             weightTrendPoints = weightSummary.pointsInRange,
+            recentWeightEntries = weightSummary.recentEntries,
             latestRecordedWeightKg = weightSummary.latestRecordedWeightKg,
+            latestTrendWeightKg = weightSummary.latestTrendWeightKg,
             hasAnyWeightHistory = weightSummary.hasAnyHistory,
             profile = profile,
             showAddWeightDialog = dialogFeedback.showAddWeightDialog,
@@ -319,6 +373,9 @@ class AnalyticsViewModel @Inject constructor(
         val now = LocalDate.now()
         if (todayFlow.value != now) {
             todayFlow.value = now
+            scrubbedDayIndexFlow.value = null
+            scrubbedWaterIndexFlow.value = null
+            scrubbedWeightIndexFlow.value = null
         }
     }
 
@@ -353,13 +410,30 @@ class AnalyticsViewModel @Inject constructor(
 
     fun logNewWeight(weightKg: Float) {
         if (!weightKg.isFinite()) return
-        val safeWeight = weightKg.coerceIn(25f, 350f)
+        val safeWeight = weightKg.coerceIn(BodyMetricBounds.MIN_WEIGHT_KG, BodyMetricBounds.MAX_WEIGHT_KG)
         viewModelScope.launch {
             val today = LocalDate.now()
             todayFlow.value = today
             nutritionRepository.logWeight(today.toString(), safeWeight)
             showWeightDialogFlow.value = false
             feedbackFlow.value = "${NutraFormatters.formatKg(safeWeight)} kg tartı kaydedildi" to feedbackSeq.incrementAndGet()
+        }
+    }
+
+    fun updateWeightEntry(entry: WeightEntry, newWeightKg: Float) {
+        if (!newWeightKg.isFinite()) return
+        val safeWeight = newWeightKg.coerceIn(BodyMetricBounds.MIN_WEIGHT_KG, BodyMetricBounds.MAX_WEIGHT_KG)
+        viewModelScope.launch {
+            nutritionRepository.updateWeightEntry(entry, safeWeight)
+            feedbackFlow.value = "${NutraFormatters.formatShortDate(entry.dateIso)} tartısı ${NutraFormatters.formatKg(safeWeight)} kg olarak güncellendi" to feedbackSeq.incrementAndGet()
+        }
+    }
+
+    fun deleteWeightEntry(entry: WeightEntry) {
+        viewModelScope.launch {
+            nutritionRepository.deleteWeightEntry(entry.id)
+            scrubbedWeightIndexFlow.value = null
+            feedbackFlow.value = "${NutraFormatters.formatShortDate(entry.dateIso)} tartı kaydı silindi" to feedbackSeq.incrementAndGet()
         }
     }
 

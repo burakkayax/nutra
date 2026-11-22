@@ -6,7 +6,6 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -25,13 +24,19 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
@@ -44,18 +49,37 @@ private val Context.nutraDataStore: DataStore<Preferences> by preferencesDataSto
 
 internal const val MAX_EXCLUDED_KEYWORDS = 40
 
+sealed interface ProfileStorageState {
+    data object Loading : ProfileStorageState
+    data class Loaded(val profile: UserProfile) : ProfileStorageState
+    data class ReadError(val message: String) : ProfileStorageState
+}
+
 internal fun sanitizeDietaryProfileData(profile: DietaryProfile): DietaryProfile = profile.copy(
     excludedKeywords = profile.excludedKeywords
+        .flatMap { it.split(',', ';') }
         .map { it.trim() }
         .filter { TurkishTextNormalizer.normalize(it).length >= 2 }
         .distinctBy { TurkishTextNormalizer.normalize(it) }
         .take(MAX_EXCLUDED_KEYWORDS),
 )
 
+internal fun sanitizeMacroGoals(goals: MacroGoals): MacroGoals = MacroGoals(
+    calories = goals.calories.coerceIn(1000, 6000),
+    proteinGrams = goals.proteinGrams.coerceIn(30, 400),
+    carbsGrams = goals.carbsGrams.coerceIn(20, 600),
+    fatGrams = goals.fatGrams.coerceIn(20, 250),
+    waterMl = goals.waterMl.coerceIn(1000, 7000),
+)
+
 @Singleton
-class UserPreferencesDataStore @Inject constructor(
-    @param:ApplicationContext private val context: Context,
+open class UserPreferencesDataStore internal constructor(
+    private val context: Context,
+    private val dataStore: DataStore<Preferences>,
 ) {
+    @Inject
+    constructor(@ApplicationContext context: Context) : this(context, context.nutraDataStore)
+
     private val dataStoreScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private object Keys {
@@ -98,15 +122,42 @@ class UserPreferencesDataStore @Inject constructor(
         val prefsJson = Json { ignoreUnknownKeys = true; coerceInputValues = true }
     }
 
-    private val sharedProfileFlow: SharedFlow<UserProfile> = context.nutraDataStore.data
+    private val _storageState = MutableStateFlow<ProfileStorageState>(ProfileStorageState.Loading)
+    val profileStorageState: StateFlow<ProfileStorageState> = _storageState.asStateFlow()
+
+    @Volatile
+    private var lastKnownGoodProfile: UserProfile? = null
+
+    private val sharedProfileFlow: SharedFlow<UserProfile> = dataStore.data
+        .retryWhen { cause, attempt ->
+            if (cause is IOException && attempt < 3L) {
+                delay(120L * (1L shl attempt.toInt()))
+                true
+            } else {
+                false
+            }
+        }
+        .map { prefs -> parseUserProfile(prefs) }
+        .onEach { profile ->
+            lastKnownGoodProfile = profile
+            _storageState.value = ProfileStorageState.Loaded(profile)
+        }
         .catch { exception ->
             if (exception is IOException) {
-                emit(emptyPreferences())
+                val cached = lastKnownGoodProfile
+                if (cached != null) {
+                    // Never downgrade an already loaded user back to onboarding on a transient I/O blip
+                    _storageState.value = ProfileStorageState.Loaded(cached)
+                    emit(cached)
+                } else {
+                    _storageState.value = ProfileStorageState.ReadError(
+                        "Profil tercihleri okunamadı. Depolama alanını kontrol edip tekrar dene.",
+                    )
+                }
             } else {
                 throw exception
             }
         }
-        .map { prefs -> parseUserProfile(prefs) }
         .distinctUntilChanged()
         .shareIn(
             scope = dataStoreScope,
@@ -116,7 +167,15 @@ class UserPreferencesDataStore @Inject constructor(
 
     val userProfileFlow: Flow<UserProfile> = sharedProfileFlow
 
-    fun currentCachedProfile(): UserProfile? = sharedProfileFlow.replayCache.firstOrNull()
+    fun currentCachedProfile(): UserProfile? = sharedProfileFlow.replayCache.firstOrNull() ?: lastKnownGoodProfile
+
+    suspend fun retryReadProfile(): Boolean = runCatching {
+        val prefs = dataStore.data.first()
+        val parsed = parseUserProfile(prefs)
+        lastKnownGoodProfile = parsed
+        _storageState.value = ProfileStorageState.Loaded(parsed)
+        true
+    }.getOrDefault(false)
 
     private fun parseUserProfile(prefs: Preferences): UserProfile {
         val sex = prefs[Keys.SEX]?.let { SEX_BY_NAME[it] } ?: BiologicalSex.MALE
@@ -124,12 +183,14 @@ class UserPreferencesDataStore @Inject constructor(
         val goalType = prefs[Keys.GOAL_TYPE]?.let { GOAL_BY_NAME[it] } ?: GoalType.LOSE_WEIGHT
         val themePref = prefs[Keys.THEME_PREFERENCE]?.let { THEME_BY_NAME[it] } ?: ThemePreference.SYSTEM
 
-        val goals = MacroGoals(
-            calories = prefs[Keys.GOAL_CALORIES] ?: 2100,
-            proteinGrams = prefs[Keys.GOAL_PROTEIN] ?: 140,
-            carbsGrams = prefs[Keys.GOAL_CARBS] ?: 220,
-            fatGrams = prefs[Keys.GOAL_FAT] ?: 70,
-            waterMl = prefs[Keys.GOAL_WATER_ML] ?: 2500,
+        val goals = sanitizeMacroGoals(
+            MacroGoals(
+                calories = prefs[Keys.GOAL_CALORIES] ?: 2100,
+                proteinGrams = prefs[Keys.GOAL_PROTEIN] ?: 140,
+                carbsGrams = prefs[Keys.GOAL_CARBS] ?: 220,
+                fatGrams = prefs[Keys.GOAL_FAT] ?: 70,
+                waterMl = prefs[Keys.GOAL_WATER_ML] ?: 2500,
+            ),
         )
 
         val waterReminder = WaterReminderScheduleCalculator.sanitize(
@@ -171,36 +232,50 @@ class UserPreferencesDataStore @Inject constructor(
     suspend fun getSnapshot(): UserProfile = sharedProfileFlow.first()
 
     suspend fun saveOnboardingProfile(profile: UserProfile) {
-        context.nutraDataStore.edit { prefs ->
+        val safeGoals = sanitizeMacroGoals(profile.goals)
+        dataStore.edit { prefs ->
             prefs[Keys.SEX] = profile.sex.name
-            prefs[Keys.AGE] = profile.age
-            prefs[Keys.HEIGHT_CM] = profile.heightCm
-            prefs[Keys.CURRENT_WEIGHT_KG] = profile.currentWeightKg
-            prefs[Keys.TARGET_WEIGHT_KG] = profile.targetWeightKg
+            prefs[Keys.AGE] = profile.age.coerceIn(14, 100)
+            prefs[Keys.HEIGHT_CM] = profile.heightCm.coerceIn(120, 230)
+            prefs[Keys.CURRENT_WEIGHT_KG] = sanitizeWeightKg(profile.currentWeightKg)
+            prefs[Keys.TARGET_WEIGHT_KG] = sanitizeWeightKg(profile.targetWeightKg)
             prefs[Keys.ACTIVITY_LEVEL] = profile.activityLevel.name
             prefs[Keys.GOAL_TYPE] = profile.goalType.name
-            prefs[Keys.GOAL_CALORIES] = profile.goals.calories
-            prefs[Keys.GOAL_PROTEIN] = profile.goals.proteinGrams
-            prefs[Keys.GOAL_CARBS] = profile.goals.carbsGrams
-            prefs[Keys.GOAL_FAT] = profile.goals.fatGrams
-            prefs[Keys.GOAL_WATER_ML] = profile.goals.waterMl
+            prefs[Keys.GOAL_CALORIES] = safeGoals.calories
+            prefs[Keys.GOAL_PROTEIN] = safeGoals.proteinGrams
+            prefs[Keys.GOAL_CARBS] = safeGoals.carbsGrams
+            prefs[Keys.GOAL_FAT] = safeGoals.fatGrams
+            prefs[Keys.GOAL_WATER_ML] = safeGoals.waterMl
             prefs[Keys.ONBOARDING_COMPLETED] = true
         }
     }
 
     suspend fun updateGoals(goals: MacroGoals) {
-        context.nutraDataStore.edit { prefs ->
-            prefs[Keys.GOAL_CALORIES] = goals.calories
-            prefs[Keys.GOAL_PROTEIN] = goals.proteinGrams
-            prefs[Keys.GOAL_CARBS] = goals.carbsGrams
-            prefs[Keys.GOAL_FAT] = goals.fatGrams
-            prefs[Keys.GOAL_WATER_ML] = goals.waterMl
+        val safeGoals = sanitizeMacroGoals(goals)
+        dataStore.edit { prefs ->
+            prefs[Keys.GOAL_CALORIES] = safeGoals.calories
+            prefs[Keys.GOAL_PROTEIN] = safeGoals.proteinGrams
+            prefs[Keys.GOAL_CARBS] = safeGoals.carbsGrams
+            prefs[Keys.GOAL_FAT] = safeGoals.fatGrams
+            prefs[Keys.GOAL_WATER_ML] = safeGoals.waterMl
+        }
+    }
+
+    suspend fun updateGoalsAndAdaptiveReview(goals: MacroGoals, reviewDateIso: String) {
+        val safeGoals = sanitizeMacroGoals(goals)
+        dataStore.edit { prefs ->
+            prefs[Keys.GOAL_CALORIES] = safeGoals.calories
+            prefs[Keys.GOAL_PROTEIN] = safeGoals.proteinGrams
+            prefs[Keys.GOAL_CARBS] = safeGoals.carbsGrams
+            prefs[Keys.GOAL_FAT] = safeGoals.fatGrams
+            prefs[Keys.GOAL_WATER_ML] = safeGoals.waterMl
+            prefs[Keys.LAST_ADAPTIVE_REVIEW_DATE_ISO] = reviewDateIso
         }
     }
 
     suspend fun updateCurrentWeight(weightKg: Float) {
         val safeWeight = sanitizeWeightKg(weightKg)
-        context.nutraDataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs[Keys.CURRENT_WEIGHT_KG] = safeWeight
         }
     }
@@ -217,7 +292,7 @@ class UserPreferencesDataStore @Inject constructor(
     ) {
         val safeCurrentWeight = sanitizeWeightKg(currentWeightKg)
         val safeTargetWeight = sanitizeWeightKg(targetWeightKg)
-        context.nutraDataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs[Keys.SEX] = sex.name
             prefs[Keys.AGE] = age.coerceIn(14, 100)
             prefs[Keys.HEIGHT_CM] = heightCm.coerceIn(120, 230)
@@ -226,11 +301,12 @@ class UserPreferencesDataStore @Inject constructor(
             prefs[Keys.ACTIVITY_LEVEL] = activityLevel.name
             prefs[Keys.GOAL_TYPE] = goalType.name
             if (updatedGoals != null) {
-                prefs[Keys.GOAL_CALORIES] = updatedGoals.calories
-                prefs[Keys.GOAL_PROTEIN] = updatedGoals.proteinGrams
-                prefs[Keys.GOAL_CARBS] = updatedGoals.carbsGrams
-                prefs[Keys.GOAL_FAT] = updatedGoals.fatGrams
-                prefs[Keys.GOAL_WATER_ML] = updatedGoals.waterMl
+                val safeGoals = sanitizeMacroGoals(updatedGoals)
+                prefs[Keys.GOAL_CALORIES] = safeGoals.calories
+                prefs[Keys.GOAL_PROTEIN] = safeGoals.proteinGrams
+                prefs[Keys.GOAL_CARBS] = safeGoals.carbsGrams
+                prefs[Keys.GOAL_FAT] = safeGoals.fatGrams
+                prefs[Keys.GOAL_WATER_ML] = safeGoals.waterMl
             }
         }
     }
@@ -253,14 +329,14 @@ class UserPreferencesDataStore @Inject constructor(
     }
 
     suspend fun updateAppearance(themePreference: ThemePreference, useDynamicColor: Boolean) {
-        context.nutraDataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs[Keys.THEME_PREFERENCE] = themePreference.name
             prefs[Keys.USE_DYNAMIC_COLOR] = useDynamicColor
         }
         applySystemNightMode(themePreference)
     }
 
-    suspend fun restoreProfile(profile: UserProfile) {
+    open suspend fun restoreProfile(profile: UserProfile) {
         val safeGoals = MacroGoals(
             calories = profile.goals.calories.coerceIn(1000, 6000),
             proteinGrams = profile.goals.proteinGrams.coerceIn(30, 400),
@@ -268,7 +344,7 @@ class UserPreferencesDataStore @Inject constructor(
             fatGrams = profile.goals.fatGrams.coerceIn(20, 250),
             waterMl = profile.goals.waterMl.coerceIn(1000, 7000),
         )
-        context.nutraDataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs[Keys.SEX] = profile.sex.name
             prefs[Keys.AGE] = profile.age.coerceIn(14, 100)
             prefs[Keys.HEIGHT_CM] = profile.heightCm.coerceIn(120, 230)
@@ -306,19 +382,19 @@ class UserPreferencesDataStore @Inject constructor(
 
     suspend fun updateDietaryProfile(dietaryProfile: DietaryProfile) {
         val sanitized = sanitizeDietaryProfile(dietaryProfile)
-        context.nutraDataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs[Keys.DIETARY_PROFILE_JSON] = prefsJson.encodeToString(sanitized)
         }
     }
 
     suspend fun updateAdaptiveMetabolismEnabled(enabled: Boolean) {
-        context.nutraDataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs[Keys.ADAPTIVE_METABOLISM_ENABLED] = enabled
         }
     }
 
     suspend fun recordAdaptiveReviewDate(dateIso: String) {
-        context.nutraDataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs[Keys.LAST_ADAPTIVE_REVIEW_DATE_ISO] = dateIso
         }
     }
@@ -330,7 +406,7 @@ class UserPreferencesDataStore @Inject constructor(
 
     suspend fun updateWaterReminder(settings: WaterReminderSettings) {
         val safe = WaterReminderScheduleCalculator.sanitize(settings)
-        context.nutraDataStore.edit { prefs ->
+        dataStore.edit { prefs ->
             prefs[Keys.WATER_REMINDER_ENABLED] = safe.enabled
             prefs[Keys.WATER_REMINDER_INTERVAL_MINUTES] = safe.intervalMinutes
             prefs[Keys.WATER_REMINDER_START_HOUR] = safe.startHour

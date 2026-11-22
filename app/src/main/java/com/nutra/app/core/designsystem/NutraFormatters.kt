@@ -18,6 +18,9 @@ object NutraFormatters {
     private val dateLabelFormatter: DateTimeFormatter =
         DateTimeFormatter.ofPattern("d MMM", TR_LOCALE)
 
+    private val dateWithYearFormatter: DateTimeFormatter =
+        DateTimeFormatter.ofPattern("d MMM yyyy", TR_LOCALE)
+
     private val shortWeekdayFormatter: DateTimeFormatter =
         DateTimeFormatter.ofPattern("EEE", TR_LOCALE)
 
@@ -143,6 +146,19 @@ object NutraFormatters {
             if (formattedDateCache.size > 128) formattedDateCache.clear()
             formattedDateCache[dateIso] = formatted
             formatted
+        }.getOrDefault(dateIso)
+    }
+
+    fun formatShortDateWithYearIfNeeded(dateIso: String?, referenceToday: LocalDate = LocalDate.now()): String {
+        if (dateIso.isNullOrBlank()) return ""
+        return runCatching {
+            val date = LocalDate.parse(dateIso)
+            if (date == referenceToday) return "Bugün"
+            if (date.year != referenceToday.year) {
+                date.format(dateWithYearFormatter)
+            } else {
+                date.format(dateLabelFormatter)
+            }
         }.getOrDefault(dateIso)
     }
 

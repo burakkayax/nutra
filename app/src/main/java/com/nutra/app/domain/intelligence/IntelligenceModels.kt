@@ -99,6 +99,7 @@ data class UserEatingProfile(
     val recentlyEatenFoodIds48h: Set<Long>,
     val mealCalorieShares: Map<MealType, Float>,
     val coOccurrencePairs: Map<Long, Set<Long>>,
+    val mealCoOccurrencePairs: Map<MealType, Map<Long, List<Long>>> = emptyMap(),
     val micronutrientSignals: List<MicronutrientSignal>,
     val habitShiftNote: String?,
 )

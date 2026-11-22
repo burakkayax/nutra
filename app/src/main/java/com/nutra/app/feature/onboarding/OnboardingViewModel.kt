@@ -31,14 +31,17 @@ data class OnboardingUiState(
     val sex: BiologicalSex = BiologicalSex.MALE,
     val age: Int = 28,
     val heightCm: Int = 176,
-    val currentWeightKg: Float = 76f,
+    val currentWeightKg: Float = 75f,
     val targetWeightKg: Float = 70f,
     val activityLevel: ActivityLevel = ActivityLevel.MODERATE,
     val calculatedGoals: MacroGoals = MacroGoals(),
     val customGoals: MacroGoals = MacroGoals(),
     val isCustomized: Boolean = false,
     val isCompleting: Boolean = false,
-)
+) {
+    val isAdolescentObservationMode: Boolean
+        get() = age < BodyMetricBounds.ADULT_MIN_AGE
+}
 
 @HiltViewModel
 class OnboardingViewModel @Inject constructor(
@@ -50,6 +53,15 @@ class OnboardingViewModel @Inject constructor(
 
     private companion object {
         const val KEY_STEP_INDEX = "onboarding_step_index"
+        const val KEY_GOAL_TYPE = "onboarding_goal_type"
+        const val KEY_SEX = "onboarding_sex"
+        const val KEY_AGE = "onboarding_age"
+        const val KEY_HEIGHT = "onboarding_height"
+        const val KEY_CURRENT_WEIGHT = "onboarding_current_weight"
+        const val KEY_TARGET_WEIGHT = "onboarding_target_weight"
+        const val KEY_ACTIVITY = "onboarding_activity"
+        const val KEY_IS_CUSTOMIZED = "onboarding_is_customized"
+        const val DEFAULT_WEIGHT_KG = 75f
     }
 
     private val onboardingGoalBounds = MacroGoalBounds()
@@ -59,6 +71,28 @@ class OnboardingViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(
         OnboardingUiState(
             stepIndex = (savedStateHandle.get<Int>(KEY_STEP_INDEX) ?: 0).coerceIn(0, 2),
+            goalType = savedStateHandle.get<String>(KEY_GOAL_TYPE)
+                ?.let { runCatching { GoalType.valueOf(it) }.getOrNull() }
+                ?: GoalType.LOSE_WEIGHT,
+            sex = savedStateHandle.get<String>(KEY_SEX)
+                ?.let { runCatching { BiologicalSex.valueOf(it) }.getOrNull() }
+                ?: BiologicalSex.MALE,
+            age = (savedStateHandle.get<Int>(KEY_AGE) ?: 28)
+                .coerceIn(BodyMetricBounds.MIN_AGE, BodyMetricBounds.MAX_AGE),
+            heightCm = (savedStateHandle.get<Int>(KEY_HEIGHT) ?: 176)
+                .coerceIn(BodyMetricBounds.MIN_HEIGHT_CM, BodyMetricBounds.MAX_HEIGHT_CM),
+            currentWeightKg = (savedStateHandle.get<Float>(KEY_CURRENT_WEIGHT) ?: DEFAULT_WEIGHT_KG)
+                .takeIf { it.isFinite() }
+                ?.coerceIn(BodyMetricBounds.MIN_WEIGHT_KG, BodyMetricBounds.MAX_WEIGHT_KG)
+                ?: DEFAULT_WEIGHT_KG,
+            targetWeightKg = (savedStateHandle.get<Float>(KEY_TARGET_WEIGHT) ?: 70f)
+                .takeIf { it.isFinite() }
+                ?.coerceIn(BodyMetricBounds.MIN_WEIGHT_KG, BodyMetricBounds.MAX_WEIGHT_KG)
+                ?: 70f,
+            activityLevel = savedStateHandle.get<String>(KEY_ACTIVITY)
+                ?.let { runCatching { ActivityLevel.valueOf(it) }.getOrNull() }
+                ?: ActivityLevel.MODERATE,
+            isCustomized = savedStateHandle.get<Boolean>(KEY_IS_CUSTOMIZED) ?: false,
         ),
     )
     val uiState: StateFlow<OnboardingUiState> = _uiState.asStateFlow()
@@ -67,10 +101,23 @@ class OnboardingViewModel @Inject constructor(
         recalculateGoals()
     }
 
+    private fun persistDraft(state: OnboardingUiState) {
+        savedStateHandle[KEY_STEP_INDEX] = state.stepIndex
+        savedStateHandle[KEY_GOAL_TYPE] = state.goalType.name
+        savedStateHandle[KEY_SEX] = state.sex.name
+        savedStateHandle[KEY_AGE] = state.age
+        savedStateHandle[KEY_HEIGHT] = state.heightCm
+        savedStateHandle[KEY_CURRENT_WEIGHT] = state.currentWeightKg
+        savedStateHandle[KEY_TARGET_WEIGHT] = state.targetWeightKg
+        savedStateHandle[KEY_ACTIVITY] = state.activityLevel.name
+        savedStateHandle[KEY_IS_CUSTOMIZED] = state.isCustomized
+    }
+
     fun selectGoalType(goalType: GoalType) = updateAndRecalculate {
+        val effectiveGoal = if (it.isAdolescentObservationMode) GoalType.MAINTAIN else goalType
         it.copy(
-            goalType = goalType,
-            targetWeightKg = if (goalType == GoalType.MAINTAIN) it.currentWeightKg else it.targetWeightKg,
+            goalType = effectiveGoal,
+            targetWeightKg = if (effectiveGoal == GoalType.MAINTAIN) it.currentWeightKg else it.targetWeightKg,
         )
     }
 
@@ -81,7 +128,14 @@ class OnboardingViewModel @Inject constructor(
     fun adjustAge(delta: Int) = setAge(_uiState.value.age + delta)
 
     fun setAge(age: Int) = updateAndRecalculate {
-        it.copy(age = age.coerceIn(BodyMetricBounds.MIN_AGE, BodyMetricBounds.MAX_AGE))
+        val safeAge = age.coerceIn(BodyMetricBounds.MIN_AGE, BodyMetricBounds.MAX_AGE)
+        val isAdolescent = safeAge < BodyMetricBounds.ADULT_MIN_AGE
+        it.copy(
+            age = safeAge,
+            goalType = if (isAdolescent) GoalType.MAINTAIN else it.goalType,
+            targetWeightKg = if (isAdolescent) it.currentWeightKg else it.targetWeightKg,
+            isCustomized = if (isAdolescent) false else it.isCustomized,
+        )
     }
 
     fun adjustHeight(delta: Int) = setHeight(_uiState.value.heightCm + delta)
@@ -92,22 +146,26 @@ class OnboardingViewModel @Inject constructor(
 
     fun adjustCurrentWeight(delta: Float) = setCurrentWeight(_uiState.value.currentWeightKg + delta)
 
-    fun setCurrentWeight(weightKg: Float) = updateAndRecalculate {
-        val next = ((weightKg * 10f).roundToInt() / 10f)
-            .coerceIn(BodyMetricBounds.MIN_WEIGHT_KG, BodyMetricBounds.MAX_WEIGHT_KG)
-        it.copy(
-            currentWeightKg = next,
-            targetWeightKg = if (it.goalType == GoalType.MAINTAIN) next else it.targetWeightKg,
-        )
+    fun setCurrentWeight(weightKg: Float) {
+        if (!weightKg.isFinite()) return
+        updateAndRecalculate {
+            val next = ((weightKg * 10f).roundToInt() / 10f)
+                .coerceIn(BodyMetricBounds.MIN_WEIGHT_KG, BodyMetricBounds.MAX_WEIGHT_KG)
+            it.copy(
+                currentWeightKg = next,
+                targetWeightKg = if (it.goalType == GoalType.MAINTAIN || it.isAdolescentObservationMode) next else it.targetWeightKg,
+            )
+        }
     }
 
     fun adjustTargetWeight(delta: Float) = setTargetWeight(_uiState.value.targetWeightKg + delta)
 
     fun setTargetWeight(weightKg: Float) {
+        if (!weightKg.isFinite()) return
         _uiState.update {
             val next = ((weightKg * 10f).roundToInt() / 10f)
                 .coerceIn(BodyMetricBounds.MIN_WEIGHT_KG, BodyMetricBounds.MAX_WEIGHT_KG)
-            it.copy(targetWeightKg = next)
+            it.copy(targetWeightKg = next).also(::persistDraft)
         }
     }
 
@@ -194,12 +252,49 @@ class OnboardingViewModel @Inject constructor(
         }
     }
 
+    fun skipOnboarding(onFinished: () -> Unit) {
+        val state = _uiState.value
+        if (state.isCompleting) return
+        _uiState.update { it.copy(isCompleting = true) }
+        viewModelScope.launch {
+            try {
+                // Skipping onboarding MUST NOT insert a phantom default WeightLogEntity into Room!
+                val effectiveGoalType = if (state.isAdolescentObservationMode) GoalType.MAINTAIN else state.goalType
+                val profile = UserProfile(
+                    sex = state.sex,
+                    age = state.age,
+                    heightCm = state.heightCm,
+                    currentWeightKg = state.currentWeightKg,
+                    targetWeightKg = if (state.isAdolescentObservationMode) state.currentWeightKg else state.targetWeightKg,
+                    activityLevel = state.activityLevel,
+                    goalType = effectiveGoalType,
+                    goals = state.calculatedGoals,
+                    onboardingCompleted = true,
+                )
+                preferencesDataStore.saveOnboardingProfile(profile)
+                nutritionRepository.recordGoalHistory(
+                    goals = profile.goals,
+                    goalType = profile.goalType,
+                    targetWeightKg = profile.targetWeightKg,
+                    source = com.nutra.app.domain.model.GoalChangeSource.ONBOARDING,
+                )
+                onFinished()
+            } finally {
+                _uiState.update { it.copy(isCompleting = false) }
+            }
+        }
+    }
+
     fun completeOnboarding(onFinished: () -> Unit) {
         val state = _uiState.value
         if (state.isCompleting) return
         _uiState.update { it.copy(isCompleting = true) }
         viewModelScope.launch {
             try {
+                val effectiveGoalType = if (state.isAdolescentObservationMode) GoalType.MAINTAIN else state.goalType
+                val effectiveGoals = if (state.isAdolescentObservationMode) state.calculatedGoals else state.customGoals
+                val effectiveTargetWeight = if (state.isAdolescentObservationMode) state.currentWeightKg else state.targetWeightKg
+
                 nutritionRepository.logWeight(
                     dateIso = LocalDate.now().toString(),
                     weightKg = state.currentWeightKg,
@@ -210,10 +305,10 @@ class OnboardingViewModel @Inject constructor(
                     age = state.age,
                     heightCm = state.heightCm,
                     currentWeightKg = state.currentWeightKg,
-                    targetWeightKg = state.targetWeightKg,
+                    targetWeightKg = effectiveTargetWeight,
                     activityLevel = state.activityLevel,
-                    goalType = state.goalType,
-                    goals = state.customGoals,
+                    goalType = effectiveGoalType,
+                    goals = effectiveGoals,
                     onboardingCompleted = true,
                 )
                 preferencesDataStore.saveOnboardingProfile(profile)
@@ -243,8 +338,8 @@ class OnboardingViewModel @Inject constructor(
             )
             updated.copy(
                 calculatedGoals = calc,
-                customGoals = if (updated.isCustomized) updated.customGoals else calc,
-            )
+                customGoals = if (updated.isCustomized && !updated.isAdolescentObservationMode) updated.customGoals else calc,
+            ).also(::persistDraft)
         }
     }
 

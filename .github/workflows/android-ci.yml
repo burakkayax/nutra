@@ -36,5 +36,8 @@ jobs:
         run: |
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-37.0' 'build-tools;36.0.0'
 
-      - name: Run tests, lint, and build the debug APK
-        run: bash ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+      - name: Verify Room exported schema files exist
+        run: test -f app/schemas/com.nutra.app.core.database.NutraDatabase/6.json
+
+      - name: Run unit tests, lint, debug APK, and R8 release build
+        run: bash ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease --no-daemon

@@ -138,16 +138,16 @@ class WaterReminderScheduleTest {
         assertEquals("2 saat", WaterReminderScheduleCalculator.formatInterval(120))
 
         assertEquals("Kapalı", WaterReminderScheduleCalculator.formatProfileSummary(defaultEnabled.copy(enabled = false)))
-        assertEquals("Açık · 2 saat aralıkla · 09:00–22:00", WaterReminderScheduleCalculator.formatProfileSummary(defaultEnabled))
+        assertEquals("Açık · ~2 saat aralıkla · 09:00–22:00", WaterReminderScheduleCalculator.formatProfileSummary(defaultEnabled))
         assertEquals(
-            "Bugün 13:00",
+            "Bugün ~13:00",
             WaterReminderScheduleCalculator.formatNextTriggerLabel(
                 now = LocalDateTime.of(2026, 11, 19, 11, 0),
                 nextTrigger = LocalDateTime.of(2026, 11, 19, 13, 0),
             ),
         )
         assertEquals(
-            "Yarın 09:00",
+            "Yarın ~09:00",
             WaterReminderScheduleCalculator.formatNextTriggerLabel(
                 now = LocalDateTime.of(2026, 11, 19, 21, 30),
                 nextTrigger = LocalDateTime.of(2026, 11, 20, 9, 0),

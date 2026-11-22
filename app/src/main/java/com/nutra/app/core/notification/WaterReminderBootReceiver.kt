@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import com.nutra.app.core.datastore.UserPreferencesDataStore
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -31,9 +32,13 @@ class WaterReminderBootReceiver : BroadcastReceiver() {
         scope.launch {
             try {
                 withTimeout(RECEIVER_TIMEOUT_MS) {
-                    runCatching {
+                    try {
                         val settings = preferencesDataStore.getSnapshot().waterReminder
                         waterReminderScheduler.sync(settings)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        // Ignore transient boot sync errors
                     }
                 }
             } finally {

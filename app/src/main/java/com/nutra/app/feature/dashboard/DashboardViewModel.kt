@@ -4,14 +4,19 @@ import androidx.compose.runtime.Immutable
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.nutra.app.core.datastore.UserPreferencesDataStore
 import com.nutra.app.core.designsystem.NutraFormatters
+import com.nutra.app.domain.intelligence.FoodEligibilityPolicy
 import com.nutra.app.domain.model.DailyNutritionSummary
+import com.nutra.app.domain.model.DietaryProfile
 import com.nutra.app.domain.model.FoodCategory
+import com.nutra.app.domain.model.FoodFeedbackRecord
 import com.nutra.app.domain.model.FoodItem
 import com.nutra.app.domain.model.MacroGoals
 import com.nutra.app.domain.model.MealLogItem
 import com.nutra.app.domain.model.MealSummary
 import com.nutra.app.domain.model.MealType
+import com.nutra.app.domain.model.ServingUnitLabels
 import com.nutra.app.domain.model.SmartComboSuggestion
 import com.nutra.app.domain.repository.NutritionRepository
 import com.nutra.app.domain.usecase.ContextualMealRankerAndComboEngine
@@ -51,6 +56,7 @@ data class CustomFoodDraft(
     val name: String = "",
     val unitLabel: String = "",
     val unitGrams: String = "100",
+    val baseUnit: String = "g",
     val calories: String = "",
     val protein: String = "",
     val carbs: String = "",
@@ -88,6 +94,7 @@ data class LoggingSheetUiState(
     val isCatalogLoading: Boolean = true,
     val rankedFoods: List<FoodItem> = emptyList(),
     val smartCombos: List<SmartComboSuggestion> = emptyList(),
+    val hasStrictDietaryGuardrail: Boolean = false,
     val selectedFoodForPortion: FoodItem? = null,
     val customFoodDraft: CustomFoodDraft = CustomFoodDraft(),
     val sheetFeedbackMessage: String? = null,
@@ -127,7 +134,9 @@ private data class LoggingModalInternalState(
 class DashboardViewModel @Inject constructor(
     private val savedStateHandle: SavedStateHandle,
     private val nutritionRepository: NutritionRepository,
+    private val preferencesDataStore: UserPreferencesDataStore,
     private val rankerAndComboEngine: ContextualMealRankerAndComboEngine,
+    private val eligibilityPolicy: FoodEligibilityPolicy,
 ) : ViewModel() {
 
     private companion object {
@@ -226,6 +235,25 @@ class DashboardViewModel @Inject constructor(
             initialValue = emptyList(),
         )
 
+    private val dietaryProfileFlow: StateFlow<DietaryProfile> = preferencesDataStore.userProfileFlow
+        .map { it.dietaryProfile }
+        .distinctUntilChanged()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(30_000),
+            initialValue = preferencesDataStore.currentCachedProfile()?.dietaryProfile ?: DietaryProfile(),
+        )
+
+    private val feedbackByKeyFlow: StateFlow<Map<String, FoodFeedbackRecord>> = nutritionRepository
+        .observeFoodFeedback()
+        .map { list -> list.associateBy { it.foodKey } }
+        .distinctUntilChanged()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(30_000),
+            initialValue = emptyMap(),
+        )
+
     init {
         viewModelScope.launch {
             // Trigger initial Dashboard load and gently warm catalog cache after first frame settles.
@@ -263,9 +291,10 @@ class DashboardViewModel @Inject constructor(
     }.distinctUntilChanged().flatMapLatest { (activeMeal, isCatalogActive) ->
         when {
             activeMeal == null -> flow {
-                val empty = CatalogAndCombosState()
-                lastCatalogAndCombos = empty
-                emit(empty)
+                // Keep isCatalogLoading = false if catalog is already warm to prevent 1-frame skeleton flash on reopen
+                val idle = CatalogAndCombosState(isCatalogLoading = cachedFoodsFlow.value == null)
+                lastCatalogAndCombos = idle
+                emit(idle)
             }
             !isCatalogActive -> flow { emit(lastCatalogAndCombos) }
             else -> {
@@ -318,7 +347,9 @@ class DashboardViewModel @Inject constructor(
                             currentMealItemsForMealFlow,
                             cachedRecentLogsFlow,
                             cachedFoodsFlow,
-                        ) { currentMealItems, logs, foods ->
+                            dietaryProfileFlow,
+                            feedbackByKeyFlow,
+                        ) { currentMealItems, logs, foods, dietaryProfile, feedbackByKey ->
                             if (foods.isNullOrEmpty()) {
                                 emptyList()
                             } else {
@@ -327,6 +358,8 @@ class DashboardViewModel @Inject constructor(
                                     currentDateMealItems = currentMealItems,
                                     historicalLogs = logs,
                                     catalogFoods = foods,
+                                    dietaryProfile = dietaryProfile,
+                                    feedbackByKey = feedbackByKey,
                                 )
                             }
                         }.flowOn(Dispatchers.Default)
@@ -350,7 +383,8 @@ class DashboardViewModel @Inject constructor(
     val loggingUiState: StateFlow<LoggingSheetUiState> = combine(
         modalStateFlow,
         catalogAndCombosFlow,
-    ) { modal, catalogAndCombos ->
+        dietaryProfileFlow,
+    ) { modal, catalogAndCombos, dietaryProfile ->
         LoggingSheetUiState(
             activeLoggingMealType = modal.activeLoggingMealType ?: MealType.BREAKFAST,
             isCreatingCustomFood = modal.isCreatingCustomFood,
@@ -360,6 +394,7 @@ class DashboardViewModel @Inject constructor(
             isCatalogLoading = catalogAndCombos.isCatalogLoading,
             rankedFoods = catalogAndCombos.rankedFoods,
             smartCombos = catalogAndCombos.smartCombos,
+            hasStrictDietaryGuardrail = eligibilityPolicy.hasStrictAllergenOrDietRules(dietaryProfile),
             selectedFoodForPortion = modal.selectedFoodForPortion,
             customFoodDraft = modal.customFoodDraft,
             sheetFeedbackMessage = modal.sheetFeedbackMessage,
@@ -529,32 +564,37 @@ class DashboardViewModel @Inject constructor(
         unitGrams: Float,
         multiplier: Float,
     ) {
-        val mealType = modalStateFlow.value.activeLoggingMealType ?: MealType.BREAKFAST
+        val mealType = modalStateFlow.value.activeLoggingMealType ?: return
+        if (!isSubmittingModalAction.compareAndSet(false, true)) return
         val dateIso = selectedDateFlow.value.toString()
         viewModelScope.launch {
-            nutritionRepository.logFoodToMeal(
-                dateIso = dateIso,
-                mealType = mealType,
-                food = food,
-                unitLabel = unitLabel,
-                unitGrams = unitGrams,
-                multiplier = multiplier,
-            )
-            updateExpandedMeals { it + mealType }
-            val feedbackId = sheetFeedbackSeq.incrementAndGet()
-            modalStateFlow.update {
-                it.copy(
-                    selectedFoodForPortion = null,
-                    sheetFeedbackMessage = "${food.name} (${mealType.title}) eklendi",
-                    sheetFeedbackEventId = feedbackId,
+            try {
+                nutritionRepository.logFoodToMeal(
+                    dateIso = dateIso,
+                    mealType = mealType,
+                    food = food,
+                    unitLabel = unitLabel,
+                    unitGrams = unitGrams,
+                    multiplier = multiplier,
                 )
+                updateExpandedMeals { it + mealType }
+                val feedbackId = sheetFeedbackSeq.incrementAndGet()
+                modalStateFlow.update {
+                    it.copy(
+                        selectedFoodForPortion = null,
+                        sheetFeedbackMessage = "${food.name} (${mealType.title}) eklendi",
+                        sheetFeedbackEventId = feedbackId,
+                    )
+                }
+            } finally {
+                isSubmittingModalAction.set(false)
             }
         }
     }
 
     fun logSmartCombo(combo: SmartComboSuggestion) {
+        val mealType = modalStateFlow.value.activeLoggingMealType ?: return
         if (!isSubmittingModalAction.compareAndSet(false, true)) return
-        val mealType = modalStateFlow.value.activeLoggingMealType ?: MealType.BREAKFAST
         val dateIso = selectedDateFlow.value.toString()
         viewModelScope.launch {
             try {
@@ -651,24 +691,55 @@ class DashboardViewModel @Inject constructor(
         proteinPerServing: Float,
         carbsPerServing: Float,
         fatPerServing: Float,
+        baseUnit: String = "g",
     ) {
-        if (!isSubmittingModalAction.compareAndSet(false, true)) return
+        val trimmedName = name.trim()
+        if (trimmedName.isBlank()) {
+            emitSheetFeedback("Besin adı boş bırakılamaz")
+            return
+        }
+        if (!unitGrams.isFinite() || unitGrams < 1f || unitGrams > 5000f) {
+            emitSheetFeedback("Geçerli bir porsiyon miktarı gir (1 – 5000)")
+            return
+        }
+        if (!proteinPerServing.isFinite() || !carbsPerServing.isFinite() || !fatPerServing.isFinite() ||
+            caloriesPerServing < 0 || proteinPerServing < 0f || carbsPerServing < 0f || fatPerServing < 0f
+        ) {
+            emitSheetFeedback("Kalori ve makro değerleri sıfır veya pozitif geçerli sayılar olmalıdır")
+            return
+        }
         val safeGrams = unitGrams.coerceIn(1f, 5000f)
+        val macroMassSum = proteinPerServing + carbsPerServing + fatPerServing
+        if (macroMassSum > safeGrams * 1.05f) {
+            emitSheetFeedback("Protein + karbonhidrat + yağ toplamı porsiyon miktarını aşamaz")
+            return
+        }
         val factor = 100f / safeGrams
+        val kcalPer100 = (caloriesPerServing * factor).roundToInt().coerceAtLeast(0)
+        if (kcalPer100 > 950) {
+            emitSheetFeedback("100 birim başına kalori 950 kcal değerini aşamaz; porsiyon miktarını kontrol et")
+            return
+        }
+
+        val mealType = modalStateFlow.value.activeLoggingMealType ?: return
+        if (!isSubmittingModalAction.compareAndSet(false, true)) return
+        val normalizedBase = ServingUnitLabels.normalizedBaseUnit(baseUnit)
+        val cleanUnitLabel = unitLabel.trim().ifBlank { "1 Porsiyon" }
         val newFood = FoodItem(
-            name = name.trim(),
-            subtitle = "Özel Besin · ${unitLabel.trim().ifBlank { "1 Porsiyon" }}",
+            name = trimmedName,
+            subtitle = "Özel Besin · $cleanUnitLabel",
             category = FoodCategory.CUSTOM,
-            caloriesPer100g = (caloriesPerServing * factor).roundToInt().coerceAtLeast(0),
-            proteinPer100g = (proteinPerServing * factor).coerceAtLeast(0f),
-            carbsPer100g = (carbsPerServing * factor).coerceAtLeast(0f),
-            fatPer100g = (fatPerServing * factor).coerceAtLeast(0f),
-            defaultUnitLabel = unitLabel.trim().ifBlank { "1 Porsiyon" },
+            caloriesPer100g = kcalPer100,
+            proteinPer100g = (proteinPerServing * factor).coerceIn(0f, 100f),
+            carbsPer100g = (carbsPerServing * factor).coerceIn(0f, 100f),
+            fatPer100g = (fatPerServing * factor).coerceIn(0f, 100f),
+            defaultUnitLabel = cleanUnitLabel,
             defaultUnitGrams = safeGrams,
+            baseUnit = normalizedBase,
             isCustom = true,
             isFavorite = true,
+            allergenVerified = false,
         )
-        val mealType = modalStateFlow.value.activeLoggingMealType ?: MealType.BREAKFAST
         val dateIso = selectedDateFlow.value.toString()
 
         viewModelScope.launch {
@@ -690,6 +761,16 @@ class DashboardViewModel @Inject constructor(
             } finally {
                 isSubmittingModalAction.set(false)
             }
+        }
+    }
+
+    private fun emitSheetFeedback(message: String) {
+        val feedbackId = sheetFeedbackSeq.incrementAndGet()
+        modalStateFlow.update {
+            it.copy(
+                sheetFeedbackMessage = message,
+                sheetFeedbackEventId = feedbackId,
+            )
         }
     }
 }

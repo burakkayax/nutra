@@ -137,7 +137,7 @@ class TurkishFoodCatalogIntegrityTest {
         assertEquals("250 ml", rawMlLog.formattedQuantity)
 
         val glassLog = rawMlLog.copy(unitLabel = "1 Su Bardağı", multiplier = 1f, totalGrams = 200f)
-        assertEquals("1x 1 Su Bardağı (200 ml)", glassLog.formattedQuantity)
+        assertEquals("1 Su Bardağı (200 ml)", glassLog.formattedQuantity)
     }
 
     @Test

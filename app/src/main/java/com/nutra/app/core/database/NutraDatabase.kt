@@ -13,8 +13,8 @@ import androidx.room.RoomDatabase
         FoodFeedbackEntity::class,
         MetabolismSnapshotEntity::class,
     ],
-    version = 5,
-    exportSchema = false,
+    version = 6,
+    exportSchema = true,
 )
 abstract class NutraDatabase : RoomDatabase() {
     abstract fun nutraDao(): NutraDao

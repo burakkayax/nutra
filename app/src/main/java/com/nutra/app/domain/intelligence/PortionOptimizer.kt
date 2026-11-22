@@ -19,6 +19,8 @@ class PortionOptimizer @Inject constructor() {
     private companion object {
         const val COORDINATE_DESCENT_ITERS = 24
         val CLEAN_UNIT_MULTIPLIERS = floatArrayOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f, 2.5f, 3f, 4f)
+        val INDIVISIBLE_PACKAGED_MULTIPLIERS = floatArrayOf(0.5f, 1f, 2f)
+        val INDIVISIBLE_UNIT_KEYWORDS = arrayOf("paket", "şişe", "sise", "kutu", "ambalaj", "bar")
     }
 
     fun optimizePortions(
@@ -204,7 +206,7 @@ class PortionOptimizer @Inject constructor() {
 
         val rawErr = 0.42f * errE + 0.34f * errP + 0.12f * errC + 0.12f * errF
         val weightedErr = if (rawErr.isFinite()) rawErr.coerceIn(0f, 1f) else 1f
-        return ((1f - weightedErr) * 100f).roundToInt().coerceIn(20, 100)
+        return ((1f - weightedErr) * 100f).roundToInt().coerceIn(0, 100)
     }
 
     fun buildPortionWithGrams(
@@ -267,10 +269,13 @@ class PortionOptimizer @Inject constructor() {
         // When user explicitly adjusts grams manually (preferHouseholdSnap == false), only use a household unit if it matches nearly exactly (<= 1.5%)
         // so manual +/- clicks never snap back to the previous weight.
         val snapTolerance = if (preferHouseholdSnap) 0.08f else 0.015f
+        val lowerUnitLabel = food.defaultUnitLabel.lowercase()
+        val isIndivisiblePackaged = INDIVISIBLE_UNIT_KEYWORDS.any { lowerUnitLabel.contains(it) }
+        val allowedMultipliers = if (isIndivisiblePackaged) INDIVISIBLE_PACKAGED_MULTIPLIERS else CLEAN_UNIT_MULTIPLIERS
         if (!isRawDefault && defGrams.isFinite() && defGrams >= 10f && defGrams <= 350f) {
             var bestMult: Float? = null
             var bestRelErr = Float.MAX_VALUE
-            for (m in CLEAN_UNIT_MULTIPLIERS) {
+            for (m in allowedMultipliers) {
                 val candG = defGrams * m
                 if (candG < minGrams - 0.01f || candG > maxGrams + 0.01f) continue
                 val relErr = abs(candG - targetGrams) / targetGrams.coerceAtLeast(10f)

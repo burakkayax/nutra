@@ -21,7 +21,9 @@ import com.nutra.app.domain.model.MacroGoals
 import com.nutra.app.domain.model.ThemePreference
 import com.nutra.app.domain.model.UserProfile
 import com.nutra.app.domain.model.WaterReminderSettings
+import com.nutra.app.domain.repository.BackupValidationReport
 import com.nutra.app.domain.repository.NutritionRepository
+import com.nutra.app.domain.usecase.BodyMetricBounds
 import com.nutra.app.domain.usecase.MacroGoalBounds
 import com.nutra.app.domain.usecase.NutritionCalculatorUseCase
 import com.nutra.app.domain.usecase.TurkishTextNormalizer
@@ -90,9 +92,14 @@ data class ProfileUiState(
     val isLoading: Boolean = true,
     val profile: UserProfile = UserProfile(),
     val dislikedFoods: List<FoodFeedbackRecord> = emptyList(),
-    val isBackupBusy: Boolean = false,
+    val isExportingBackup: Boolean = false,
+    val isImportingBackup: Boolean = false,
+    val pendingImportReport: BackupValidationReport? = null,
     val feedback: ProfileFeedback? = null,
-)
+) {
+    val isBackupBusy: Boolean
+        get() = isExportingBackup || isImportingBackup
+}
 
 @Immutable
 private data class PendingBodyProfile(
@@ -135,7 +142,9 @@ class ProfileViewModel @Inject constructor(
     private val pendingGoalsFlow = MutableStateFlow<MacroGoals?>(null)
     private val pendingBodyProfileFlow = MutableStateFlow<PendingBodyProfile?>(null)
     private val pendingWaterReminderFlow = MutableStateFlow<WaterReminderSettings?>(null)
-    private val isBackupBusyFlow = MutableStateFlow(false)
+    private val isExportingBackupFlow = MutableStateFlow(false)
+    private val isImportingBackupFlow = MutableStateFlow(false)
+    private val pendingImportReportFlow = MutableStateFlow<BackupValidationReport?>(null)
     private val feedbackSeq = AtomicLong(0L)
     private val feedbackFlow = MutableStateFlow<ProfileFeedback?>(null)
 
@@ -156,6 +165,14 @@ class ProfileViewModel @Inject constructor(
         )
     }
 
+    private val backupStateFlow = combine(
+        isExportingBackupFlow,
+        isImportingBackupFlow,
+        pendingImportReportFlow,
+    ) { exporting, importing, report ->
+        Triple(exporting, importing, report)
+    }
+
     private val dislikedFoodsFlow = nutritionRepository.observeFoodFeedback()
         .map { list ->
             list.filter { it.status == FoodFeedbackStatus.DISLIKED }
@@ -167,9 +184,9 @@ class ProfileViewModel @Inject constructor(
         preferencesDataStore.userProfileFlow,
         pendingOverridesFlow,
         dislikedFoodsFlow,
-        isBackupBusyFlow,
+        backupStateFlow,
         feedbackFlow,
-    ) { profile, overrides, dislikedFoods, isBackupBusy, feedback ->
+    ) { profile, overrides, dislikedFoods, (isExporting, isImporting, pendingReport), feedback ->
         val resolvedProfile = profile.let { base ->
             val withBody = if (overrides.body != null) {
                 base.copy(
@@ -195,7 +212,9 @@ class ProfileViewModel @Inject constructor(
             isLoading = false,
             profile = resolvedProfile,
             dislikedFoods = dislikedFoods,
-            isBackupBusy = isBackupBusy,
+            isExportingBackup = isExporting,
+            isImportingBackup = isImporting,
+            pendingImportReport = pendingReport,
             feedback = feedback,
         )
     }.stateIn(
@@ -234,15 +253,23 @@ class ProfileViewModel @Inject constructor(
             calorieScalingBaseline = null
             lastCalorieScaledGoals = null
             val (target, targetSource) = pendingDailyGoalsTarget.getAndSet(null) ?: return@launchGoalEdit
+            val previousSnapshot = preferencesDataStore.getSnapshot()
+            val prevGoals = previousSnapshot.goals
+            val energyOrMacrosChanged = prevGoals.calories != target.calories ||
+                prevGoals.proteinGrams != target.proteinGrams ||
+                prevGoals.carbsGrams != target.carbsGrams ||
+                prevGoals.fatGrams != target.fatGrams
             latestOptimisticGoals = target
             preferencesDataStore.updateGoals(target)
-            val snapshot = preferencesDataStore.getSnapshot()
-            nutritionRepository.recordGoalHistory(
-                goals = target,
-                goalType = snapshot.goalType,
-                targetWeightKg = snapshot.targetWeightKg,
-                source = targetSource,
-            )
+            // Do not pollute calorie goal_history when the user only edited their daily water target
+            if (energyOrMacrosChanged) {
+                nutritionRepository.recordGoalHistory(
+                    goals = target,
+                    goalType = previousSnapshot.goalType,
+                    targetWeightKg = previousSnapshot.targetWeightKg,
+                    source = targetSource,
+                )
+            }
         }
     }
 
@@ -385,8 +412,13 @@ class ProfileViewModel @Inject constructor(
                 goalType = p.goalType,
             )
             persistGoalsLocked(calculated, historySource = GoalChangeSource.FORMULA)
+            val msg = if (p.isAdolescentObservationMode) {
+                "Gözlem modu referans hedefleri yenilendi (kalori açığı kapalı)"
+            } else {
+                "Hedefler formüle göre yenilendi"
+            }
             emitFeedback(
-                message = "Hedefler formüle göre yenilendi",
+                message = msg,
                 tone = NutraSnackbarTone.Success,
                 canUndoGoals = true,
             )
@@ -414,23 +446,34 @@ class ProfileViewModel @Inject constructor(
         goalType: GoalType,
         recalculateGoals: Boolean,
     ) {
+        val safeAge = age.coerceIn(BodyMetricBounds.MIN_AGE, BodyMetricBounds.MAX_AGE)
+        val isAdolescent = safeAge < BodyMetricBounds.ADULT_MIN_AGE
+        val effectiveGoalType = if (isAdolescent) GoalType.MAINTAIN else goalType
+        val safeCurrentWeight = (if (currentWeightKg.isFinite()) currentWeightKg else 75f)
+            .coerceIn(BodyMetricBounds.MIN_WEIGHT_KG, BodyMetricBounds.MAX_WEIGHT_KG)
+        val safeTargetWeight = if (isAdolescent) {
+            safeCurrentWeight
+        } else {
+            (if (targetWeightKg.isFinite()) targetWeightKg else 70f)
+                .coerceIn(BodyMetricBounds.MIN_WEIGHT_KG, BodyMetricBounds.MAX_WEIGHT_KG)
+        }
         val optimisticBody = PendingBodyProfile(
             sex = sex,
-            age = age,
-            heightCm = heightCm,
-            currentWeightKg = currentWeightKg,
-            targetWeightKg = targetWeightKg,
+            age = safeAge,
+            heightCm = heightCm.coerceIn(BodyMetricBounds.MIN_HEIGHT_CM, BodyMetricBounds.MAX_HEIGHT_CM),
+            currentWeightKg = safeCurrentWeight,
+            targetWeightKg = safeTargetWeight,
             activityLevel = activityLevel,
-            goalType = goalType,
+            goalType = effectiveGoalType,
         )
         val updatedGoals = if (recalculateGoals) {
             calculatorUseCase.calculateGoals(
                 sex = sex,
-                age = age,
-                heightCm = heightCm,
-                weightKg = currentWeightKg,
+                age = safeAge,
+                heightCm = optimisticBody.heightCm,
+                weightKg = safeCurrentWeight,
                 activityLevel = activityLevel,
-                goalType = goalType,
+                goalType = effectiveGoalType,
             )
         } else {
             null
@@ -452,26 +495,26 @@ class ProfileViewModel @Inject constructor(
                 }
                 preferencesDataStore.updateBodyMetricsAndGoal(
                     sex = sex,
-                    age = age,
-                    heightCm = heightCm,
-                    currentWeightKg = currentWeightKg,
-                    targetWeightKg = targetWeightKg,
+                    age = safeAge,
+                    heightCm = optimisticBody.heightCm,
+                    currentWeightKg = safeCurrentWeight,
+                    targetWeightKg = safeTargetWeight,
                     activityLevel = activityLevel,
-                    goalType = goalType,
+                    goalType = effectiveGoalType,
                     updatedGoals = updatedGoals,
                 )
                 if (updatedGoals != null) {
                     nutritionRepository.recordGoalHistory(
                         goals = updatedGoals,
-                        goalType = goalType,
-                        targetWeightKg = targetWeightKg,
+                        goalType = effectiveGoalType,
+                        targetWeightKg = safeTargetWeight,
                         source = GoalChangeSource.FORMULA,
                     )
                 }
-                if (abs(currentWeightKg - previousWeight) >= 0.05f) {
+                if (abs(safeCurrentWeight - previousWeight) >= 0.05f) {
                     nutritionRepository.upsertDailyWeight(
                         dateIso = LocalDate.now().toString(),
-                        weightKg = currentWeightKg,
+                        weightKg = safeCurrentWeight,
                         syncProfileWeight = false,
                     )
                 }
@@ -532,71 +575,97 @@ class ProfileViewModel @Inject constructor(
     }
 
     fun exportBackupToUri(contentResolver: ContentResolver, uri: Uri) {
-        if (!isBackupBusyFlow.compareAndSet(false, true)) return
+        if (isImportingBackupFlow.value || !isExportingBackupFlow.compareAndSet(false, true)) return
         viewModelScope.launch {
             try {
-                when (val res = nutritionRepository.exportBackupJson()) {
-                    is AppResult.Success -> {
-                        val writeResult = withContext(Dispatchers.IO) {
-                            runCatching {
-                                val stream = runCatching { contentResolver.openOutputStream(uri, "wt") }.getOrNull()
-                                    ?: contentResolver.openOutputStream(uri)
-                                    ?: error("Dosya açılamadı")
-                                stream.use { out ->
-                                    out.write(res.data.toByteArray(Charsets.UTF_8))
-                                }
-                            }
+                val result = withContext(Dispatchers.IO) {
+                    val stream = runCatching { contentResolver.openOutputStream(uri, "wt") }.getOrNull()
+                        ?: runCatching { contentResolver.openOutputStream(uri) }.getOrNull()
+                    if (stream == null) {
+                        AppResult.Error("Yedek dosyası açılamadı")
+                    } else {
+                        stream.use { out ->
+                            nutritionRepository.exportBackupToStream(out)
                         }
-                        if (writeResult.isSuccess) {
-                            emitFeedback("Yedek dosyası kaydedildi", NutraSnackbarTone.Success)
-                        } else {
-                            emitFeedback("Yedek dosyası yazılamadı", NutraSnackbarTone.Error)
-                        }
-                    }
-                    is AppResult.Error -> {
-                        emitFeedback(res.message, NutraSnackbarTone.Error)
                     }
                 }
+                when (result) {
+                    is AppResult.Success -> emitFeedback("Yedek dosyası kaydedildi", NutraSnackbarTone.Success)
+                    is AppResult.Error -> emitFeedback(result.message, NutraSnackbarTone.Error)
+                }
             } finally {
-                isBackupBusyFlow.value = false
+                isExportingBackupFlow.value = false
+            }
+        }
+    }
+
+    fun prepareImportFromUri(contentResolver: ContentResolver, uri: Uri) {
+        if (isExportingBackupFlow.value || !isImportingBackupFlow.compareAndSet(false, true)) return
+        viewModelScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    val stream = runCatching { contentResolver.openInputStream(uri) }.getOrNull()
+                    if (stream == null) {
+                        AppResult.Error("Yedek dosyası açılamadı")
+                    } else {
+                        stream.use { input ->
+                            nutritionRepository.inspectBackupStream(input)
+                        }
+                    }
+                }
+                when (result) {
+                    is AppResult.Success -> pendingImportReportFlow.value = result.data
+                    is AppResult.Error -> emitFeedback(result.message, NutraSnackbarTone.Error)
+                }
+            } finally {
+                isImportingBackupFlow.value = false
+            }
+        }
+    }
+
+    fun cancelPendingImport() {
+        pendingImportReportFlow.value = null
+    }
+
+    fun confirmPendingImport() {
+        val report = pendingImportReportFlow.value ?: return
+        if (isExportingBackupFlow.value || !isImportingBackupFlow.compareAndSet(false, true)) return
+        pendingImportReportFlow.value = null
+        viewModelScope.launch {
+            try {
+                importBackupPayloadInternal(report)
+            } finally {
+                isImportingBackupFlow.value = false
             }
         }
     }
 
     fun importBackupFromUri(contentResolver: ContentResolver, uri: Uri) {
-        if (!isBackupBusyFlow.compareAndSet(false, true)) return
+        if (isExportingBackupFlow.value || !isImportingBackupFlow.compareAndSet(false, true)) return
         viewModelScope.launch {
             try {
-                val readResult = withContext(Dispatchers.IO) {
-                    runCatching {
-                        contentResolver.openInputStream(uri)?.use { stream ->
-                            readBoundedUtf8Stream(stream, MAX_BACKUP_FILE_BYTES)
-                        } ?: BoundedReadResult.EmptyOrFailed
-                    }.getOrDefault(BoundedReadResult.EmptyOrFailed)
+                val inspected = withContext(Dispatchers.IO) {
+                    val stream = runCatching { contentResolver.openInputStream(uri) }.getOrNull()
+                    if (stream == null) {
+                        AppResult.Error("Yedek dosyası okunamadı")
+                    } else {
+                        stream.use { input -> nutritionRepository.inspectBackupStream(input) }
+                    }
                 }
-                when (readResult) {
-                    BoundedReadResult.TooLarge -> {
-                        emitFeedback("Yedek dosyası çok büyük (en fazla 20 MB).", NutraSnackbarTone.Error)
-                        return@launch
-                    }
-                    BoundedReadResult.EmptyOrFailed -> {
-                        emitFeedback("Yedek dosyası okunamadı", NutraSnackbarTone.Error)
-                        return@launch
-                    }
-                    is BoundedReadResult.Success -> {
-                        importBackupJsonInternal(readResult.text)
-                    }
+                when (inspected) {
+                    is AppResult.Success -> importBackupPayloadInternal(inspected.data)
+                    is AppResult.Error -> emitFeedback(inspected.message, NutraSnackbarTone.Error)
                 }
             } finally {
-                isBackupBusyFlow.value = false
+                isImportingBackupFlow.value = false
             }
         }
     }
 
-    private suspend fun importBackupJsonInternal(rawJson: String) {
+    private suspend fun importBackupPayloadInternal(report: BackupValidationReport) {
         goalsMutex.withLock {
             waterReminderMutex.withLock {
-                when (val res = nutritionRepository.importBackupJson(rawJson)) {
+                when (val res = nutritionRepository.importBackupPayload(report.payload)) {
                     is AppResult.Success -> {
                         pendingDailyGoalsTarget.set(null)
                         latestOptimisticGoals = null
@@ -607,7 +676,12 @@ class ProfileViewModel @Inject constructor(
                         lastCalorieScaledGoals = null
                         previousGoalsBeforeRecalc = null
                         waterReminderScheduler.sync(preferencesDataStore.getSnapshot().waterReminder)
-                        emitFeedback("Yedek başarıyla geri yüklendi", NutraSnackbarTone.Success)
+                        val msg = if (report.totalSkippedCount > 0) {
+                            "Yedek geri yüklendi (${report.totalSkippedCount} geçersiz kayıt atlandı)"
+                        } else {
+                            "Yedek başarıyla geri yüklendi"
+                        }
+                        emitFeedback(msg, NutraSnackbarTone.Success)
                     }
                     is AppResult.Error -> {
                         emitFeedback(res.message, NutraSnackbarTone.Error)
